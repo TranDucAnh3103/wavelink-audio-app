@@ -92,6 +92,51 @@ function cleanupLegacyAnchors(): void {
 }
 
 /**
+ * Tạo native HTML5 <audio> element phát file silent MP3 thật.
+ * Đây là lá chắn dự phòng (Backup strategy) tối thượng cho Android Chrome:
+ * Media subsystem của Android coi HTML5 audio element có stream thực tế là Active Media,
+ * ngăn không cho hệ thống kill tab hoặc hạ priority khi ứng dụng vào background.
+ */
+function createNativeAudioAnchor(): void {
+  if (typeof document === 'undefined') return;
+  try {
+    let el = document.getElementById('wl-native-audio-anchor') as HTMLAudioElement;
+    if (!el) {
+      el = document.createElement('audio');
+      el.id = 'wl-native-audio-anchor';
+      el.loop = true;
+      el.muted = false; // Phải có audio stream không muted để Android Media subsystem giữ session
+      el.volume = 0.001; // Âm lượng cực nhỏ (0.1%) để không thể nghe thấy nhưng audio sink vẫn mở
+      el.src = '/silence.mp3';
+      el.setAttribute('playsinline', 'true');
+      el.setAttribute('webkit-playsinline', 'true');
+      el.style.position = 'fixed';
+      el.style.top = '-9999px';
+      el.style.left = '-9999px';
+      el.style.width = '1px';
+      el.style.height = '1px';
+      el.style.pointerEvents = 'none';
+      document.body.appendChild(el);
+    }
+    if (el.paused) {
+      el.play().catch(() => {});
+    }
+  } catch {}
+}
+
+function stopNativeAudioAnchor(): void {
+  if (typeof document === 'undefined') return;
+  try {
+    const el = document.getElementById('wl-native-audio-anchor') as HTMLAudioElement;
+    if (el) {
+      el.pause();
+      el.currentTime = 0;
+      el.remove();
+    }
+  } catch {}
+}
+
+/**
  * Thử acquire Screen WakeLock để ngăn Android tắt màn hình và kill audio.
  * Chỉ hoạt động trên HTTPS + Android Chrome 84+ / Edge 97+.
  */
@@ -170,6 +215,11 @@ function registerVisibilityHandler(): void {
       if (silentAudioCtx && silentAudioCtx.state === 'suspended') {
         silentAudioCtx.resume().catch(() => {});
       }
+      // Resume native audio anchor nếu bị tạm ngưng
+      const anchor = document.getElementById('wl-native-audio-anchor') as HTMLAudioElement;
+      if (anchor && anchor.paused) {
+        anchor.play().catch(() => {});
+      }
       // Reacquire WakeLock nếu đã bị release
       if (!wakeLockSentinel) {
         acquireWakeLock();
@@ -178,6 +228,27 @@ function registerVisibilityHandler(): void {
   };
 
   document.addEventListener('visibilitychange', visibilityHandler);
+}
+
+/**
+ * Chuẩn bị AudioContext ngay trong tương tác chạm/click đầu tiên của người dùng (User Gesture).
+ * Giải quyết triệt để lỗi AudioContext bị suspended vĩnh viễn trên Chrome Android & iOS Safari.
+ */
+export function primeAudioContextOnFirstGesture(): void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+  const primeOnce = () => {
+    try {
+      ensureAudioContext();
+    } catch {}
+    document.removeEventListener('touchstart', primeOnce);
+    document.removeEventListener('click', primeOnce);
+    document.removeEventListener('keydown', primeOnce);
+  };
+
+  document.addEventListener('touchstart', primeOnce, { once: true, passive: true });
+  document.addEventListener('click', primeOnce, { once: true });
+  document.addEventListener('keydown', primeOnce, { once: true });
 }
 
 /**
@@ -194,6 +265,7 @@ export function startBackgroundAudio(): void {
     createSilentLoop(ctx);
   }
 
+  createNativeAudioAnchor();
   registerVisibilityHandler();
   startSwHeartbeat();
   acquireWakeLock();
@@ -208,6 +280,7 @@ export function startBackgroundAudio(): void {
 export function stopBackgroundAudio(): void {
   isRunning = false;
 
+  stopNativeAudioAnchor();
   cleanupLegacyAnchors();
   stopSwHeartbeat();
   releaseWakeLock();

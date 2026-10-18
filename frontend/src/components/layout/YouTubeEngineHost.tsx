@@ -16,6 +16,9 @@ export const YouTubeEngineHost: React.FC = () => {
   const playerRef = useRef<any>(null);
   const isInitializingRef = useRef<boolean>(false);
   const instanceIdRef = useRef<string>(`yt-host-${Date.now()}`);
+  const backgroundResumeAttempts = useRef<number>(0);
+  const backgroundResumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const backgroundResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const instanceId = instanceIdRef.current;
@@ -66,6 +69,8 @@ export const YouTubeEngineHost: React.FC = () => {
           fs: 0,
           rel: 0,
           modestbranding: 1,
+          origin: typeof window !== 'undefined' ? window.location.origin : undefined,
+          widget_referrer: typeof window !== 'undefined' ? window.location.origin : undefined,
         },
         events: {
           onReady: () => {
@@ -109,9 +114,25 @@ export const YouTubeEngineHost: React.FC = () => {
               // Nếu người dùng không chủ động bấm pause (mà do tab bị ẩn, thoát app, tắt màn hình)
               if (currentStore.isPlaying && !currentStore.isExplicitlyPaused) {
                 console.debug('[YouTubeEngineHost] Background interruption detected. Readying lockscreen resume...');
-                try {
-                  playerRef.current?.playVideo();
-                } catch {}
+                backgroundResumeAttempts.current += 1;
+                // Tối đa 3 lần retry có giới hạn với exponential backoff (500ms, 1000ms, 2000ms)
+                // để tránh vòng lặp vô hạn khiến Chrome Android kill process
+                if (backgroundResumeAttempts.current <= 3) {
+                  const delay = Math.pow(2, backgroundResumeAttempts.current - 1) * 500;
+                  if (backgroundResumeTimer.current) clearTimeout(backgroundResumeTimer.current);
+                  backgroundResumeTimer.current = setTimeout(() => {
+                    if (playerRef.current && !usePlayerStore.getState().isExplicitlyPaused) {
+                      try {
+                        playerRef.current.playVideo();
+                      } catch {}
+                    }
+                  }, delay);
+                }
+                // Reset counter sau 10 giây yên tĩnh
+                if (backgroundResetTimer.current) clearTimeout(backgroundResetTimer.current);
+                backgroundResetTimer.current = setTimeout(() => {
+                  backgroundResumeAttempts.current = 0;
+                }, 10000);
               } else {
                 usePlayerStore.setState({ isPlaying: false });
               }
@@ -244,6 +265,14 @@ export const YouTubeEngineHost: React.FC = () => {
     window.addEventListener('pageshow', handleWindowFocus);
 
     return () => {
+      if (backgroundResumeTimer.current) {
+        clearTimeout(backgroundResumeTimer.current);
+        backgroundResumeTimer.current = null;
+      }
+      if (backgroundResetTimer.current) {
+        clearTimeout(backgroundResetTimer.current);
+        backgroundResetTimer.current = null;
+      }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('pageshow', handleWindowFocus);
@@ -258,13 +287,13 @@ export const YouTubeEngineHost: React.FC = () => {
       id="yt-audio-host-container"
       style={{
         position: 'fixed',
-        bottom: '0px',
-        left: '0px',
+        top: '-9999px',
+        left: '-9999px',
         width: '320px',
         height: '240px',
-        opacity: 0.001,
+        opacity: 1,
         pointerEvents: 'none',
-        zIndex: -999,
+        zIndex: 0,
       }}
     >
       <div id="yt-player-target" />

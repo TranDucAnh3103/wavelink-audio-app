@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/components/ui/Toast';
 import { startBackgroundAudio, stopBackgroundAudio } from '@/lib/backgroundAudioKeeper';
 import { startBackgroundSleepTimer, stopBackgroundSleepTimer } from '@/lib/sleepTimerWorker';
+import { startMediaSessionKeeper, stopMediaSessionKeeper } from '@/lib/mediaSessionWorker';
 import { queryClient } from '@/lib/queryClient';
 import { formatTime } from '@/lib/utils';
 
@@ -209,6 +210,7 @@ if (initialSleepTimer.endTimestamp) {
     usePlayerStore.setState({ sleepTimerMinutes: null, sleepTimerEndTimestamp: null });
     store.pause();
     stopBackgroundAudio();
+    stopMediaSessionKeeper();
     toast.info('Đã tự động tắt audio theo hẹn giờ ngủ.');
   };
   const delayMs = Math.max(0, initialSleepTimer.endTimestamp - Date.now());
@@ -383,6 +385,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     startPolling();
     startHeartbeat();
     startBackgroundAudio();
+    startMediaSessionKeeper(onWorkerMediaTick);
     updateMediaSession(true, audio, targetEpisode, currentTime, duration, activeRate);
   },
 
@@ -409,11 +412,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       startPolling();
       startHeartbeat();
       startBackgroundAudio();
+      startMediaSessionKeeper(onWorkerMediaTick);
     } else {
       saveCurrentProgress();
       stopPolling();
       stopHeartbeat();
       stopBackgroundAudio();
+      stopMediaSessionKeeper();
     }
     updateMediaSession(nextPlaying, currentAudio, get().currentEpisode, get().currentTime, get().duration, get().playbackRate);
   },
@@ -431,6 +436,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     stopPolling();
     stopHeartbeat();
     stopBackgroundAudio();
+    stopMediaSessionKeeper();
     updateMediaSession(false, get().currentAudio, get().currentEpisode, get().currentTime, get().duration, get().playbackRate);
   },
 
@@ -447,6 +453,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     startPolling();
     startHeartbeat();
     startBackgroundAudio();
+    startMediaSessionKeeper(onWorkerMediaTick);
     updateMediaSession(true, get().currentAudio, get().currentEpisode, get().currentTime, get().duration, get().playbackRate);
   },
 
@@ -602,6 +609,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       usePlayerStore.setState({ sleepTimerMinutes: null, sleepTimerEndTimestamp: null });
       store.pause();
       stopBackgroundAudio();
+      stopMediaSessionKeeper();
       toast.info('Đã tự động tắt audio theo hẹn giờ ngủ.');
     };
 
@@ -638,6 +646,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     stopHeartbeat();
     stopBackgroundAudio();
     stopBackgroundSleepTimer();
+    stopMediaSessionKeeper();
     if (sleepTimeout) {
       clearTimeout(sleepTimeout);
       sleepTimeout = null;
@@ -670,6 +679,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     stopHeartbeat();
     stopBackgroundAudio();
     stopBackgroundSleepTimer();
+    stopMediaSessionKeeper();
     if (sleepTimeout) {
       clearTimeout(sleepTimeout);
       sleepTimeout = null;
@@ -749,6 +759,33 @@ rateCoordinator.subscribe({
   },
 });
 
+function onWorkerMediaTick() {
+  const store = usePlayerStore.getState();
+  if (!store.isPlaying || store.isExplicitlyPaused) return;
+
+  let currentPos = store.currentTime;
+  if (ytPlayerInstance && typeof ytPlayerInstance.getCurrentTime === 'function') {
+    try {
+      const absTime = ytPlayerInstance.getCurrentTime();
+      const startSec = store.currentEpisode?.startSeconds || 0;
+      const epPos = Math.round(absTime - startSec);
+      if (epPos >= 0) {
+        currentPos = epPos;
+        usePlayerStore.setState({ currentTime: epPos });
+      }
+    } catch {}
+  }
+
+  updateMediaSession(
+    true,
+    store.currentAudio,
+    store.currentEpisode,
+    currentPos,
+    store.duration,
+    store.playbackRate
+  );
+}
+
 function startPolling() {
   stopPolling();
   pollTimer = setInterval(pollIntervalHandler, 1000);
@@ -777,6 +814,7 @@ function pollIntervalHandler() {
     usePlayerStore.setState({ sleepTimerMinutes: null, sleepTimerEndTimestamp: null });
     store.pause();
     stopBackgroundAudio();
+    stopMediaSessionKeeper();
     toast.info('Đã tự động tắt audio theo hẹn giờ ngủ.');
     return;
   }

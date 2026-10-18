@@ -21,3 +21,7 @@ const localStorageMock = (() => {
 Object.defineProperty(window, 'localStorage', {
   value: localStorageMock,
 });
+
+// Mock HTMLMediaElement play/pause for jsdom
+window.HTMLMediaElement.prototype.play = vi.fn().mockImplementation(() => Promise.resolve());
+window.HTMLMediaElement.prototype.pause = vi.fn().mockImplementation(() => {});

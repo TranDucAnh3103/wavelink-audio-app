@@ -5,13 +5,28 @@
  * - Cache API assets để app load nhanh hơn khi mạng chậm
  */
 
-const CACHE_NAME = 'wavelink-v2';
+const CACHE_NAME = 'wavelink-v2.1';
 const AUDIO_KEEPALIVE_CHANNEL = 'wavelink-audio-keepalive';
+
+const PRECACHE_ASSETS = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/silence.mp3',
+  '/wavelink-icon.png',
+];
 
 // ─── Install & Activate ────────────────────────────────────────────────────
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(PRECACHE_ASSETS).catch((err) => {
+        console.debug('SW precache partial fail:', err);
+      });
+    })
+  );
 });
 
 self.addEventListener('activate', (event) => {
