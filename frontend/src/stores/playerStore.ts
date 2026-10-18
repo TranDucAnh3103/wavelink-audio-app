@@ -946,6 +946,39 @@ if (typeof window !== 'undefined') {
   });
   window.__playerStore = usePlayerStore;
   window.__measureProgressionRate = measureProgressionRate;
+
+  // ─── Android Background Audio: visibilitychange guard ──────────────────────
+  // Khi màn hình bật lại sau khi tắt (Android), resume YouTube nếu đang phát.
+  // Chrome Android đôi khi pause YouTube player khi document hidden → phải force resume.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      const store = usePlayerStore.getState();
+      if (store.isPlaying && !store.isExplicitlyPaused) {
+        // Delay nhỏ để đảm bảo AudioContext đã được resume bởi backgroundAudioKeeper
+        setTimeout(() => {
+          if (ytPlayerInstance && typeof ytPlayerInstance.getPlayerState === 'function') {
+            try {
+              const state = ytPlayerInstance.getPlayerState();
+              // YouTube state: -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering, 5=cued
+              if (state === 2 || state === -1) {
+                ytPlayerInstance.playVideo();
+                rateCoordinator.applyRate('visibility_resume');
+              }
+            } catch {}
+          }
+        }, 300);
+      }
+    }
+  });
+
+  // Nhận ACK từ Service Worker để xác nhận SW vẫn alive
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data?.type === 'AUDIO_KEEPALIVE_ACK') {
+        // SW đang sống và healthy - không cần action cụ thể
+      }
+    });
+  }
 }
 
 function updateMediaSession(
@@ -956,32 +989,103 @@ function updateMediaSession(
   duration?: number,
   playbackRate?: number
 ) {
-  if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
-    if (audio) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: episode?.title || audio.title,
-        artist: audio.author || 'WaveLink Audio',
-        album: audio.title,
-        artwork: [
-          { src: audio.thumbnailUrl || '/icons/icon-512x512.png', sizes: '512x512', type: 'image/jpeg' },
-          { src: audio.thumbnailUrl || '/icons/icon-192x192.png', sizes: '192x192', type: 'image/jpeg' },
-        ],
-      });
-      navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
 
-      if ('setPositionState' in navigator.mediaSession && duration && duration > 0) {
-        try {
-          const curPos = Math.max(0, Math.min(currentTime || 0, duration));
-          navigator.mediaSession.setPositionState({
-            duration,
-            playbackRate: playbackRate || 1.0,
-            position: curPos,
-          });
-        } catch {}
-      }
-    } else {
-      navigator.mediaSession.metadata = null;
-      navigator.mediaSession.playbackState = 'none';
-    }
+  if (!audio) {
+    navigator.mediaSession.metadata = null;
+    navigator.mediaSession.playbackState = 'none';
+    // Xóa tất cả action handlers khi không có audio
+    (['play', 'pause', 'stop', 'seekbackward', 'seekforward', 'previoustrack', 'nexttrack', 'seekto'] as const)
+      .forEach((action) => {
+        try { navigator.mediaSession.setActionHandler(action, null); } catch {}
+      });
+    return;
   }
+
+  // Cập nhật metadata
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: episode?.title || audio.title,
+    artist: audio.author || 'WaveLink Audio',
+    album: audio.title,
+    artwork: [
+      { src: audio.thumbnailUrl || '/wavelink-icon.png', sizes: '512x512', type: 'image/png' },
+      { src: audio.thumbnailUrl || '/wavelink-icon.png', sizes: '192x192', type: 'image/png' },
+    ],
+  });
+
+  navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+
+  // Cập nhật vị trí phát (progress bar trên lock screen / notification)
+  if ('setPositionState' in navigator.mediaSession && duration && duration > 0) {
+    try {
+      const curPos = Math.max(0, Math.min(currentTime || 0, duration));
+      navigator.mediaSession.setPositionState({
+        duration,
+        playbackRate: playbackRate || 1.0,
+        position: curPos,
+      });
+    } catch {}
+  }
+
+  // ─── MediaSession Action Handlers ──────────────────────────────────────────
+  // Đây là các handler cho nút điều khiển trên Lock Screen, Notification, Tai nghe, SmartWatch.
+  // QUAN TRỌNG: Phải đăng ký đủ handler để Android OS routing audio session đúng cách.
+
+  try {
+    navigator.mediaSession.setActionHandler('play', () => {
+      usePlayerStore.getState().resume();
+    });
+  } catch {}
+
+  try {
+    navigator.mediaSession.setActionHandler('pause', () => {
+      usePlayerStore.getState().pause();
+    });
+  } catch {}
+
+  try {
+    navigator.mediaSession.setActionHandler('stop', () => {
+      usePlayerStore.getState().pause();
+    });
+  } catch {}
+
+  try {
+    // Tua lùi 10 giây (nút << trên notification Android)
+    navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+      const skipSec = details.seekOffset ?? 10;
+      usePlayerStore.getState().skipSeconds(-skipSec);
+    });
+  } catch {}
+
+  try {
+    // Tua tiến 30 giây (nút >> trên notification Android)
+    navigator.mediaSession.setActionHandler('seekforward', (details) => {
+      const skipSec = details.seekOffset ?? 30;
+      usePlayerStore.getState().skipSeconds(skipSec);
+    });
+  } catch {}
+
+  try {
+    // Tập trước
+    navigator.mediaSession.setActionHandler('previoustrack', () => {
+      usePlayerStore.getState().prevEpisode();
+    });
+  } catch {}
+
+  try {
+    // Tập tiếp theo
+    navigator.mediaSession.setActionHandler('nexttrack', () => {
+      usePlayerStore.getState().nextEpisode();
+    });
+  } catch {}
+
+  try {
+    // Seek đến vị trí cụ thể (drag thanh progress trên notification)
+    navigator.mediaSession.setActionHandler('seekto', (details) => {
+      if (details.seekTime != null) {
+        usePlayerStore.getState().seekTo(details.seekTime);
+      }
+    });
+  } catch {}
 }
+

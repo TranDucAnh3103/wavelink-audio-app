@@ -15,6 +15,8 @@ import { DEFAULT_PAGE_SIZE } from '@/config/pagination';
 import { api } from '@/services/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { ShareStoryModal } from '@/components/community/ShareStoryModal';
+import { resumeAudioContextOnGesture } from '@/lib/backgroundAudioKeeper';
+
 
 export const PlayerPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -209,6 +211,8 @@ export const PlayerPage: React.FC = () => {
   const currentPercent = scrubPercent !== null ? scrubPercent : rawPercent;
 
   const handleMasterPlay = () => {
+    // iOS Safari: AudioContext phải được resume trong user gesture event
+    resumeAudioContextOnGesture();
     if (isEpLocked(activeEp)) {
       handleLockedEpisodeAction();
       return;

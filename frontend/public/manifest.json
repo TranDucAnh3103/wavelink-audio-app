@@ -1,0 +1,43 @@
+{
+  "name": "WaveLink - Nghe Truyện Audio",
+  "short_name": "WaveLink",
+  "description": "Ứng dụng nghe truyện audio trực tuyến - WaveLink",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f0f",
+  "theme_color": "#6366f1",
+  "orientation": "portrait-primary",
+  "lang": "vi",
+  "categories": ["entertainment", "music"],
+  "icons": [
+    {
+      "src": "/wavelink-icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/wavelink-icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "prefer_related_applications": false,
+  "scope": "/",
+  "shortcuts": [
+    {
+      "name": "Thư Viện",
+      "short_name": "Library",
+      "url": "/#/library",
+      "description": "Xem thư viện audio"
+    },
+    {
+      "name": "Trang Chủ",
+      "short_name": "Home",
+      "url": "/",
+      "description": "Về trang chủ WaveLink"
+    }
+  ]
+}

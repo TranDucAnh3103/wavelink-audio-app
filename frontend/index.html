@@ -5,7 +5,20 @@
   <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport">
   <link rel="icon" type="image/png" href="/public/wavelink-icon.png">
   <title>WaveLink</title>
-  
+
+  <!-- PWA Manifest (Android: nhận diện đây là audio app, ưu tiên process khi background) -->
+  <link rel="manifest" href="/manifest.json">
+
+  <!-- Theme color cho Android Chrome address bar -->
+  <meta name="theme-color" content="#6366f1">
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <!-- Apple PWA (iOS Safari background audio support) -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="WaveLink">
+  <link rel="apple-touch-icon" href="/wavelink-icon.png">
+
   <!-- Google Identity Services SDK -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
