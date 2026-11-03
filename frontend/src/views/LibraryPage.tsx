@@ -83,11 +83,19 @@ export const LibraryPage: React.FC = () => {
     setCurrentPage(1);
   }, [searchQuery, activeCategory, activeStatus]);
 
-  const totalPages = Math.ceil(uniqueAudios.length / pageSize) || 1;
+  const totalPages = Math.max(1, Math.ceil(uniqueAudios.length / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
   const paginatedAudios = React.useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
+    const start = (safeCurrentPage - 1) * pageSize;
     return uniqueAudios.slice(start, start + pageSize);
-  }, [uniqueAudios, currentPage, pageSize]);
+  }, [uniqueAudios, safeCurrentPage, pageSize]);
 
   const handleSearchChange = (val: string) => {
     setSearchQuery(val);
@@ -469,7 +477,7 @@ export const LibraryPage: React.FC = () => {
       {/* Pagination controls */}
       {!isLoading && uniqueAudios.length > 0 && (
         <Pagination
-          currentPage={currentPage}
+          currentPage={safeCurrentPage}
           totalPages={totalPages}
           totalItems={uniqueAudios.length}
           pageSize={pageSize}

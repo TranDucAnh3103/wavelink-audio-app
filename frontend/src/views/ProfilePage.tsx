@@ -52,16 +52,25 @@ export const ProfilePage: React.FC = () => {
   // Pagination (12 items per page by default, configurable via env)
   const pageSize = DEFAULT_PAGE_SIZE;
   const [historyPage, setHistoryPage] = useState(1);
-  const totalHistoryPages = Math.ceil(history.length / pageSize) || 1;
-  const paginatedHistory = history.slice((historyPage - 1) * pageSize, historyPage * pageSize);
+  const totalHistoryPages = Math.max(1, Math.ceil(history.length / pageSize));
+  const safeHistoryPage = Math.min(Math.max(1, historyPage), totalHistoryPages);
+  const paginatedHistory = history.slice((safeHistoryPage - 1) * pageSize, safeHistoryPage * pageSize);
 
   const [myAudiosPage, setMyAudiosPage] = useState(1);
-  const totalMyAudiosPages = Math.ceil(myAudios.length / pageSize) || 1;
-  const paginatedMyAudios = myAudios.slice((myAudiosPage - 1) * pageSize, myAudiosPage * pageSize);
+  const totalMyAudiosPages = Math.max(1, Math.ceil(myAudios.length / pageSize));
+  const safeMyAudiosPage = Math.min(Math.max(1, myAudiosPage), totalMyAudiosPages);
+  const paginatedMyAudios = myAudios.slice((safeMyAudiosPage - 1) * pageSize, safeMyAudiosPage * pageSize);
 
   const [otherAudiosPage, setOtherAudiosPage] = useState(1);
-  const totalOtherAudiosPages = Math.ceil(otherAudios.length / pageSize) || 1;
-  const paginatedOtherAudios = otherAudios.slice((otherAudiosPage - 1) * pageSize, otherAudiosPage * pageSize);
+  const totalOtherAudiosPages = Math.max(1, Math.ceil(otherAudios.length / pageSize));
+  const safeOtherAudiosPage = Math.min(Math.max(1, otherAudiosPage), totalOtherAudiosPages);
+  const paginatedOtherAudios = otherAudios.slice((safeOtherAudiosPage - 1) * pageSize, safeOtherAudiosPage * pageSize);
+
+  useEffect(() => {
+    if (historyPage > totalHistoryPages) setHistoryPage(totalHistoryPages);
+    if (myAudiosPage > totalMyAudiosPages) setMyAudiosPage(totalMyAudiosPages);
+    if (otherAudiosPage > totalOtherAudiosPages) setOtherAudiosPage(totalOtherAudiosPages);
+  }, [historyPage, totalHistoryPages, myAudiosPage, totalMyAudiosPages, otherAudiosPage, totalOtherAudiosPages]);
 
   const [isEditNameOpen, setIsEditNameOpen] = useState(false);
   const [newUsername, setNewUsername] = useState(user?.username || '');
@@ -385,7 +394,7 @@ export const ProfilePage: React.FC = () => {
 
               {totalOtherAudiosPages > 1 && (
                 <Pagination
-                  currentPage={otherAudiosPage}
+                  currentPage={safeOtherAudiosPage}
                   totalPages={totalOtherAudiosPages}
                   totalItems={otherAudios.length}
                   pageSize={pageSize}
@@ -525,7 +534,7 @@ export const ProfilePage: React.FC = () => {
 
               {totalHistoryPages > 1 && (
                 <Pagination
-                  currentPage={historyPage}
+                  currentPage={safeHistoryPage}
                   totalPages={totalHistoryPages}
                   totalItems={history.length}
                   pageSize={pageSize}
@@ -760,7 +769,7 @@ export const ProfilePage: React.FC = () => {
               })}
 
               <Pagination
-                currentPage={historyPage}
+                currentPage={safeHistoryPage}
                 totalPages={totalHistoryPages}
                 totalItems={history.length}
                 pageSize={pageSize}
@@ -823,7 +832,7 @@ export const ProfilePage: React.FC = () => {
               ))}
 
               <Pagination
-                currentPage={myAudiosPage}
+                currentPage={safeMyAudiosPage}
                 totalPages={totalMyAudiosPages}
                 totalItems={myAudios.length}
                 pageSize={pageSize}

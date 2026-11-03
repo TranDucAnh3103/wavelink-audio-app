@@ -48,8 +48,16 @@ export const AdminAudiosPage: React.FC = () => {
     setCurrentPage(1);
   }, [search]);
 
-  const totalPages = Math.ceil(filteredAudios.length / pageSize) || 1;
-  const paginatedAudios = filteredAudios.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const totalPages = Math.max(1, Math.ceil(filteredAudios.length / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const paginatedAudios = filteredAudios.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
 
   const openEditModal = (a: AudioItem) => {
     setEditingAudio(a);
@@ -235,7 +243,7 @@ export const AdminAudiosPage: React.FC = () => {
           </div>
 
             <Pagination
-              currentPage={currentPage}
+              currentPage={safeCurrentPage}
               totalPages={totalPages}
               totalItems={filteredAudios.length}
               pageSize={pageSize}

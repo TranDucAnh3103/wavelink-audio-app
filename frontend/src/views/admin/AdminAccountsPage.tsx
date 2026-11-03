@@ -20,6 +20,14 @@ export const AdminAccountsPage: React.FC = () => {
   // Pagination (12 users per page by default, configurable via env)
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = DEFAULT_PAGE_SIZE;
+  const totalUserPages = Math.max(1, Math.ceil(users.length / pageSize));
+  const safeUserPage = Math.min(Math.max(1, currentPage), totalUserPages);
+
+  useEffect(() => {
+    if (currentPage > totalUserPages) {
+      setCurrentPage(totalUserPages);
+    }
+  }, [currentPage, totalUserPages]);
 
   // Role Modal
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -98,7 +106,7 @@ export const AdminAccountsPage: React.FC = () => {
           <>
             <div className="flex flex-col gap-2.5">
               {users
-                .slice((currentPage - 1) * pageSize, currentPage * pageSize)
+                .slice((safeUserPage - 1) * pageSize, safeUserPage * pageSize)
                 .map((u) => {
                   const roleColor =
                     u.role === 'ADMIN'
@@ -160,8 +168,8 @@ export const AdminAccountsPage: React.FC = () => {
             </div>
 
             <Pagination
-              currentPage={currentPage}
-              totalPages={Math.ceil(users.length / pageSize) || 1}
+              currentPage={safeUserPage}
+              totalPages={totalUserPages}
               totalItems={users.length}
               pageSize={pageSize}
               onPageChange={(p) => {

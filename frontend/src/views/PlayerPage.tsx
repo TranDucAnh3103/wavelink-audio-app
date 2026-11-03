@@ -673,8 +673,8 @@ export const PlayerPage: React.FC = () => {
         </div>
 
         <Pagination
-          currentPage={episodePage}
-          totalPages={Math.ceil((audio.episodes || []).length / DEFAULT_PAGE_SIZE) || 1}
+          currentPage={Math.min(Math.max(1, episodePage), Math.max(1, Math.ceil((audio.episodes || []).length / DEFAULT_PAGE_SIZE)))}
+          totalPages={Math.max(1, Math.ceil((audio.episodes || []).length / DEFAULT_PAGE_SIZE))}
           totalItems={(audio.episodes || []).length}
           pageSize={DEFAULT_PAGE_SIZE}
           onPageChange={(p) => setEpisodePage(p)}

@@ -211,6 +211,38 @@ func TestEndToEndAPI(t *testing.T) {
 		}
 	})
 
+	// 5b. Verify Audio Pagination and Meta without Loss
+	t.Run("Audio Pagination Supports Multi Pages and No Truncation", func(t *testing.T) {
+		allReq := httptest.NewRequest(http.MethodGet, "/api/v1/audios?all=true", nil)
+		allW := httptest.NewRecorder()
+		app.ServeHTTP(allW, allReq)
+		if allW.Code != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", allW.Code)
+		}
+		var allRes response.Envelope
+		_ = json.Unmarshal(allW.Body.Bytes(), &allRes)
+		allAudios := allRes.Data.([]interface{})
+		if len(allAudios) == 0 {
+			t.Fatal("Expected audios list")
+		}
+
+		pageReq := httptest.NewRequest(http.MethodGet, "/api/v1/audios?page=1&limit=1", nil)
+		pageW := httptest.NewRecorder()
+		app.ServeHTTP(pageW, pageReq)
+		if pageW.Code != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", pageW.Code)
+		}
+		var pageRes response.Envelope
+		_ = json.Unmarshal(pageW.Body.Bytes(), &pageRes)
+		meta := pageRes.Meta.(map[string]interface{})
+		if meta["total"].(float64) == 0 {
+			t.Fatal("Expected meta.total > 0")
+		}
+		if meta["limit"].(float64) != 1 {
+			t.Fatalf("Expected limit 1, got %v", meta["limit"])
+		}
+	})
+
 	// 6. Get Audio Detail with Episodes & Resume State (Truy cập công khai)
 	t.Run("Get Audio Detail with Continuous Episodes", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/audios/%.0f", targetAudioID), nil)

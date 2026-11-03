@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useCategories, useCreateCategory, useUpdateCategory, useDeleteCategory } from '@/hooks/useCategories';
 import { useTags, useCreateTag, useDeleteTag } from '@/hooks/useTags';
 import { Category } from '@/types';
@@ -24,6 +24,14 @@ export const AdminCategoriesPage: React.FC = () => {
   // Pagination for Categories (12 items per page by default, configurable via env)
   const [currentCatPage, setCurrentCatPage] = useState(1);
   const pageSize = DEFAULT_PAGE_SIZE;
+  const totalCatPages = Math.max(1, Math.ceil(categories.length / pageSize));
+  const safeCatPage = Math.min(Math.max(1, currentCatPage), totalCatPages);
+
+  useEffect(() => {
+    if (currentCatPage > totalCatPages) {
+      setCurrentCatPage(totalCatPages);
+    }
+  }, [currentCatPage, totalCatPages]);
 
   // Category Add Modal
   const [isAddCatOpen, setIsAddCatOpen] = useState(false);
@@ -145,7 +153,7 @@ export const AdminCategoriesPage: React.FC = () => {
               <div className="card-comic p-4 text-center text-xs font-bold text-gray-500">Chưa có thể loại nào.</div>
             ) : (
               categories
-                .slice((currentCatPage - 1) * pageSize, currentCatPage * pageSize)
+                .slice((safeCatPage - 1) * pageSize, safeCatPage * pageSize)
                 .map((c) => (
                 <div key={c.id} className="card-comic-sm p-2.5 bg-white flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
@@ -174,8 +182,8 @@ export const AdminCategoriesPage: React.FC = () => {
           </div>
 
           <Pagination
-            currentPage={currentCatPage}
-            totalPages={Math.ceil(categories.length / pageSize) || 1}
+            currentPage={safeCatPage}
+            totalPages={totalCatPages}
             totalItems={categories.length}
             pageSize={pageSize}
             onPageChange={(p) => setCurrentCatPage(p)}
