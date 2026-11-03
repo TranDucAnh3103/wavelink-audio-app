@@ -146,8 +146,16 @@ export const AdminCommunityPage: React.FC = () => {
     );
   });
 
-  const totalPages = Math.ceil(filteredMessages.length / pageSize) || 1;
-  const pagedMessages = filteredMessages.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const totalPages = Math.max(1, Math.ceil(filteredMessages.length / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const pagedMessages = filteredMessages.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
 
   const formatMsgDate = (isoString?: string) => {
     if (!isoString) return 'Vừa xong';
@@ -367,7 +375,7 @@ export const AdminCommunityPage: React.FC = () => {
 
         {/* Pagination */}
         <Pagination
-          currentPage={currentPage}
+          currentPage={safeCurrentPage}
           totalPages={totalPages}
           totalItems={filteredMessages.length}
           pageSize={pageSize}

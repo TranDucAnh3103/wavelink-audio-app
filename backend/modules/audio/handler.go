@@ -72,15 +72,31 @@ func (h *Handler) ListAudios(c *gin.Context) {
 	sortBy := strings.TrimSpace(c.Query("sort"))   // "popular", "latest", etc.
 
 	// Phân trang chuẩn hóa (Pagination)
-	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
-	if err != nil || page < 1 {
-		page = 1
+	pageStr := strings.TrimSpace(c.Query("page"))
+	limitStr := strings.TrimSpace(c.Query("limit"))
+	isAll := c.Query("all") == "true" || limitStr == "all" || limitStr == "0" || limitStr == "-1"
+
+	page := 1
+	if pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p >= 1 {
+			page = p
+		}
 	}
-	limit, err := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	if err != nil || limit < 1 {
-		limit = 20
-	} else if limit > 100 {
-		limit = 100
+
+	limit := 0
+	hasPagination := false
+	if !isAll && limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+			if limit > 10000 {
+				limit = 10000
+			}
+			hasPagination = true
+		}
+	} else if !isAll && pageStr != "" {
+		// Có chỉ định page cụ thể nhưng không có limit -> mặc định 12 phần tử/trang
+		limit = 12
+		hasPagination = true
 	}
 
 	query := h.db.Model(&domain.Audio{}).Preload("Category").Preload("Tags")
@@ -136,7 +152,6 @@ func (h *Handler) ListAudios(c *gin.Context) {
 	}
 
 	var audios []domain.Audio
-	offset := (page - 1) * limit
 	if sortBy == "popular" {
 		query = query.Select("youtube_videos.*").
 			Joins("LEFT JOIN (SELECT audio_id, COUNT(DISTINCT user_id) as v_cnt FROM listening_progress WHERE progress_percent >= 15.0 GROUP BY audio_id) vp ON vp.audio_id = youtube_videos.id").
@@ -145,17 +160,34 @@ func (h *Handler) ListAudios(c *gin.Context) {
 		query = query.Order("youtube_videos.created_at DESC")
 	}
 
-	if err := query.Offset(offset).Limit(limit).Find(&audios).Error; err != nil {
+	if hasPagination {
+		offset := (page - 1) * limit
+		query = query.Offset(offset).Limit(limit)
+	}
+
+	if err := query.Find(&audios).Error; err != nil {
 		response.Internal(c, "Lỗi truy vấn danh sách Audio: "+err.Error())
 		return
+	}
+
+	effLimit := limit
+	if effLimit <= 0 {
+		effLimit = int(totalCount)
+		if effLimit <= 0 {
+			effLimit = 1
+		}
+	}
+	totalPages := int(math.Ceil(float64(totalCount) / float64(effLimit)))
+	if totalPages < 1 {
+		totalPages = 1
 	}
 
 	if len(audios) == 0 {
 		response.OK(c, []domain.Audio{}, gin.H{
 			"total":      totalCount,
 			"page":       page,
-			"limit":      limit,
-			"totalPages": int(math.Ceil(float64(totalCount) / float64(limit))),
+			"limit":      effLimit,
+			"totalPages": totalPages,
 		})
 		return
 	}
@@ -242,11 +274,10 @@ func (h *Handler) ListAudios(c *gin.Context) {
 		result = append(result, a)
 	}
 
-	totalPages := int(math.Ceil(float64(totalCount) / float64(limit)))
 	response.OK(c, result, gin.H{
 		"total":      totalCount,
 		"page":       page,
-		"limit":      limit,
+		"limit":      effLimit,
 		"totalPages": totalPages,
 	})
 }

@@ -17,7 +17,14 @@ export const audioService = {
         if (filter.status) params.append('status', filter.status);
         if (filter.tag) params.append('tag', filter.tag);
         if (filter.page) params.append('page', String(filter.page));
-        if (filter.limit || filter.pageSize) params.append('limit', String(filter.limit || filter.pageSize));
+        if (filter.limit || filter.pageSize) {
+          params.append('limit', String(filter.limit || filter.pageSize));
+        } else if (!filter.page) {
+          // Khi lấy toàn bộ danh sách để client-side phân trang (hoặc thư viện):
+          // Chỉ định rõ all=true và limit=0 để không bị giới hạn mặc định ở 20 bản ghi
+          params.append('all', 'true');
+          params.append('limit', '0');
+        }
         if (filter.my || filter.status === 'my') params.append('status', 'my');
         if (filter.userId) params.append('userId', String(filter.userId));
         else if (filter.createdBy) params.append('createdBy', String(filter.createdBy));
