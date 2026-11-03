@@ -157,6 +157,39 @@ jobs:
             const branch = context.ref.replace('refs/heads/', '');
             console.log(`>>> Kiểm định thành công trên nhánh: ${branch}`);
 
+            // 0. Đảm bảo nhánh base 'preview' luôn tồn tại trên remote
+            try {
+              await github.rest.repos.getBranch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: 'preview'
+              });
+              console.log('>>> Nhánh base preview đã sẵn sàng.');
+            } catch (branchErr) {
+              if (branchErr.status === 404) {
+                console.log('>>> Nhánh preview chưa tồn tại trên remote. Đang tự động khởi tạo từ default branch...');
+                const { data: repoInfo } = await github.rest.repos.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo
+                });
+                const defaultBranch = repoInfo.default_branch || 'main';
+                const { data: refData } = await github.rest.git.getRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/${defaultBranch}`
+                });
+                await github.rest.git.createRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: 'refs/heads/preview',
+                  sha: refData.object.sha
+                });
+                console.log(`>>> Đã khởi tạo thành công nhánh preview từ ${defaultBranch} (SHA: ${refData.object.sha})`);
+              } else {
+                throw branchErr;
+              }
+            }
+
             // 1. Kiểm tra xem đã có PR từ nhánh này vào preview chưa
             const { data: pulls } = await github.rest.pulls.list({
               owner: context.repo.owner,
@@ -171,27 +204,43 @@ jobs:
               pullNumber = pulls[0].number;
               console.log(`>>> Tìm thấy PR #${pullNumber} đang mở vào nhánh preview.`);
             } else {
-              const { data: newPr } = await github.rest.pulls.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `Auto Merge: ${branch} -> preview [Verified UAT]`,
-                head: branch,
-                base: 'preview',
-                body: `### CI/CD Auto-Merge Report (UAT Preview)\n\nToàn bộ các bước kiểm định cho nhánh \`${branch}\` đã hoàn tất xuất sắc:\n- Backend Go 1.26: Test & Lint PASSED\n- Frontend React: Vitest, Vite Build & Next.js Build PASSED\n\nTự động merge vào nhánh \`preview\` để kích hoạt môi trường UAT / Vercel Preview.`
-              });
-              pullNumber = newPr.number;
-              console.log(`>>> Đã tạo mới PR #${pullNumber}.`);
+              try {
+                const { data: newPr } = await github.rest.pulls.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: `Auto Merge: ${branch} -> preview [Verified UAT]`,
+                  head: branch,
+                  base: 'preview',
+                  body: `### CI/CD Auto-Merge Report (UAT Preview)\n\nToàn bộ các bước kiểm định cho nhánh \`${branch}\` đã hoàn tất xuất sắc:\n- Backend Go 1.26: Test & Lint PASSED\n- Frontend React: Vitest, Vite Build & Next.js Build PASSED\n\nTự động merge vào nhánh \`preview\` để kích hoạt môi trường UAT / Vercel Preview.`
+                });
+                pullNumber = newPr.number;
+                console.log(`>>> Đã tạo mới PR #${pullNumber}.`);
+              } catch (createErr) {
+                if (createErr.message && createErr.message.includes('No commits between')) {
+                  console.log(`>>> Không có commit mới giữa ${branch} và preview. Hoàn tất.`);
+                  return;
+                }
+                throw createErr;
+              }
             }
 
             // 2. Thực hiện merge PR vào preview
             console.log(`>>> Tiến hành merge PR #${pullNumber} vào nhánh preview...`);
-            await github.rest.pulls.merge({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pullNumber,
-              merge_method: 'squash'
-            });
-            console.log(`>>> Merge thành công PR #${pullNumber} vào preview!`);
+            try {
+              await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pullNumber,
+                merge_method: 'squash'
+              });
+              console.log(`>>> Merge thành công PR #${pullNumber} vào preview!`);
+            } catch (mergeErr) {
+              if (mergeErr.message && (mergeErr.message.includes('already merged') || mergeErr.message.includes('not mergeable'))) {
+                console.log(`>>> Cảnh báo khi merge: ${mergeErr.message}`);
+              } else {
+                throw mergeErr;
+              }
+            }
 
             // 3. Tự động dọn dẹp nhánh tạm (nếu là nhánh auto/* hoặc feat/*)
             if (branch.startsWith('auto/') || branch.startsWith('feat/') || branch.startsWith('feature/')) {

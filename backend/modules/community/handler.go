@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -234,6 +235,15 @@ func (h *Handler) GetVipLeaderboard(c *gin.Context) {
 // GetMessages lấy danh sách tin nhắn chat gần đây trong phòng thảo luận
 func (h *Handler) GetMessages(c *gin.Context) {
 	limit := 50
+	limitStr := strings.TrimSpace(c.Query("limit"))
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		limit = l
+		if limit > 2000 {
+			limit = 2000
+		}
+	} else if limitStr == "all" || limitStr == "0" || c.Query("all") == "true" {
+		limit = 2000
+	}
 
 	var messages []domain.CommunityMessage
 	err := h.db.Order("id DESC").

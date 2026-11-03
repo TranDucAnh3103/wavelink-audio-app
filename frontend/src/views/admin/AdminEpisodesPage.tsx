@@ -43,8 +43,16 @@ export const AdminEpisodesPage: React.FC = () => {
     setCurrentPage(1);
   }, [selectedAudioId]);
 
-  const totalPages = Math.ceil(episodes.length / pageSize) || 1;
-  const paginatedEpisodes = episodes.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const totalPages = Math.max(1, Math.ceil(episodes.length / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const paginatedEpisodes = episodes.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
 
   const [rechunkBlockSize, setRechunkBlockSize] = useState<number>(14400);
   const [isRechunking, setIsRechunking] = useState(false);
@@ -292,7 +300,7 @@ export const AdminEpisodesPage: React.FC = () => {
             </div>
 
             <Pagination
-              currentPage={currentPage}
+              currentPage={safeCurrentPage}
               totalPages={totalPages}
               totalItems={episodes.length}
               pageSize={pageSize}

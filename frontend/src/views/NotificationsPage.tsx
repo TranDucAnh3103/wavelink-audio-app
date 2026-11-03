@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   useNotifications,
@@ -30,6 +30,13 @@ export const NotificationsPage: React.FC = () => {
   const pageSize = NOTIFICATION_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(notifications.length / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
   const paginatedNotifications = notifications.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
 
   const markReadMutation = useMarkNotificationAsRead();
