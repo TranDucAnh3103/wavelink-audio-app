@@ -375,3 +375,33 @@ func TestCalculateResumeState(t *testing.T) {
 		}
 	})
 }
+
+func TestFormatSlug(t *testing.T) {
+	testCases := []struct {
+		input    string
+		expected string
+	}{
+		{"Tiên Hiệp", "tien-hiep"},
+		{"Tu Tiên", "tu-tien"},
+		{"  #Kiếm Hiệp  ", "kiem-hiep"},
+		{"Huyền Huyễn - Dị Giới", "huyen-huyen-di-gioi"},
+		{"Audiobook", "audiobook"},
+		{"Sách Nói 2026", "sach-noi-2026"},
+		{"Đô Thị", "do-thi"},
+		{"Linh Dị Ma Quái & Trừ Tà", "linh-di-ma-quai-tru-ta"},
+		{"  ###  ", ""},
+		{"", ""},
+		{"Tag_With_Underscore", "tag-with-underscore"},
+		{"Trọng Sinh, Xuyên Không", "trong-sinh-xuyen-khong"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.input, func(t *testing.T) {
+			actual := logic.FormatSlug(tc.input)
+			if actual != tc.expected {
+				t.Errorf("FormatSlug(%q) = %q, expected %q", tc.input, actual, tc.expected)
+			}
+		})
+	}
+}
+

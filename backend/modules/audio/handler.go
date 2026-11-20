@@ -550,15 +550,28 @@ func (h *Handler) ImportYouTube(c *gin.Context) {
 
 		// Gắn tags tương thích chuẩn GORM Association (Hoàn toàn không dùng raw SQL INSERT OR IGNORE)
 		var tagsToAdd []domain.Tag
-		for _, tagName := range req.Tags {
+		seenTags := make(map[string]bool)
+		for _, rawTagName := range req.Tags {
+			tagName := strings.TrimSpace(rawTagName)
+			tagName = strings.TrimPrefix(tagName, "#")
 			tagName = strings.TrimSpace(tagName)
 			if tagName == "" {
 				continue
 			}
+			slug := logic.FormatSlug(tagName)
+			if slug == "" {
+				continue
+			}
+			if seenTags[slug] {
+				continue
+			}
+			seenTags[slug] = true
+
 			var tag domain.Tag
-			slug := strings.ToLower(strings.ReplaceAll(tagName, " ", "-"))
 			tx.Where(domain.Tag{Name: tagName}).Attrs(domain.Tag{Slug: slug}).FirstOrCreate(&tag)
-			tagsToAdd = append(tagsToAdd, tag)
+			if tag.ID > 0 {
+				tagsToAdd = append(tagsToAdd, tag)
+			}
 		}
 
 		if len(tagsToAdd) > 0 {
@@ -679,15 +692,28 @@ func (h *Handler) UpdateAudio(c *gin.Context) {
 	// Cập nhật Tags nếu có truyền req.Tags
 	if req.Tags != nil {
 		var tagsToAdd []domain.Tag
-		for _, tagName := range req.Tags {
+		seenTags := make(map[string]bool)
+		for _, rawTagName := range req.Tags {
+			tagName := strings.TrimSpace(rawTagName)
+			tagName = strings.TrimPrefix(tagName, "#")
 			tagName = strings.TrimSpace(tagName)
 			if tagName == "" {
 				continue
 			}
+			slug := logic.FormatSlug(tagName)
+			if slug == "" {
+				continue
+			}
+			if seenTags[slug] {
+				continue
+			}
+			seenTags[slug] = true
+
 			var tag domain.Tag
-			slug := strings.ToLower(strings.ReplaceAll(tagName, " ", "-"))
 			h.db.Where(domain.Tag{Name: tagName}).Attrs(domain.Tag{Slug: slug}).FirstOrCreate(&tag)
-			tagsToAdd = append(tagsToAdd, tag)
+			if tag.ID > 0 {
+				tagsToAdd = append(tagsToAdd, tag)
+			}
 		}
 		_ = h.db.Model(&audio).Association("Tags").Replace(tagsToAdd)
 	}
