@@ -1,6 +1,7 @@
 import { ProgressPayload, AudioItem, Episode, ListeningHistoryItem, RecordHistoryPayload } from '@/types';
 import { formatTime } from '@/lib/utils';
 import { axiosClient } from '@/lib/axiosClient';
+import { localDb } from './localDb';
 
 const GUEST_PROGRESS_KEY = 'wavelink_guest_progress';
 const GUEST_HISTORY_KEY = 'wavelink_guest_history';
@@ -123,25 +124,57 @@ export const guestSessionService = {
       const audioId = Number(payload.audioId);
       const episodeId = Number(payload.episodeId);
 
-      const epTitle = currentEpisode?.title || 'Tập 1';
-      const epNum = currentEpisode?.episodeNumber || 1;
-      const pos = currentEpisode?.positionSeconds || 0;
-      const percent = currentEpisode?.progressPercent || 0;
+      // 1. Phục hồi AudioItem nếu bị khuyết hoặc truyền thiếu
+      let resolvedAudio = payload.audio || currentAudio;
+      if (!resolvedAudio || !resolvedAudio.title || resolvedAudio.title === 'Truyện Audio') {
+        const db = localDb.get();
+        const found = db.audios?.find((a) => Number(a.id) === audioId);
+        if (found) resolvedAudio = found;
+      }
+
+      // 2. Phục hồi Episode nếu bị khuyết
+      let resolvedEpisode = payload.episode || currentEpisode;
+      if (!resolvedEpisode && resolvedAudio?.episodes) {
+        resolvedEpisode = resolvedAudio.episodes.find((e) => Number(e.id) === episodeId) || null;
+      }
+
+      // 3. Lấy vị trí thời gian và phần trăm nghe chính xác
+      const pos =
+        payload.positionSeconds !== undefined
+          ? payload.positionSeconds
+          : resolvedEpisode?.positionSeconds || 0;
+
+      const dur =
+        resolvedEpisode?.duration ||
+        (resolvedEpisode ? resolvedEpisode.endSeconds - resolvedEpisode.startSeconds : 0) ||
+        resolvedAudio?.totalDurationSeconds ||
+        14400;
+
+      const percent =
+        payload.progressPercent !== undefined
+          ? payload.progressPercent
+          : resolvedEpisode?.progressPercent || Math.min(100, Math.round((pos / dur) * 100));
+
+      const epTitle = resolvedEpisode?.title || (payload.episode ? payload.episode.title : 'Tập 1');
+      const epNum = resolvedEpisode?.episodeNumber || (payload.episode ? payload.episode.episodeNumber : 1);
+      const listenedDuration = Math.round(payload.durationListened || pos || 60);
+      const totalListened = Math.round(payload.totalDurationListened || listenedDuration);
 
       const newItem: ListeningHistoryItem = {
         id: Date.now(),
         audioId,
         episodeId,
-        title: currentAudio?.title || 'Truyện Audio',
+        title: resolvedAudio?.title || 'Truyện Audio',
         currentEpisodeId: episodeId,
         currentEpisodeNumber: epNum,
         currentEpisodeTitle: epTitle,
         episodeTitle: epTitle,
-        thumbnailUrl: currentAudio?.thumbnailUrl || '',
+        thumbnailUrl: resolvedAudio?.thumbnailUrl || '',
         lastPositionSeconds: pos,
         formattedPosition: formatTime(pos),
         progressPercent: percent,
-        durationListened: Math.round(payload.durationListened),
+        durationListened: listenedDuration,
+        totalDurationListened: totalListened,
         createdAt: new Date().toISOString(),
       };
 

@@ -21,7 +21,7 @@ const resolveApiBase = (): string => {
 
     // B. Môi trường Production trên Web Hosting zHost: Kết nối Cloudflare Quick Tunnel của Home Server
     if (hostname.includes('zhost.education')) {
-      return 'https://translations-draw-involves-jpg.trycloudflare.com/api/v1';
+      return 'https://perth-obj-blackberry-favor.trycloudflare.com/api/v1';
     }
 
     // C. Môi trường Cục bộ (Local Development)

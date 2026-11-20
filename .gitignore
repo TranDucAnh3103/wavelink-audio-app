@@ -69,3 +69,4 @@ Thumbs.db
 .next/
 frontend/.next/
 *.tsbuildinfo
+*.apk

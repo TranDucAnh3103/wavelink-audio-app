@@ -978,6 +978,11 @@ function saveProgressFor(audio: AudioItem, episode: Episode, currentTime: number
       audioId: audio.id,
       episodeId: episode.id,
       durationListened: accumulatedDuration,
+      totalDurationListened: accumulatedDuration,
+      audio,
+      episode,
+      positionSeconds: currentTime,
+      progressPercent: percent,
     });
   }
 

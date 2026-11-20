@@ -206,4 +206,49 @@ describe('Guest Session Service & Storage Flow', () => {
     expect(guestSessionService.getAllGuestProgress().length).toBe(0);
     expect(guestSessionService.getGuestHistory().length).toBe(0);
   });
+
+  it('7. saveGuestHistory correctly preserves rich audio metadata, durationListened & totalDurationListened', () => {
+    guestSessionService.saveGuestHistory({
+      audioId: 10,
+      episodeId: 1001,
+      durationListened: 125,
+      totalDurationListened: 450,
+      positionSeconds: 240,
+      progressPercent: 20,
+      audio: {
+        id: 10,
+        title: 'Mục Thần Ký',
+        thumbnailUrl: 'https://example.com/mucthanky.jpg',
+        author: 'Trạch Trư',
+        youtubeVideoId: 'mtk123',
+        youtubeUrl: 'https://youtube.com/watch?v=mtk123',
+        categoryId: 1,
+        totalEpisodes: 5,
+        totalDurationSeconds: 12000,
+      },
+      episode: {
+        id: 1001,
+        audioId: 10,
+        episodeNumber: 2,
+        title: 'Tập 2: Tàn Lão Thôn',
+        startSeconds: 2400,
+        endSeconds: 4800,
+        duration: 2400,
+      },
+    });
+
+    const history = guestSessionService.getGuestHistory();
+    expect(history.length).toBe(1);
+    const item = history[0];
+    expect(item.audioId).toBe(10);
+    expect(item.title).toBe('Mục Thần Ký');
+    expect(item.thumbnailUrl).toBe('https://example.com/mucthanky.jpg');
+    expect(item.currentEpisodeTitle).toBe('Tập 2: Tàn Lão Thôn');
+    expect(item.currentEpisodeNumber).toBe(2);
+    expect(item.lastPositionSeconds).toBe(240);
+    expect(item.formattedPosition).toBe('04:00');
+    expect(item.progressPercent).toBe(20);
+    expect(item.durationListened).toBe(125);
+    expect(item.totalDurationListened).toBe(450);
+  });
 });
