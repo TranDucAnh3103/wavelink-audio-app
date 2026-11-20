@@ -24,7 +24,7 @@ export const UploadPage: React.FC = () => {
 
   const [url, setUrl] = useState('');
   const [categoryId, setCategoryId] = useState<number>(1);
-  const [tags, setTags] = useState<string[]>(['Audiobook', 'TuTiên', 'TrọnBộ']);
+  const [tags, setTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState('');
   const [durationInput, setDurationInput] = useState('');
   const [blockSize, setBlockSize] = useState<number>(14400);
@@ -50,47 +50,167 @@ export const UploadPage: React.FC = () => {
   }, [categories, categoryId]);
 
   const autoScanMetadata = (title: string, description?: string) => {
-    const text = `${title} ${description || ''}`.toLowerCase();
+    const descText = description || '';
+    const fullText = `${title} ${descText}`;
+    const text = fullText.toLowerCase();
 
-    // 1. Quét và tự động chọn thể loại phù hợp nhất
+    // 1. Quét và tự động chọn thể loại (Category) phù hợp nhất từ danh sách categories DB
     if (categories.length > 0) {
-      let matchedCategory = categories.find((c) => text.includes(c.name.toLowerCase()));
+      let matchedCategory = undefined;
+
+      // a1. Ưu tiên khớp tên thể loại trực tiếp (sắp xếp giảm dần theo độ dài tên)
+      const sortedCategories = [...categories].sort((a, b) => b.name.length - a.name.length);
+      matchedCategory = sortedCategories.find((c) => text.includes(c.name.toLowerCase()));
+
+      // a2. Tìm khớp theo slug (chuyển '-' thành khoảng trắng)
       if (!matchedCategory) {
-        if (text.includes('tiên hiệp') || text.includes('tu tiên') || text.includes('tu chân') || text.includes('huyền huyễn')) {
-          matchedCategory = categories.find((c) => c.slug.includes('tien-hiep') || c.name.toLowerCase().includes('tiên hiệp'));
-        } else if (text.includes('kiếm hiệp') || text.includes('võ hiệp') || text.includes('kim dung')) {
-          matchedCategory = categories.find((c) => c.slug.includes('kiem-hiep') || c.name.toLowerCase().includes('kiếm hiệp'));
-        } else if (text.includes('kinh dị') || text.includes('truyện ma') || text.includes('nguyễn ngọc ngạn') || text.includes('rùng rợn')) {
-          matchedCategory = categories.find((c) => c.slug.includes('kinh-di') || c.name.toLowerCase().includes('kinh dị'));
-        } else if (text.includes('ngôn tình') || text.includes('tình cảm') || text.includes('lãng mạn') || text.includes('sủng')) {
-          matchedCategory = categories.find((c) => c.slug.includes('ngon-tinh') || c.name.toLowerCase().includes('ngôn tình'));
-        } else if (text.includes('trinh thám') || text.includes('vụ án') || text.includes('thám tử')) {
-          matchedCategory = categories.find((c) => c.slug.includes('trinh-tham') || c.name.toLowerCase().includes('trinh thám'));
-        } else if (text.includes('sách nói') || text.includes('audiobook') || text.includes('kỹ năng') || text.includes('tâm lý')) {
-          matchedCategory = categories.find((c) => c.slug.includes('audiobook') || c.name.toLowerCase().includes('sách') || c.slug.includes('sach-noi'));
+        matchedCategory = sortedCategories.find((c) => {
+          const slugText = c.slug.replace(/-/g, ' ').toLowerCase();
+          return text.includes(slugText);
+        });
+      }
+
+      // a3. Tìm theo từ khóa ngữ nghĩa nếu tiêu đề/mô tả dùng thuật ngữ tương đương
+      if (!matchedCategory) {
+        const findCat = (slugs: string[], names: string[]) => {
+          return categories.find((c) => {
+            const s = c.slug.toLowerCase();
+            const n = c.name.toLowerCase();
+            return slugs.some((slug) => s.includes(slug)) || names.some((name) => n.includes(name));
+          });
+        };
+
+        if (text.includes('tiên hiệp') || text.includes('tu tiên') || text.includes('tu chân') || text.includes('phi thăng')) {
+          matchedCategory = findCat(['tien-hiep'], ['tiên hiệp']);
+        } else if (text.includes('kiếm hiệp') || text.includes('võ hiệp') || text.includes('kim dung') || text.includes('cổ long') || text.includes('võ lâm')) {
+          matchedCategory = findCat(['kiem-hiep'], ['kiếm hiệp']);
+        } else if (text.includes('huyền huyễn') || text.includes('dị giới') || text.includes('ma pháp') || text.includes('đấu khí')) {
+          matchedCategory = findCat(['huyen-huyen'], ['huyền huyễn']);
+        } else if (text.includes('xuyên nhanh') || text.includes('khoái xuyên')) {
+          matchedCategory = findCat(['xuyen-nhanh'], ['xuyên nhanh']);
+        } else if (text.includes('xuyên không') || text.includes('xuyên việt') || text.includes('xuyên thư')) {
+          matchedCategory = findCat(['xuyen-khong'], ['xuyên không']);
+        } else if (text.includes('trọng sinh') || text.includes('tái sinh') || text.includes('sống lại')) {
+          matchedCategory = findCat(['trong-sinh'], ['trọng sinh']);
+        } else if (text.includes('kinh dị') || text.includes('truyện ma') || text.includes('nguyễn ngọc ngạn') || text.includes('rùng rợn') || text.includes('ma quái') || text.includes('linh dị') || text.includes('quái đàm')) {
+          matchedCategory = findCat(['ma-kinh-di', 'kinh-di', 'linh-di'], ['kinh dị', 'linh dị', 'ma']);
+        } else if (text.includes('ngôn tình') || text.includes('tình cảm') || text.includes('lãng mạn') || text.includes('sủng') || text.includes('tổng tài')) {
+          matchedCategory = findCat(['ngon-tinh'], ['ngôn tình']);
+        } else if (text.includes('trinh thám') || text.includes('vụ án') || text.includes('thám tử') || text.includes('phá án')) {
+          matchedCategory = findCat(['trinh-tham'], ['trinh thám']);
+        } else if (text.includes('mạt thế') || text.includes('tận thế') || text.includes('thây ma') || text.includes('zombie')) {
+          matchedCategory = findCat(['mat-the'], ['mạt thế']);
+        } else if (text.includes('đô thị') || text.includes('thương trường') || text.includes('hào môn')) {
+          matchedCategory = findCat(['do-thi'], ['đô thị']);
+        } else if (text.includes('võng du') || text.includes('game online') || text.includes('thực tế ảo')) {
+          matchedCategory = findCat(['vong-du'], ['võng du']);
+        } else if (text.includes('khoa huyễn') || text.includes('viễn tưởng') || text.includes('cơ giáp') || text.includes('tinh tế')) {
+          matchedCategory = findCat(['khoa-huyen'], ['khoa huyễn']);
+        } else if (text.includes('hệ thống') || text.includes('điểm danh')) {
+          matchedCategory = findCat(['he-thong'], ['hệ thống']);
+        } else if (text.includes('dị năng') || text.includes('siêu năng')) {
+          matchedCategory = findCat(['di-nang'], ['dị năng']);
+        } else if (text.includes('vô địch lưu') || text.includes('vô địch')) {
+          matchedCategory = findCat(['vo-dich'], ['vô địch']);
+        } else if (text.includes('sảng văn')) {
+          matchedCategory = findCat(['sang-van'], ['sảng văn']);
+        } else if (text.includes('lịch sử quân sự') || text.includes('lịch sử') || text.includes('quân sự') || text.includes('chiến tranh')) {
+          matchedCategory = findCat(['lich-su-quan-su', 'lich-su'], ['lịch sử']);
+        } else if (text.includes('cung đấu gia đấu') || text.includes('cung đấu') || text.includes('gia đấu') || text.includes('trạch đấu')) {
+          matchedCategory = findCat(['cung-dau'], ['cung đấu']);
+        } else if (text.includes('sách nói') || text.includes('audiobook') || text.includes('kỹ năng') || text.includes('tâm lý') || text.includes('self help')) {
+          matchedCategory = findCat(['audiobook', 'sach-noi', 'sach'], ['sách nói', 'audiobook', 'sách']);
         }
       }
+
       if (matchedCategory) {
         setCategoryId(matchedCategory.id);
       }
     }
 
-    // 2. Quét và tự động gắn thẻ tags liên quan
-    const KEYWORD_TAGS = [
-      'Tiên Hiệp', 'Tu Tiên', 'Kiếm Hiệp', 'Kinh Dị', 'Truyện Ma',
-      'Ngôn Tình', 'Audiobook', 'Sách Nói', 'Trinh Thám', 'Huyền Huyễn',
-      'Đô Thị', 'Trọng Sinh', 'Xuyên Không', 'Hài Hước', 'Tổng Tài',
-      'Truyện Ngắn', 'Trọn Bộ', 'Full'
-    ];
+    // 2. Trích xuất tags từ hashtags trong description/title và từ khóa ngữ nghĩa
     const detectedTags: string[] = [];
-    for (const kw of KEYWORD_TAGS) {
-      if (text.includes(kw.toLowerCase())) {
-        detectedTags.push(kw);
+    const addDetectedTag = (tag: string) => {
+      const clean = tag.replace(/^#+/, '').trim();
+      if (!clean) return;
+      const exists = detectedTags.some((t) => t.toLowerCase() === clean.toLowerCase());
+      if (!exists) {
+        detectedTags.push(clean);
+      }
+    };
+
+    // 2a. Bóc tách hashtag (#...) từ description và title
+    const HASHTAG_MAP: Record<string, string> = {
+      tienhiep: 'Tiên Hiệp',
+      tutien: 'Tu Tiên',
+      kiemhiep: 'Kiếm Hiệp',
+      huyenhuyen: 'Huyền Huyễn',
+      xuyenkhong: 'Xuyên Không',
+      xuyennhanh: 'Xuyên Nhanh',
+      trongsinh: 'Trọng Sinh',
+      dothi: 'Đô Thị',
+      kinhdi: 'Kinh Dị',
+      truyenma: 'Truyện Ma',
+      linhdi: 'Linh Dị',
+      matthe: 'Mạt Thế',
+      khoahuyen: 'Khoa Huyễn',
+      vongdu: 'Võng Du',
+      hethong: 'Hệ Thống',
+      dinang: 'Dị Năng',
+      audiobook: 'Audiobook',
+      sachnoi: 'Sách Nói',
+      trinhtham: 'Trinh Thám',
+      ngontinh: 'Ngôn Tình',
+      cungdau: 'Cung Đấu',
+      lichsu: 'Lịch Sử',
+      haihuoc: 'Hài Hước',
+      tongtai: 'Tổng Tài',
+      tronbo: 'Trọn Bộ',
+      full: 'Full',
+      vodich: 'Vô Địch Lưu',
+      vodichluu: 'Vô Địch Lưu',
+      caudao: 'Cẩu Đạo',
+      hacam: 'Hắc Ám',
+      haucung: 'Hậu Cung',
+      truyenngan: 'Truyện Ngắn',
+      audiodai: 'Audio Dài',
+      bachngocsach: 'Bạch Ngọc Sách',
+    };
+
+    const hashtagMatches = fullText.matchAll(/#([\p{L}\p{N}_-]+)/gu);
+    for (const match of hashtagMatches) {
+      const raw = match[1].trim();
+      if (!raw) continue;
+      const key = raw.toLowerCase().replace(/[-_]/g, '');
+      if (HASHTAG_MAP[key]) {
+        addDetectedTag(HASHTAG_MAP[key]);
+      } else {
+        const formatted = raw.replace(/[_-]/g, ' ');
+        const displayTag = formatted.charAt(0).toUpperCase() + formatted.slice(1);
+        addDetectedTag(displayTag);
       }
     }
+
+    // 2b. Quét các từ khóa ngữ nghĩa
+    const SEMANTIC_KEYWORD_TAGS = [
+      'Tiên Hiệp', 'Tu Tiên', 'Kiếm Hiệp', 'Huyền Huyễn', 'Xuyên Không', 'Xuyên Nhanh',
+      'Trọng Sinh', 'Đô Thị', 'Kinh Dị', 'Truyện Ma', 'Linh Dị', 'Mạt Thế', 'Khoa Huyễn',
+      'Võng Du', 'Hệ Thống', 'Dị Năng', 'Audiobook', 'Sách Nói', 'Trinh Thám',
+      'Ngôn Tình', 'Cung Đấu', 'Lịch Sử Quân Sự', 'Hài Hước', 'Tổng Tài',
+      'Trọn Bộ', 'Full', 'Truyện Ngắn', 'Vô Địch Lưu', 'Cẩu Đạo', 'Hắc Ám',
+      'Đô Thị Tu Tiên', 'Hậu Cung', 'Sát Phạt Quyết Đoán', 'Bạch Ngọc Sách', 'Audio Dài'
+    ];
+    for (const kw of SEMANTIC_KEYWORD_TAGS) {
+      if (text.includes(kw.toLowerCase())) {
+        addDetectedTag(kw);
+      }
+    }
+
     if (detectedTags.length > 0) {
-      setTags((prev) => Array.from(new Set([...prev, ...detectedTags])));
+      setTags(detectedTags);
       toast.info(`Hệ thống đã tự động nhận diện và gắn thẻ: ${detectedTags.slice(0, 3).join(', ')}`);
+    } else {
+      setTags([]);
     }
   };
 
@@ -190,15 +310,20 @@ export const UploadPage: React.FC = () => {
   };
 
   const handleAddTag = () => {
-    const t = newTag.trim();
-    if (t && !tags.includes(t)) {
-      setTags([...tags, t]);
+    const cleanTag = newTag.trim().replace(/^#+/, '').trim();
+    if (!cleanTag) return;
+    const isDuplicate = tags.some((t) => t.toLowerCase() === cleanTag.toLowerCase());
+    if (isDuplicate) {
+      toast.info(`Thẻ tag "${cleanTag}" đã tồn tại`);
       setNewTag('');
+      return;
     }
+    setTags((prev) => [...prev, cleanTag]);
+    setNewTag('');
   };
 
   const handleRemoveTag = (tagToRemove: string) => {
-    setTags(tags.filter((t) => t !== tagToRemove));
+    setTags((prev) => prev.filter((t) => t !== tagToRemove));
   };
 
   const calculatedTotalSec = parseDurationToSec(durationInput, previewData?.durationSeconds || 0);
@@ -543,19 +668,28 @@ export const UploadPage: React.FC = () => {
 
           <div className="flex flex-col gap-1.5 mt-1">
             <label className="font-extrabold text-xs uppercase text-black">Thẻ Tag (Phân loại)</label>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {tags.map((tag) => (
-                <span key={tag} className="badge-comic badge-comic-yellow text-[10px] py-1 px-2 flex items-center gap-1">
-                  #{tag}
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveTag(tag)}
-                    className="font-black hover:text-red-600"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
+            <div className="flex flex-wrap items-center gap-1.5 min-h-[28px]">
+              {tags.length === 0 ? (
+                <span className="text-gray-400 text-[11px] italic">Chưa có tag nào (tự động nhận diện khi nhập link YouTube)</span>
+              ) : (
+                tags.map((tag) => (
+                  <span key={tag} className="badge-comic badge-comic-yellow text-[10px] py-1 px-2 flex items-center gap-1">
+                    #{tag}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRemoveTag(tag);
+                      }}
+                      className="font-black hover:text-red-600 ml-0.5 leading-none focus:outline-none"
+                      title={`Xóa thẻ #${tag}`}
+                      aria-label={`Xóa thẻ #${tag}`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))
+              )}
             </div>
             <div className="flex items-center gap-1.5 mt-1">
               <input

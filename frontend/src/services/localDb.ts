@@ -11,6 +11,34 @@ export interface LocalDbSchema {
 
 const DB_KEY = 'audio_library_db';
 
+export const isMockAudio = (audio: Partial<AudioItem> | null | undefined): boolean => {
+  if (!audio) return false;
+  const mockVideoIds = ['dQw4w9WgXcQ', 'k3_tw44QsZQ', 'L_LUpnjgPso', 'fJ9rUzIMcZQ'];
+  const mockTitles = [
+    'phàm nhân tu tiên',
+    'đại phụng đả canh nhân',
+    'tri thức vô tận - lịch sử đông nam á',
+    'kiếm lai - quyển 04',
+  ];
+  if (audio.youtubeVideoId && mockVideoIds.includes(audio.youtubeVideoId)) {
+    if (audio.title && mockTitles.includes(audio.title.toLowerCase().trim())) {
+      return true;
+    }
+  }
+  if (
+    (audio.id === 1 && audio.title?.toLowerCase().includes('phàm nhân tu tiên')) ||
+    (audio.id === 2 && audio.title?.toLowerCase().includes('đại phụng đả canh nhân')) ||
+    (audio.id === 3 && audio.title?.toLowerCase().includes('tri thức vô tận')) ||
+    (audio.id === 4 && audio.title?.toLowerCase().includes('kiếm lai'))
+  ) {
+    return true;
+  }
+  if ((audio as any).isSample || (audio as any).isMock) {
+    return true;
+  }
+  return false;
+};
+
 class LocalDbManager {
   private db: LocalDbSchema | null = null;
   private isLoaded = false;
@@ -23,43 +51,43 @@ class LocalDbManager {
       if (cached) {
         this.db = JSON.parse(cached);
       } else {
-        const res = await fetch('./data/db.json');
-        if (res.ok) {
-          this.db = await res.json();
-          this.save();
-        } else {
-          throw new Error('Failed to fetch db.json');
-        }
+        this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
       }
     } catch {
-      this.db = {
-        systemStats: { totalAudios: 0, listeningCount: 0, completedCount: 0, totalHoursListened: 0 },
-        categories: [
-          { id: 1, name: 'Tiên hiệp', slug: 'tien-hiep' },
-          { id: 2, name: 'Huyền huyễn', slug: 'huyen-huyen' },
-        ],
-        tags: [
-          { id: 1, name: 'Tu tiên', slug: 'tu-tien' },
-          { id: 2, name: 'Audiobook', slug: 'audiobook' },
-        ],
-        audios: [],
-        recentHistory: [],
-      };
+      this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
+    }
+    if (!this.db) {
+      this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
+    }
+    if (Array.isArray(this.db.audios)) {
+      this.db.audios = this.db.audios.filter((a) => !isMockAudio(a));
     }
     this.isLoaded = true;
-    return this.db!;
+    return this.db;
   }
 
   get(): LocalDbSchema {
     if (!this.db) {
       const cached = typeof localStorage !== 'undefined' ? localStorage.getItem(DB_KEY) : null;
       if (cached) {
-        this.db = JSON.parse(cached);
+        try {
+          this.db = JSON.parse(cached);
+        } catch {
+          this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
+        }
       } else {
         this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
       }
     }
-    return this.db!;
+    if (!this.db) {
+      this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
+    }
+    if (!this.db.audios) this.db.audios = [];
+    if (!this.db.categories) this.db.categories = [];
+    if (!this.db.tags) this.db.tags = [];
+    if (!this.db.recentHistory) this.db.recentHistory = [];
+    if (!this.db.systemStats) this.db.systemStats = {};
+    return this.db;
   }
 
   save() {

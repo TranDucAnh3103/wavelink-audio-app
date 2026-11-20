@@ -1,6 +1,6 @@
 import { axiosClient } from '@/lib/axiosClient';
 import { AudioItem, AudioFilter, YouTubePreviewData, ImportYouTubePayload, ImportResult, ImportQuota, User } from '@/types';
-import { localDb } from './localDb';
+import { localDb, isMockAudio } from './localDb';
 import { extractYouTubeId, formatTime, formatDuration } from '@/lib/utils';
 import { guestSessionService } from './guestSessionService';
 import { useAuthStore } from '@/stores/authStore';
@@ -55,9 +55,9 @@ export const audioService = {
       }
     }
 
-    // Local DB fallback
+    // Local DB fallback: DO NOT fallback to fake mock audios! Return empty array [] or only real cached user audios (no fake sample data)
     const db = localDb.get();
-    let list = [...(db.audios || [])];
+    let list = [...(db.audios || [])].filter((a) => !isMockAudio(a));
 
     if (!token) {
       list = guestSessionService.applyGuestProgressToAudios(list);
@@ -147,6 +147,9 @@ export const audioService = {
 
     const db = localDb.get();
     let item = db.audios.find((a) => String(a.id) === String(id));
+    if (item && isMockAudio(item)) {
+      return null;
+    }
     if (item && !token) {
       item = guestSessionService.applyGuestProgressToAudio(item);
     }
@@ -167,7 +170,7 @@ export const audioService = {
 
     const db = localDb.get();
     const audio = db.audios.find((a) => String(a.id) === String(id));
-    if (audio) {
+    if (audio && !isMockAudio(audio)) {
       Object.assign(audio, data);
       if (data.isVipOnly !== undefined || data.isVIPOnly !== undefined) {
         const flag = Boolean(data.isVipOnly || data.isVIPOnly);
@@ -232,7 +235,7 @@ export const audioService = {
 
     const db = localDb.get();
     const audio = db.audios.find((a) => String(a.id) === String(audioId));
-    if (audio) {
+    if (audio && !isMockAudio(audio)) {
       audio.isFavorite = !audio.isFavorite;
       localDb.save();
       return audio.isFavorite;
@@ -367,7 +370,7 @@ export const audioService = {
     }
 
     const db = localDb.get();
-    const exists = db.audios.find((a) => a.youtubeVideoId === videoId);
+    const exists = db.audios.find((a) => a.youtubeVideoId === videoId && !isMockAudio(a));
     if (exists) {
       return { duplicate: true, audio: exists };
     }

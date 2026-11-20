@@ -64,6 +64,47 @@ export const PlayerPage: React.FC = () => {
     return false;
   });
 
+  const [activeTab, setActiveTab] = useState<'player' | 'episodes'>('player');
+  const [isDescriptionOpen, setIsDescriptionOpen] = useState(false);
+  const [episodeSearch, setEpisodeSearch] = useState('');
+
+  const touchStartXRef = React.useRef<number | null>(null);
+  const touchStartYRef = React.useRef<number | null>(null);
+  const touchCurrentXRef = React.useRef<number | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartXRef.current = e.touches[0].clientX;
+    touchStartYRef.current = e.touches[0].clientY;
+    touchCurrentXRef.current = e.touches[0].clientX;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    touchCurrentXRef.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartXRef.current === null || touchStartYRef.current === null) return;
+    const endX = touchCurrentXRef.current !== null ? touchCurrentXRef.current : (e.changedTouches[0]?.clientX ?? touchStartXRef.current);
+    const endY = e.changedTouches[0]?.clientY ?? touchStartYRef.current;
+    const deltaX = endX - touchStartXRef.current;
+    const deltaY = endY - touchStartYRef.current;
+
+    // Only trigger if horizontal swipe is significantly larger than vertical movement
+    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50) {
+      if (deltaX > 50) {
+        // Lướt sang phải (swipe right, deltaX > 50): switch to View 2 (Danh sách tập)
+        setActiveTab('episodes');
+      } else if (deltaX < -50) {
+        // Lướt sang trái (swipe left, deltaX < -50): switch to View 1 (Chi tiết player)
+        setActiveTab('player');
+      }
+    }
+
+    touchStartXRef.current = null;
+    touchStartYRef.current = null;
+    touchCurrentXRef.current = null;
+  };
+
   const toggleSeekLock = () => {
     const nextVal = !isSeekLocked;
     setIsSeekLocked(nextVal);
@@ -83,6 +124,25 @@ export const PlayerPage: React.FC = () => {
   currentTimeRef.current = currentTime;
   const currentEpisodeRef = React.useRef(currentEpisode);
   currentEpisodeRef.current = currentEpisode;
+
+  // Memoize episodes and pagination BEFORE any conditional returns (prevents React Hook order error)
+  const episodesList = React.useMemo(() => audio?.episodes || [], [audio?.episodes]);
+  const filteredEpisodes = React.useMemo(() => {
+    if (!episodeSearch.trim()) return episodesList;
+    const q = episodeSearch.toLowerCase().trim();
+    return episodesList.filter(
+      (ep) =>
+        ep.title.toLowerCase().includes(q) ||
+        String(ep.episodeNumber).includes(q)
+    );
+  }, [episodesList, episodeSearch]);
+
+  const totalEpisodePages = Math.max(1, Math.ceil(filteredEpisodes.length / DEFAULT_PAGE_SIZE));
+  const currentEpisodePage = Math.min(Math.max(1, episodePage), totalEpisodePages);
+  const pagedEpisodes = filteredEpisodes.slice(
+    (currentEpisodePage - 1) * DEFAULT_PAGE_SIZE,
+    currentEpisodePage * DEFAULT_PAGE_SIZE
+  );
 
   // Đồng bộ trạng thái yêu thích từ query khi dữ liệu audio cập nhật
   React.useEffect(() => {
@@ -260,8 +320,15 @@ export const PlayerPage: React.FC = () => {
     }
   };
 
+
+
   return (
-    <div className="flex flex-col w-full pb-36 px-4 gap-4 fade-in-comic">
+    <div
+      className="flex flex-col w-full pb-36 px-4 gap-4 fade-in-comic select-none sm:select-auto"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
       {/* 1. Top Sub-Bar Navigation */}
       <div className="flex items-center justify-between pt-2">
         <button onClick={() => navigate(-1)} className="btn-comic text-xs py-1.5 px-3 bg-white" aria-label="Quay lại">
@@ -294,392 +361,506 @@ export const PlayerPage: React.FC = () => {
         </div>
       </div>
 
-      {/* 2. Manga Vinyl Cover Presentation Card */}
-      <div className="card-comic p-4 flex flex-col gap-3 relative bg-white">
-        <div className="sticker-comic">
-          <span
-            className={`badge-comic ${
-              isTargetAudioPlaying && isPlaying ? 'badge-comic-red' : 'badge-comic-blue'
-            } text-[10px]`}
-          >
-            {isTargetAudioPlaying && isPlaying ? '● LIVE STREAM' : 'SẴN SÀNG'}
-          </span>
-        </div>
-
-        {/* Cover Art + Vinyl Disc Layout */}
-        <div className="relative w-full aspect-[16/10] max-h-56 rounded-xl border-2 border-black overflow-hidden bg-black flex items-center justify-center shadow-comic-sm">
-          <img className="w-full h-full object-cover" src={audio.thumbnailUrl} alt={audio.title} />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
-
-          {/* Spinning Manga Vinyl Disc Overlay when playing */}
-          <div
-            className={`absolute -right-8 -bottom-8 w-36 h-36 rounded-full border-4 border-black bg-[#111111] shadow-comic flex items-center justify-center ${
-              isTargetAudioPlaying && isPlaying ? 'spin-disc' : 'spin-disc spin-disc-paused'
-            } pointer-events-none opacity-85`}
-          >
-            <div className="w-24 h-24 rounded-full border border-gray-700 bg-[#1A1A1A] flex items-center justify-center">
-              <div className="w-12 h-12 rounded-full border-2 border-black bg-[#FFE600] flex items-center justify-center">
-                <i className="ri-disc-fill text-xl text-black" />
-              </div>
-            </div>
-          </div>
-
-          <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between text-white z-10">
-            <span className="badge-comic badge-comic-yellow text-[10px] text-black">
-              TẬP {String(activeEp.episodeNumber || 1).padStart(2, '0')}:  {currentPercent}%
-            </span>
-          </div>
-        </div>
-
-        {/* Title, Author & Tags */}
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="badge-comic badge-comic-blue text-[10px]">{audio.categoryName || 'Chung'}</span>
-            {audio.isVIPOnly && (
-              <span className="badge-comic badge-comic-purple text-[10px]">
-                <i className="ri-vip-crown-fill" /> VIP ONLY
-              </span>
-            )}
-            <span className="badge-comic badge-comic-white text-[10px]">
-              {audio.totalEpisodes || audio.episodes?.length || 1} TẬP
-            </span>
-            <span className="badge-comic badge-comic-white text-[10px]">
-              {audio.formattedDuration || '24h 00m'}
-            </span>
-          </div>
-          <h2 className="font-extrabold text-lg text-black leading-tight mt-1">{audio.title}</h2>
-          <p className="text-xs font-semibold text-gray-600 flex items-center gap-2">
-            <span>
-              Tác giả: <strong className="text-black">{audio.author || 'Chưa rõ'}</strong>
-            </span>
-            <span>•</span>
-            <span>
-              Kênh: <strong className="text-black">{audio.channel || 'Official'}</strong>
-            </span>
-          </p>
-        </div>
-      </div>
-
-      {/* 3. Resume Bar Shortcut */}
-      <div className="card-comic-sm p-3 bg-[#FEF9C3] flex items-center justify-between gap-2 border-2 border-black shadow-comic-sm">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-lg border border-black bg-[#FFE600] flex items-center justify-center text-black shrink-0 shadow-comic-sm">
-            <i className="ri-history-line font-bold" />
-          </div>
-          <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-extrabold uppercase text-gray-700">Mốc nghe gần nhất</span>
-              <button
-                type="button"
-                onClick={handleManualSyncRecent}
-                className="badge-comic badge-comic-yellow text-[9px] font-mono shrink-0 flex items-center gap-1 cursor-pointer hover:bg-yellow-200 active:scale-95 transition-all shadow-[1px_1px_0_#000]"
-                title="Đang đếm ngược để đồng bộ mốc nghe. Chạm để đồng bộ ngay!"
-              >
-                <i className={`ri-refresh-line text-[9px] ${isTargetAudioPlaying && isPlaying ? 'animate-spin' : ''}`} />
-                SYNC: {isTargetAudioPlaying && isPlaying ? `${syncCountdown}s` : '60s'}
-              </button>
-            </div>
-            <span className="text-xs font-bold text-black truncate flex items-center gap-1">
-              Tiếp tục từ <strong>{syncedRecentInfo?.position || (isTargetAudioPlaying && currentTime > 0 ? formatTime(currentTime) : (audio.formattedPosition || '00:00:00'))}</strong>:(Tập {syncedRecentInfo?.epNumber || (isTargetAudioPlaying && currentEpisode ? currentEpisode.episodeNumber : (audio.currentEpisodeNumber || 1))})<span className="text-[10px] font-mono"> {currentPercent}% </span> 
-            </span>
-          </div>
-        </div>
+      {/* Tab Navigation Bar */}
+      <div className="flex items-center gap-2 w-full pt-1">
         <button
-          onClick={handleResumeShortcut}
-          className="btn-comic btn-comic-primary text-xs py-1 px-3 shrink-0"
+          type="button"
+          onClick={() => setActiveTab('player')}
+          className={`flex-1 py-2 px-3 rounded-xl border-2 border-black font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all shadow-comic-sm ${
+            activeTab === 'player'
+              ? 'bg-[#FFE600] text-black shadow-comic'
+              : 'bg-white text-gray-700 hover:bg-gray-100'
+          }`}
         >
-          <i className="ri-play-fill font-bold" /> Nghe tiếp
+          <span>🎧 Trình Phát</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('episodes')}
+          className={`flex-1 py-2 px-3 rounded-xl border-2 border-black font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all shadow-comic-sm ${
+            activeTab === 'episodes'
+              ? 'bg-[#FFE600] text-black shadow-comic'
+              : 'bg-white text-gray-700 hover:bg-gray-100'
+          }`}
+        >
+          <span>📑 Danh Sách Tập ({audio.episodes?.length || 0})</span>
         </button>
       </div>
 
-      {/* 4. Main Playback Console */}
-      <div className="card-comic p-4 flex flex-col gap-3 bg-white">
-        {/* Live Status & Waveform Header */}
-        <div className="flex items-center justify-between text-xs pb-1 border-b border-black">
-          <div className="flex items-center gap-2 min-w-0">
-            <Equalizer isPlaying={isTargetAudioPlaying && isPlaying} />
-            <span className="font-extrabold text-black truncate">{activeEp.title}</span>
-          </div>
-          <button
-            onClick={handleManualSyncRecent}
-            className="badge-comic badge-comic-teal text-[9px] py-0.5 font-mono cursor-pointer hover:bg-teal-200 active:scale-95 transition-all flex items-center gap-1"
-            title="Tự động đồng bộ mốc nghe mỗi 60s. Chạm để đồng bộ ngay!"
-          >
-            <i className={`ri-refresh-line ${isTargetAudioPlaying && isPlaying ? 'animate-spin' : ''}`} /> SYNC: {syncCountdown}s
-          </button>
-        </div>
-
-        {/* Custom Comic Range Slider (Scrub Bar) with Accidental Seek Lock */}
-        <div className="flex flex-col gap-1.5 pt-1">
-          <div className="flex items-center gap-2">
-            <div className="flex-1">
-              <Slider
-                disabled={isSeekLocked}
-                value={currentPercent}
-                min={0}
-                max={100}
-                onChange={(e) => {
-                  if (isSeekLocked) return;
-                  const val = parseFloat(e.target.value);
-                  setScrubPercent(val);
-                  const targetSec = Math.round((val / 100) * episodeDuration);
-                  if (isTargetAudioPlaying) {
-                    seekTo(targetSec);
-                  } else {
-                    play(audio, activeEp, targetSec);
-                  }
-                }}
-                onPointerUp={() => setScrubPercent(null)}
-                onTouchEnd={() => setScrubPercent(null)}
-                onMouseUp={() => setScrubPercent(null)}
-                className={isSeekLocked ? 'cursor-not-allowed opacity-50' : ''}
-              />
+      {/* View 1: Chi tiết player */}
+      {activeTab === 'player' && (
+        <div className="flex flex-col gap-4 fade-in-comic">
+          {/* Manga Vinyl Cover Presentation Card */}
+          <div className="card-comic p-4 flex flex-col gap-3 relative bg-white">
+            <div className="sticker-comic">
+              <span
+                className={`badge-comic ${
+                  isTargetAudioPlaying && isPlaying ? 'badge-comic-red' : 'badge-comic-blue'
+                } text-[10px]`}
+              >
+                {isTargetAudioPlaying && isPlaying ? '● LIVE STREAM' : 'SẴN SÀNG'}
+              </span>
             </div>
-            <button
-              type="button"
-              onClick={toggleSeekLock}
-              className={`w-8 h-8 rounded-lg border-2 border-black flex items-center justify-center text-sm shrink-0 transition-all shadow-comic-sm ${
-                isSeekLocked ? 'bg-[#E63946] text-white hover:bg-red-600' : 'bg-gray-100 text-gray-700 hover:bg-[#FFE600]'
-              }`}
-              title={isSeekLocked ? 'Mở khóa thanh tua thời lượng' : 'Khóa thanh tua thời lượng chống chạm nhầm'}
-            >
-              <i className={isSeekLocked ? 'ri-lock-2-fill' : 'ri-lock-unlock-line'} />
-            </button>
-          </div>
-          <div className="flex items-center justify-between font-mono text-xs font-bold text-gray-700">
-            <span>{formatTime(currentPosition)}</span>
-            <span className={`badge-comic ${isSeekLocked ? 'badge-comic-red' : 'badge-comic-yellow'} text-[9px] py-0 px-1 font-mono`}>
-              {isSeekLocked ? 'ĐÃ KHÓA TUA' : `Đã nghe ${currentPercent}%`}
-            </span>
-            <span>{formatTime(episodeDuration)}</span>
-          </div>
-        </div>
 
-        {/* Tactile Control Buttons Row */}
-        <div className="flex items-center justify-between pt-2">
-          {/* Speed Toggle */}
-          <button
-            onClick={() => setIsSpeedModalOpen(true)}
-            className="btn-comic text-xs py-1 px-2.5 bg-[#FFE600] font-black border-2 border-black shadow-comic-sm hover:scale-105 active:translate-x-0.5 active:translate-y-0.5 transition-all flex items-center gap-1"
-            title="Đổi tốc độ phát (x1, x1.5, x2...)"
-          >
-            <i className="ri-speed-line text-sm" />
-            <span>{playbackRate}x</span>
-          </button>
+            {/* Cover Art + Vinyl Disc Layout */}
+            <div className="relative w-full aspect-[16/10] max-h-56 rounded-xl border-2 border-black overflow-hidden bg-black flex items-center justify-center shadow-comic-sm">
+              <img className="w-full h-full object-cover" src={audio.thumbnailUrl} alt={audio.title} />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
 
-          {/* Prev Episode */}
-          <button
-            onClick={prevEpisode}
-            className="w-10 h-10 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
-            title="Tập trước"
-          >
-            <i className="ri-skip-back-line text-lg font-bold" />
-          </button>
+              {/* Spinning Manga Vinyl Disc Overlay when playing */}
+              <div
+                className={`absolute -right-8 -bottom-8 w-36 h-36 rounded-full border-4 border-black bg-[#111111] shadow-comic flex items-center justify-center ${
+                  isTargetAudioPlaying && isPlaying ? 'spin-disc' : 'spin-disc spin-disc-paused'
+                } pointer-events-none opacity-85`}
+              >
+                <div className="w-24 h-24 rounded-full border border-gray-700 bg-[#1A1A1A] flex items-center justify-center">
+                  <div className="w-12 h-12 rounded-full border-2 border-black bg-[#FFE600] flex items-center justify-center">
+                    <i className="ri-disc-fill text-xl text-black" />
+                  </div>
+                </div>
+              </div>
 
-          {/* Rewind 10s */}
-          <button
-            onClick={() => {
-              if (isTargetAudioPlaying) skipSeconds(-10);
-              else play(audio, activeEp, Math.max(0, currentPosition - 10));
-            }}
-            className="w-10 h-10 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
-            title="Tua lùi 10s"
-          >
-            <i className="ri-replay-10-line text-lg font-bold" />
-          </button>
+              <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between text-white z-10">
+                <span className="badge-comic badge-comic-yellow text-[10px] text-black">
+                  TẬP {String(activeEp.episodeNumber || 1).padStart(2, '0')}:  {currentPercent}%
+                </span>
+              </div>
+            </div>
 
-          {/* Master Big Play / Pause */}
-          <button
-            onClick={handleMasterPlay}
-            className={`w-14 h-14 rounded-full border-3 border-black ${
-              isTargetAudioPlaying && isPlaying ? 'bg-[#FFE600] text-black' : 'bg-[#3A86FF] text-white'
-            } flex items-center justify-center shadow-comic hover:scale-105 active:translate-x-1 active:translate-y-1 transition-all`}
-            title="Phát / Tạm dừng"
-          >
-            <i className={`${isTargetAudioPlaying && isPlaying ? 'ri-pause-fill' : 'ri-play-fill'} text-3xl`} />
-          </button>
+            {/* Title, Author & Tags */}
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="badge-comic badge-comic-blue text-[10px]">{audio.categoryName || 'Chung'}</span>
+                {audio.isVIPOnly && (
+                  <span className="badge-comic badge-comic-purple text-[10px]">
+                    <i className="ri-vip-crown-fill" /> VIP ONLY
+                  </span>
+                )}
+                <span className="badge-comic badge-comic-white text-[10px]">
+                  {audio.totalEpisodes || audio.episodes?.length || 1} TẬP
+                </span>
+                <span className="badge-comic badge-comic-white text-[10px]">
+                  {audio.formattedDuration || '24h 00m'}
+                </span>
+              </div>
+              <h2 className="font-extrabold text-lg text-black leading-tight mt-1">{audio.title}</h2>
+              <p className="text-xs font-semibold text-gray-600 flex items-center gap-2">
+                <span>
+                  Tác giả: <strong className="text-black">{audio.author || 'Chưa rõ'}</strong>
+                </span>
+              </p>
 
-          {/* Forward 10s */}
-          <button
-            onClick={() => {
-              if (isTargetAudioPlaying) skipSeconds(10);
-              else play(audio, activeEp, currentPosition + 10);
-            }}
-            className="w-10 h-10 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
-            title="Tua tới 10s"
-          >
-            <i className="ri-forward-10-line text-lg font-bold" />
-          </button>
+              {/* Collapsible Dropdown / Accordion */}
+              <button
+                type="button"
+                onClick={() => setIsDescriptionOpen((prev) => !prev)}
+                className="mt-2 text-xs font-bold text-gray-800 hover:text-black flex items-center justify-between py-1.5 px-3 rounded-lg border-2 border-black bg-gray-50 hover:bg-[#FEF9C3] transition-colors shadow-comic-sm cursor-pointer"
+                aria-expanded={isDescriptionOpen}
+              >
+                <span className="flex items-center gap-1.5">
+                  <i className="ri-information-line text-blue-600 font-bold" />
+                  <span>Thông tin chi tiết & Nguồn YouTube</span>
+                </span>
+                <i className={`${isDescriptionOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-base font-bold`} />
+              </button>
 
-          {/* Next Episode */}
-          <button
-            onClick={() => {
-              const eps = audio.episodes || [];
-              const currIdx = eps.findIndex((e) => e.id === activeEp.id);
-              if (currIdx !== -1 && currIdx + 1 < eps.length) {
-                const nextEp = eps[currIdx + 1];
-                if (isEpLocked(nextEp)) {
-                  handleLockedEpisodeAction('Tập tiếp theo chỉ dành riêng cho thành viên VIP.');
-                  return;
-                }
-              }
-              nextEpisode();
-            }}
-            className="w-10 h-10 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
-            title="Tập tiếp theo"
-          >
-            <i className="ri-skip-forward-line text-lg font-bold" />
-          </button>
-
-          {/* Sleep Timer */}
-          <button
-            onClick={() => setIsSleepModalOpen(true)}
-            className={`w-9 h-9 rounded-lg border-2 border-black ${
-              sleepTimerMinutes ? 'bg-[#FFE600] text-black' : 'bg-white text-gray-700'
-            } flex items-center justify-center shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5`}
-            title="Hẹn giờ tắt"
-          >
-            <i className="ri-moon-line text-base font-bold" />
-          </button>
-
-          {/* Screen Lock (Giữ màn hình / Khóa màn hình chống chạm) */}
-          <button
-            onClick={() => setScreenLocked(true)}
-            className="w-9 h-9 rounded-lg border-2 border-black bg-white text-gray-700 flex items-center justify-center shadow-comic-sm hover:bg-[#FFE600] hover:text-black active:translate-x-0.5 active:translate-y-0.5"
-            title="Giữ màn hình / Khóa màn hình (Tránh chạm nhầm)"
-          >
-            <i className="ri-lock-2-line text-base font-bold" />
-          </button>
-        </div>
-      </div>
-
-      {/* 5. Episodes List Drawer */}
-      <div className="card-comic p-4 flex flex-col gap-3 bg-white">
-        <div className="flex items-center justify-between pb-2 border-b-2 border-black">
-          <div>
-            <h3 className="font-extrabold text-base uppercase text-black">Danh sách tập</h3>
-            <span className="text-xs font-semibold text-gray-600">
-              {audio.episodes?.length || 0} tập logic • Khối 4 giờ
-            </span>
-          </div>
-          <button
-            onClick={handleRefreshMetadata}
-            disabled={isRefreshing}
-            className="btn-comic text-[11px] py-1 px-2.5 bg-gray-100"
-            title="Đồng bộ lại thông tin từ YouTube"
-          >
-            <i className={`ri-refresh-line ${isRefreshing ? 'animate-spin' : ''}`} /> Refresh
-          </button>
-        </div>
-
-        {/* Episode Items */}
-        <div className="flex flex-col gap-2">
-          {(audio.episodes || [])
-            .slice((episodePage - 1) * DEFAULT_PAGE_SIZE, episodePage * DEFAULT_PAGE_SIZE)
-            .map((ep) => {
-              const isThisEpActive = isTargetAudioPlaying && currentEpisode?.id === ep.id;
-              const isCompleted = ep.completed || (ep.progressPercent || 0) >= 95;
-              const epLocked = isEpLocked(ep);
-              const epIsVip = isVipAudio || Boolean(ep.isVip);
-
-              return (
-                <div
-                  key={ep.id}
-                  onClick={() => {
-                    if (epLocked) {
-                      handleLockedEpisodeAction();
-                      return;
-                    }
-                    play(audio, ep, ep.positionSeconds || 0);
-                  }}
-                  className={`card-comic-sm p-3 flex items-center justify-between gap-3 cursor-pointer transition-all ${
-                    epLocked
-                      ? 'bg-purple-50/60 !border-purple-300 opacity-90 hover:bg-purple-50'
-                      : isThisEpActive
-                      ? 'bg-[#FEF9C3] !border-2 !border-black shadow-comic'
-                      : 'bg-white hover:bg-gray-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div
-                      className={`w-9 h-9 rounded-lg border-2 border-black flex items-center justify-center shrink-0 shadow-comic-sm ${
-                        epLocked
-                          ? 'bg-[#8338EC] text-white font-bold'
-                          : isThisEpActive
-                          ? 'bg-[#FFE600] text-black font-black'
-                          : isCompleted
-                          ? 'bg-[#2A9D8F] text-white'
-                          : 'bg-gray-100 text-black font-bold'
-                      }`}
-                    >
-                      {epLocked ? (
-                        <i className="ri-lock-2-fill text-lg text-[#FFE600]" />
-                      ) : isThisEpActive ? (
-                        <i className="ri-play-fill text-lg" />
-                      ) : isCompleted ? (
-                        <i className="ri-check-line text-lg font-black" />
-                      ) : (
-                        `T${ep.episodeNumber}`
+              {isDescriptionOpen && (
+                <div className="mt-2 p-3 bg-gray-50 rounded-lg border-2 border-black flex flex-col gap-2.5 text-xs text-gray-800 shadow-comic-sm fade-in-comic">
+                  <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-gray-200">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="font-semibold text-gray-700">
+                        Tác giả: <strong className="text-black">{audio.author || 'Chưa rõ'}</strong>
+                      </span>
+                      {audio.viewCount !== undefined && audio.viewCount !== null && (
+                        <span className="badge-comic badge-comic-yellow text-[10px] font-mono">
+                          <i className="ri-eye-line" /> Lượt xem: {Number(audio.viewCount).toLocaleString('vi-VN')}
+                        </span>
                       )}
                     </div>
-                    <div className="flex flex-col min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-extrabold text-xs text-black truncate leading-tight">
-                          {ep.title}
-                        </span>
-                        {epIsVip && ep.episodeNumber === 1 && (
-                          <span className="badge-comic badge-comic-teal text-[8px] py-0 px-1 font-black shrink-0">
-                            <i className="ri-eye-line" /> XEM TRƯỚC TẬP 1
-                          </span>
-                        )}
-                        {epIsVip && ep.episodeNumber > 1 && (
-                          <span className="badge-comic badge-comic-purple text-[8px] py-0 px-1 font-black shrink-0">
-                            <i className="ri-vip-crown-fill text-[#FFE600]" /> VIP
-                          </span>
-                        )}
-                      </div>
-                      <span className="font-mono text-[11px] text-gray-600 truncate mt-0.5">
-                        {formatTime(ep.startSeconds)} - {formatTime(ep.endSeconds)} • {ep.progressPercent || 0}%
-                      </span>
+                    {audio.youtubeVideoId && (
+                      <a
+                        href={`https://www.youtube.com/watch?v=${audio.youtubeVideoId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-comic text-[11px] py-1 px-2.5 bg-[#FF0000] text-white hover:bg-red-700 flex items-center gap-1.5 font-bold shadow-[1px_1px_0_#000]"
+                        title="Mở video gốc trên YouTube"
+                      >
+                        <i className="ri-youtube-fill text-sm" /> YouTube
+                      </a>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[11px] font-extrabold text-gray-700 uppercase">Mô tả video:</span>
+                    <div className="max-h-40 overflow-y-auto whitespace-pre-wrap text-xs text-gray-700 bg-white p-2.5 rounded border border-gray-300 font-sans leading-relaxed">
+                      {audio.description ? audio.description : <span className="italic text-gray-400">Không có mô tả cho audio này.</span>}
                     </div>
                   </div>
-
-                  <span
-                    className={`badge-comic ${
-                      epLocked
-                        ? 'badge-comic-purple !bg-[#8338EC] text-white'
-                        : isThisEpActive
-                        ? 'badge-comic-yellow'
-                        : isCompleted
-                        ? 'badge-comic-teal'
-                        : 'badge-comic-white'
-                    } text-[9px]`}
-                  >
-                    {epLocked ? (
-                      <span className="flex items-center gap-0.5">
-                        <i className="ri-lock-2-line" /> KHÓA VIP
-                      </span>
-                    ) : isThisEpActive ? (
-                      'ĐANG PHÁT'
-                    ) : isCompleted ? (
-                      'ĐÃ XONG'
-                    ) : (
-                      'CHƯA NGHE'
-                    )}
-                  </span>
                 </div>
-              );
-            })}
-        </div>
+              )}
+            </div>
+          </div>
 
-        <Pagination
-          currentPage={Math.min(Math.max(1, episodePage), Math.max(1, Math.ceil((audio.episodes || []).length / DEFAULT_PAGE_SIZE)))}
-          totalPages={Math.max(1, Math.ceil((audio.episodes || []).length / DEFAULT_PAGE_SIZE))}
-          totalItems={(audio.episodes || []).length}
-          pageSize={DEFAULT_PAGE_SIZE}
-          onPageChange={(p) => setEpisodePage(p)}
-        />
-      </div>
+          {/* Resume Bar Shortcut */}
+          <div className="card-comic-sm p-3 bg-[#FEF9C3] flex items-center justify-between gap-2 border-2 border-black shadow-comic-sm">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg border border-black bg-[#FFE600] flex items-center justify-center text-black shrink-0 shadow-comic-sm">
+                <i className="ri-history-line font-bold" />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-extrabold uppercase text-gray-700">Mốc nghe gần nhất</span>
+                  <button
+                    type="button"
+                    onClick={handleManualSyncRecent}
+                    className="badge-comic badge-comic-yellow text-[9px] font-mono shrink-0 flex items-center gap-1 cursor-pointer hover:bg-yellow-200 active:scale-95 transition-all shadow-[1px_1px_0_#000]"
+                    title="Đang đếm ngược để đồng bộ mốc nghe. Chạm để đồng bộ ngay!"
+                  >
+                    <i className={`ri-refresh-line text-[9px] ${isTargetAudioPlaying && isPlaying ? 'animate-spin' : ''}`} />
+                    SYNC: {isTargetAudioPlaying && isPlaying ? `${syncCountdown}s` : '60s'}
+                  </button>
+                </div>
+                <span className="text-xs font-bold text-black truncate flex items-center gap-1">
+                  Tiếp tục từ <strong>{syncedRecentInfo?.position || (isTargetAudioPlaying && currentTime > 0 ? formatTime(currentTime) : (audio.formattedPosition || '00:00:00'))}</strong>:(Tập {syncedRecentInfo?.epNumber || (isTargetAudioPlaying && currentEpisode ? currentEpisode.episodeNumber : (audio.currentEpisodeNumber || 1))})<span className="text-[10px] font-mono"> {currentPercent}% </span> 
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={handleResumeShortcut}
+              className="btn-comic btn-comic-primary text-xs py-1 px-3 shrink-0"
+            >
+              <i className="ri-play-fill font-bold" /> Nghe tiếp
+            </button>
+          </div>
+
+          {/* Main Playback Console */}
+          <div className="card-comic p-4 flex flex-col gap-3 bg-white">
+            {/* Live Status & Waveform Header */}
+            <div className="flex items-center justify-between text-xs pb-1 border-b border-black">
+              <div className="flex items-center gap-2 min-w-0">
+                <Equalizer isPlaying={isTargetAudioPlaying && isPlaying} />
+                <span className="font-extrabold text-black truncate">{activeEp.title}</span>
+              </div>
+              <button
+                onClick={handleManualSyncRecent}
+                className="badge-comic badge-comic-teal text-[9px] py-0.5 font-mono cursor-pointer hover:bg-teal-200 active:scale-95 transition-all flex items-center gap-1"
+                title="Tự động đồng bộ mốc nghe mỗi 60s. Chạm để đồng bộ ngay!"
+              >
+                <i className={`ri-refresh-line ${isTargetAudioPlaying && isPlaying ? 'animate-spin' : ''}`} /> SYNC: {syncCountdown}s
+              </button>
+            </div>
+
+            {/* Custom Comic Range Slider (Scrub Bar) with Accidental Seek Lock */}
+            <div className="flex flex-col gap-1.5 pt-1">
+              <div className="flex items-center gap-2">
+                <div
+                  className="flex-1"
+                  onTouchStart={(e) => e.stopPropagation()}
+                  onTouchMove={(e) => e.stopPropagation()}
+                  onTouchEnd={(e) => e.stopPropagation()}
+                >
+                  <Slider
+                    disabled={isSeekLocked}
+                    value={currentPercent}
+                    min={0}
+                    max={100}
+                    onChange={(e) => {
+                      if (isSeekLocked) return;
+                      const val = parseFloat(e.target.value);
+                      setScrubPercent(val);
+                      const targetSec = Math.round((val / 100) * episodeDuration);
+                      if (isTargetAudioPlaying) {
+                        seekTo(targetSec);
+                      } else {
+                        play(audio, activeEp, targetSec);
+                      }
+                    }}
+                    onPointerUp={() => setScrubPercent(null)}
+                    onTouchEnd={() => setScrubPercent(null)}
+                    onMouseUp={() => setScrubPercent(null)}
+                    className={isSeekLocked ? 'cursor-not-allowed opacity-50' : ''}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleSeekLock}
+                  className={`w-8 h-8 rounded-lg border-2 border-black flex items-center justify-center text-sm shrink-0 transition-all shadow-comic-sm ${
+                    isSeekLocked ? 'bg-[#E63946] text-white hover:bg-red-600' : 'bg-gray-100 text-gray-700 hover:bg-[#FFE600]'
+                  }`}
+                  title={isSeekLocked ? 'Mở khóa thanh tua thời lượng' : 'Khóa thanh tua thời lượng chống chạm nhầm'}
+                >
+                  <i className={isSeekLocked ? 'ri-lock-2-fill' : 'ri-lock-unlock-line'} />
+                </button>
+              </div>
+              <div className="flex items-center justify-between font-mono text-xs font-bold text-gray-700">
+                <span>{formatTime(currentPosition)}</span>
+                <span className={`badge-comic ${isSeekLocked ? 'badge-comic-red' : 'badge-comic-yellow'} text-[9px] py-0 px-1 font-mono`}>
+                  {isSeekLocked ? 'ĐÃ KHÓA TUA' : `Đã nghe ${currentPercent}%`}
+                </span>
+                <span>{formatTime(episodeDuration)}</span>
+              </div>
+            </div>
+
+            {/* Tactile Control Buttons Row */}
+            <div className="flex items-center justify-between pt-2">
+              {/* Speed Toggle */}
+              <button
+                onClick={() => setIsSpeedModalOpen(true)}
+                className="btn-comic text-xs py-1 px-2.5 bg-[#FFE600] font-black border-2 border-black shadow-comic-sm hover:scale-105 active:translate-x-0.5 active:translate-y-0.5 transition-all flex items-center gap-1"
+                title="Đổi tốc độ phát (x1, x1.5, x2...)"
+              >
+                <i className="ri-speed-line text-sm" />
+                <span>{playbackRate}x</span>
+              </button>
+
+              {/* Prev Episode */}
+              <button
+                onClick={prevEpisode}
+                className="w-10 h-10 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
+                title="Tập trước"
+              >
+                <i className="ri-skip-back-line text-lg font-bold" />
+              </button>
+
+              {/* Rewind 10s */}
+              <button
+                onClick={() => {
+                  if (isTargetAudioPlaying) skipSeconds(-10);
+                  else play(audio, activeEp, Math.max(0, currentPosition - 10));
+                }}
+                className="w-10 h-10 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
+                title="Tua lùi 10s"
+              >
+                <i className="ri-replay-10-line text-lg font-bold" />
+              </button>
+
+              {/* Master Big Play / Pause */}
+              <button
+                onClick={handleMasterPlay}
+                className={`w-14 h-14 rounded-full border-3 border-black ${
+                  isTargetAudioPlaying && isPlaying ? 'bg-[#FFE600] text-black' : 'bg-[#3A86FF] text-white'
+                } flex items-center justify-center shadow-comic hover:scale-105 active:translate-x-1 active:translate-y-1 transition-all`}
+                title="Phát / Tạm dừng"
+              >
+                <i className={`${isTargetAudioPlaying && isPlaying ? 'ri-pause-fill' : 'ri-play-fill'} text-3xl`} />
+              </button>
+
+              {/* Forward 10s */}
+              <button
+                onClick={() => {
+                  if (isTargetAudioPlaying) skipSeconds(10);
+                  else play(audio, activeEp, currentPosition + 10);
+                }}
+                className="w-10 h-10 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
+                title="Tua tới 10s"
+              >
+                <i className="ri-forward-10-line text-lg font-bold" />
+              </button>
+
+              {/* Next Episode */}
+              <button
+                onClick={() => {
+                  const eps = audio.episodes || [];
+                  const currIdx = eps.findIndex((e) => e.id === activeEp.id);
+                  if (currIdx !== -1 && currIdx + 1 < eps.length) {
+                    const nextEp = eps[currIdx + 1];
+                    if (isEpLocked(nextEp)) {
+                      handleLockedEpisodeAction('Tập tiếp theo chỉ dành riêng cho thành viên VIP.');
+                      return;
+                    }
+                  }
+                  nextEpisode();
+                }}
+                className="w-10 h-10 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
+                title="Tập tiếp theo"
+              >
+                <i className="ri-skip-forward-line text-lg font-bold" />
+              </button>
+
+              {/* Sleep Timer */}
+              <button
+                onClick={() => setIsSleepModalOpen(true)}
+                className={`w-9 h-9 rounded-lg border-2 border-black ${
+                  sleepTimerMinutes ? 'bg-[#FFE600] text-black' : 'bg-white text-gray-700'
+                } flex items-center justify-center shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5`}
+                title="Hẹn giờ tắt"
+              >
+                <i className="ri-moon-line text-base font-bold" />
+              </button>
+
+              {/* Screen Lock (Giữ màn hình / Khóa màn hình chống chạm) */}
+              <button
+                onClick={() => setScreenLocked(true)}
+                className="w-9 h-9 rounded-lg border-2 border-black bg-white text-gray-700 flex items-center justify-center shadow-comic-sm hover:bg-[#FFE600] hover:text-black active:translate-x-0.5 active:translate-y-0.5"
+                title="Giữ màn hình / Khóa màn hình (Tránh chạm nhầm)"
+              >
+                <i className="ri-lock-2-line text-base font-bold" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View 2: Danh sách tập */}
+      {activeTab === 'episodes' && (
+        <div className="card-comic p-4 flex flex-col gap-3 bg-white fade-in-comic">
+          <div className="flex items-center justify-between pb-2 border-b-2 border-black flex-wrap gap-2">
+            <div>
+              <h3 className="font-extrabold text-base uppercase text-black">Danh sách tập</h3>
+              <span className="text-xs font-semibold text-gray-600">
+                {audio.episodes?.length || 0} tập logic • Khối 4 giờ
+              </span>
+            </div>
+            <button
+              onClick={handleRefreshMetadata}
+              disabled={isRefreshing}
+              className="btn-comic text-[11px] py-1 px-2.5 bg-gray-100"
+              title="Đồng bộ lại thông tin từ YouTube"
+            >
+              <i className={`ri-refresh-line ${isRefreshing ? 'animate-spin' : ''}`} /> Refresh
+            </button>
+          </div>
+
+          {/* Episode Search Bar */}
+          <div className="relative w-full">
+            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm" />
+            <input
+              type="text"
+              value={episodeSearch}
+              onChange={(e) => {
+                setEpisodeSearch(e.target.value);
+                setEpisodePage(1);
+              }}
+              placeholder="Tìm kiếm tập (số tập hoặc tên tập)..."
+              className="w-full pl-9 pr-8 py-2 text-xs rounded-lg border-2 border-black bg-gray-50 focus:bg-white focus:outline-none shadow-comic-sm font-semibold"
+            />
+            {episodeSearch && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEpisodeSearch('');
+                  setEpisodePage(1);
+                }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-black text-sm"
+                title="Xóa tìm kiếm"
+              >
+                <i className="ri-close-circle-fill" />
+              </button>
+            )}
+          </div>
+
+          {/* Episode Items */}
+          {pagedEpisodes.length === 0 ? (
+            <div className="p-6 text-center text-xs font-semibold text-gray-500 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+              {episodeSearch ? 'Không tìm thấy tập nào khớp với từ khóa tìm kiếm.' : 'Chưa có danh sách tập.'}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {pagedEpisodes.map((ep) => {
+                const isThisEpActive = isTargetAudioPlaying && currentEpisode?.id === ep.id;
+                const isCompleted = ep.completed || (ep.progressPercent || 0) >= 95;
+                const epLocked = isEpLocked(ep);
+                const epIsVip = isVipAudio || Boolean(ep.isVip);
+
+                return (
+                  <div
+                    key={ep.id}
+                    onClick={() => {
+                      if (epLocked) {
+                        handleLockedEpisodeAction();
+                        return;
+                      }
+                      play(audio, ep, ep.positionSeconds || 0);
+                    }}
+                    className={`card-comic-sm p-3 flex items-center justify-between gap-3 cursor-pointer transition-all ${
+                      epLocked
+                        ? 'bg-purple-50/60 !border-purple-300 opacity-90 hover:bg-purple-50'
+                        : isThisEpActive
+                        ? 'bg-[#FEF9C3] !border-2 !border-black shadow-comic'
+                        : 'bg-white hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className={`w-9 h-9 rounded-lg border-2 border-black flex items-center justify-center shrink-0 shadow-comic-sm ${
+                          epLocked
+                            ? 'bg-[#8338EC] text-white font-bold'
+                            : isThisEpActive
+                            ? 'bg-[#FFE600] text-black font-black'
+                            : isCompleted
+                            ? 'bg-[#2A9D8F] text-white'
+                            : 'bg-gray-100 text-black font-bold'
+                        }`}
+                      >
+                        {epLocked ? (
+                          <i className="ri-lock-2-fill text-lg text-[#FFE600]" />
+                        ) : isThisEpActive ? (
+                          <i className="ri-play-fill text-lg" />
+                        ) : isCompleted ? (
+                          <i className="ri-check-line text-lg font-black" />
+                        ) : (
+                          `T${ep.episodeNumber}`
+                        )}
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-extrabold text-xs text-black truncate leading-tight">
+                            {ep.title}
+                          </span>
+                          {epIsVip && ep.episodeNumber === 1 && (
+                            <span className="badge-comic badge-comic-teal text-[8px] py-0 px-1 font-black shrink-0">
+                              <i className="ri-eye-line" /> XEM TRƯỚC TẬP 1
+                            </span>
+                          )}
+                          {epIsVip && ep.episodeNumber > 1 && (
+                            <span className="badge-comic badge-comic-purple text-[8px] py-0 px-1 font-black shrink-0">
+                              <i className="ri-vip-crown-fill text-[#FFE600]" /> VIP
+                            </span>
+                          )}
+                        </div>
+                        <span className="font-mono text-[11px] text-gray-600 truncate mt-0.5">
+                          {formatTime(ep.startSeconds)} - {formatTime(ep.endSeconds)} • {ep.progressPercent || 0}%
+                        </span>
+                      </div>
+                    </div>
+
+                    <span
+                      className={`badge-comic ${
+                        epLocked
+                          ? 'badge-comic-purple !bg-[#8338EC] text-white'
+                          : isThisEpActive
+                          ? 'badge-comic-yellow'
+                          : isCompleted
+                          ? 'badge-comic-teal'
+                          : 'badge-comic-white'
+                      } text-[9px]`}
+                    >
+                      {epLocked ? (
+                        <span className="flex items-center gap-0.5">
+                          <i className="ri-lock-2-line" /> KHÓA VIP
+                        </span>
+                      ) : isThisEpActive ? (
+                        'ĐANG PHÁT'
+                      ) : isCompleted ? (
+                        'ĐÃ XONG'
+                      ) : (
+                        'CHƯA NGHE'
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <Pagination
+            currentPage={currentEpisodePage}
+            totalPages={totalEpisodePages}
+            totalItems={filteredEpisodes.length}
+            pageSize={DEFAULT_PAGE_SIZE}
+            onPageChange={(p) => setEpisodePage(p)}
+          />
+        </div>
+      )}
 
       {/* Speed Selection Modal */}
       <Modal
