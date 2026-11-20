@@ -7,6 +7,6 @@
 // ==============================================================================
 window.__ENV__ = {
   // Đường dẫn Cloudflare Quick Tunnel trỏ về Home Server (MySQL Production)
-  VITE_API_BASE_URL: "https://translations-draw-involves-jpg.trycloudflare.com/api/v1",
+  VITE_API_BASE_URL: "https://perth-obj-blackberry-favor.trycloudflare.com/api/v1",
   APP_ENV: "production"
 };
