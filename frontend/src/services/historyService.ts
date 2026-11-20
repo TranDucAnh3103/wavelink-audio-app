@@ -34,7 +34,17 @@ export const historyService = {
     // Nếu chưa đăng nhập / là khách: lưu vào sessionStorage, không lưu DB
     if (!token) {
       const state = usePlayerStore.getState();
-      guestSessionService.saveGuestHistory(payload, state.currentAudio, state.currentEpisode);
+      const activeAudio =
+        payload.audio ||
+        (state.currentAudio && Number(state.currentAudio.id) === Number(payload.audioId)
+          ? state.currentAudio
+          : null);
+      const activeEpisode =
+        payload.episode ||
+        (state.currentEpisode && Number(state.currentEpisode.id) === Number(payload.episodeId)
+          ? state.currentEpisode
+          : null);
+      guestSessionService.saveGuestHistory(payload, activeAudio, activeEpisode);
       return;
     }
 

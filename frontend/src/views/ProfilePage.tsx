@@ -497,9 +497,12 @@ export const ProfilePage: React.FC = () => {
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <img
-                          src={item.thumbnailUrl || 'https://img.youtube.com/vi/placeholder/hqdefault.jpg'}
+                          src={item.thumbnailUrl || '/wavelink-icon.png'}
                           alt={title}
-                          className="w-12 h-14 rounded border border-black object-cover shrink-0 bg-black"
+                          className="w-12 h-14 rounded border border-black object-cover shrink-0 bg-[#FFE600]"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).src = '/wavelink-icon.png';
+                          }}
                         />
                         <div className="flex flex-col min-w-0">
                           <span className="font-extrabold text-xs text-black truncate leading-tight">{title}</span>
@@ -507,7 +510,7 @@ export const ProfilePage: React.FC = () => {
                             {epTitle} • Mốc: <strong>{pos}</strong>
                           </span>
                           <span className="text-[10px] font-mono text-gray-500">
-                            Đã nghe: {Math.round((item.totalDurationListened || 60) / 60)} phút (Lưu tạm)
+                            Đã nghe: {Math.max(1, Math.round((item.totalDurationListened || item.durationListened || 60) / 60))} phút (Lưu tạm)
                           </span>
                         </div>
                       </div>
@@ -733,9 +736,12 @@ export const ProfilePage: React.FC = () => {
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <img
-                          src={item.thumbnailUrl || 'https://img.youtube.com/vi/placeholder/hqdefault.jpg'}
+                          src={item.thumbnailUrl || '/wavelink-icon.png'}
                           alt={title}
-                          className="w-12 h-14 rounded border border-black object-cover shrink-0 bg-black"
+                          className="w-12 h-14 rounded border border-black object-cover shrink-0 bg-[#FFE600]"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).src = '/wavelink-icon.png';
+                          }}
                         />
                         <div className="flex flex-col min-w-0">
                           <span className="font-extrabold text-xs text-black truncate leading-tight">{title}</span>
@@ -743,7 +749,7 @@ export const ProfilePage: React.FC = () => {
                             {epTitle} • Mốc: <strong>{pos}</strong>
                           </span>
                           <span className="text-[10px] font-mono text-gray-500">
-                            Đã nghe: {Math.round((item.totalDurationListened || 60) / 60)} phút
+                            Đã nghe: {Math.max(1, Math.round((item.totalDurationListened || item.durationListened || 60) / 60))} phút
                           </span>
                         </div>
                       </div>

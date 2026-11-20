@@ -1,3 +1,5 @@
+import { AudioItem, Episode } from './audio';
+
 export interface ListeningHistoryItem {
   id?: number;
   audioId: number;
@@ -20,4 +22,9 @@ export interface RecordHistoryPayload {
   audioId: number;
   episodeId: number;
   durationListened: number;
+  totalDurationListened?: number;
+  audio?: AudioItem | null;
+  episode?: Episode | null;
+  positionSeconds?: number;
+  progressPercent?: number;
 }

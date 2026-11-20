@@ -7,6 +7,7 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { AppRoutes } from '@/router';
 import { externalNotificationService } from '@/services/externalNotificationService';
 import { primeAudioContextOnFirstGesture } from '@/lib/backgroundAudioKeeper';
+import { initMobileBridge } from '@/lib/mobileBridge';
 
 export const App: React.FC = () => {
   const { initAuth } = useAuthStore();
@@ -15,6 +16,10 @@ export const App: React.FC = () => {
     initAuth();
     primeAudioContextOnFirstGesture();
     externalNotificationService.initBackgroundWatcher();
+    const cleanup = initMobileBridge();
+    return () => {
+      cleanup();
+    };
   }, [initAuth]);
 
   return (
