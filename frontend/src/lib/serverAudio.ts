@@ -20,9 +20,13 @@ const getBackendUrl = () => {
 export async function fetchServerAudio(id: string | number): Promise<AudioItem | null> {
   const backendUrl = getBackendUrl();
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
     const res = await fetch(`${backendUrl}/api/v1/audios/${id}`, {
+      signal: controller.signal,
       next: { revalidate: 60 }, // ISR: Cache 60s
     });
+    clearTimeout(timeoutId);
 
     if (!res.ok) {
       return null;
@@ -41,9 +45,13 @@ export async function fetchServerAudio(id: string | number): Promise<AudioItem |
 export async function fetchServerAllAudios(): Promise<AudioItem[]> {
   const backendUrl = getBackendUrl();
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
     const res = await fetch(`${backendUrl}/api/v1/audios?limit=1000`, {
+      signal: controller.signal,
       next: { revalidate: 300 }, // Cache 5 minutes
     });
+    clearTimeout(timeoutId);
 
     if (!res.ok) {
       return [];
