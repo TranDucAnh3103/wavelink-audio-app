@@ -253,9 +253,6 @@ export const CommunityPage: React.FC = () => {
             <h1 className="font-comic font-extrabold text-base md:text-lg uppercase tracking-tight text-[#111113]">
               Cộng Đồng Độc Giả
             </h1>
-            <span className="text-xs font-bold text-[#111113]/80">
-              Giao lưu trực tuyến & Bảng vàng cày truyện VIP
-            </span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -340,14 +337,9 @@ export const CommunityPage: React.FC = () => {
               <div className="flex items-center justify-between pb-2.5 border-b-2 border-[var(--border-ink)]">
                 <div className="flex items-center gap-2">
                   <Radio className="w-5 h-5 text-[#3A86FF] animate-pulse" strokeWidth={2.5} />
-                  <div className="flex flex-col">
-                    <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
-                      Thảo Luận Trực Tuyến
-                    </span>
-                    <span className="text-[10px] font-semibold text-[var(--ink-muted)]">
-                      Tin nhắn cập nhật theo thời gian thực
-                    </span>
-                  </div>
+                  <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+                    Thảo Luận Trực Tuyến
+                  </span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping inline-block" />

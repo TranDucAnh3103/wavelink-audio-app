@@ -39,7 +39,7 @@ export const MiniPlayer: React.FC = () => {
   return (
     <aside
       aria-label="Trình phát thu gọn"
-      className="fixed bottom-[68px] left-3 right-3 md:left-[76px] lg:left-60 md:right-0 md:bottom-0 z-40"
+      className="fixed bottom-[80px] left-3 right-3 md:left-[76px] lg:left-60 md:right-0 md:bottom-0 z-40"
     >
       {/* Mobile Floating Comic Card & Tablet/Desktop Full Bottom Dock */}
       <div className="mini-player-comic md:rounded-none md:border-x-0 md:border-b-0 md:border-t-2 md:shadow-none px-3 py-2 md:px-6 md:py-2.5 flex items-center justify-between gap-2.5 md:gap-6 relative overflow-hidden">

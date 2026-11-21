@@ -48,11 +48,12 @@ type GoogleLoginRequest struct {
 }
 
 type GoogleTokenInfo struct {
-	Sub           string `json:"sub"`
-	Email         string `json:"email"`
-	EmailVerified string `json:"email_verified"`
-	Name          string `json:"name"`
-	Picture       string `json:"picture"`
+	Sub           string      `json:"sub"`
+	UserID        string      `json:"user_id"`
+	Email         string      `json:"email"`
+	EmailVerified interface{} `json:"email_verified"`
+	Name          string      `json:"name"`
+	Picture       string      `json:"picture"`
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -104,9 +105,15 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	email := req.Email
+	email := strings.TrimSpace(req.Email)
 	if email == "" {
-		email = fmt.Sprintf("%s_%s@user.local", req.Username, uuid.New().String()[:6])
+		trimmedUser := strings.TrimSpace(req.Username)
+		if strings.Count(trimmedUser, "@") == 1 && strings.Contains(strings.Split(trimmedUser, "@")[1], ".") {
+			email = trimmedUser
+		} else {
+			safeUser := strings.ReplaceAll(trimmedUser, "@", "_")
+			email = fmt.Sprintf("%s_%s@user.local", safeUser, uuid.New().String()[:6])
+		}
 	}
 
 	newUser := domain.User{
@@ -228,7 +235,7 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 		}
 	}
 
-	// 2. Xác thực qua Google AccessToken (UserInfo API)
+	// 2. Xác thực qua Google AccessToken (UserInfo API + fallback TokenInfo API)
 	if !verified && req.AccessToken != "" {
 		client := &http.Client{Timeout: 6 * time.Second}
 		uReq, _ := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v3/userinfo", nil)
@@ -236,15 +243,41 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 		if resp, err := client.Do(uReq); err == nil && resp.StatusCode == http.StatusOK {
 			defer resp.Body.Close()
 			var info GoogleTokenInfo
-			if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && (info.Sub != "" || info.Email != "") {
+			if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && (info.Sub != "" || info.UserID != "" || info.Email != "") {
 				email = strings.TrimSpace(info.Email)
 				name = strings.TrimSpace(info.Name)
 				picture = strings.TrimSpace(info.Picture)
 				googleID = strings.TrimSpace(info.Sub)
+				if googleID == "" {
+					googleID = strings.TrimSpace(info.UserID)
+				}
 				verified = true
 			}
 		} else if resp != nil {
 			resp.Body.Close()
+		}
+
+		if !verified {
+			if resp, err := client.Get("https://oauth2.googleapis.com/tokeninfo?access_token=" + url.QueryEscape(req.AccessToken)); err == nil && resp.StatusCode == http.StatusOK {
+				defer resp.Body.Close()
+				var info GoogleTokenInfo
+				if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && (info.Sub != "" || info.UserID != "" || info.Email != "") {
+					email = strings.TrimSpace(info.Email)
+					if name == "" {
+						name = strings.TrimSpace(info.Name)
+					}
+					if picture == "" {
+						picture = strings.TrimSpace(info.Picture)
+					}
+					googleID = strings.TrimSpace(info.Sub)
+					if googleID == "" {
+						googleID = strings.TrimSpace(info.UserID)
+					}
+					verified = true
+				}
+			} else if resp != nil {
+				resp.Body.Close()
+			}
 		}
 	}
 
@@ -254,12 +287,17 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 	}
 
 	if name == "" {
-		if email != "" {
+		if req.Name != "" {
+			name = strings.TrimSpace(req.Name)
+		} else if email != "" {
 			parts := strings.Split(email, "@")
 			name = parts[0]
 		} else {
 			name = "Google User"
 		}
+	}
+	if picture == "" && req.Picture != "" {
+		picture = strings.TrimSpace(req.Picture)
 	}
 
 	// 3. Tìm hoặc Tạo User trong Database
@@ -273,7 +311,7 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 	}
 
 	if !found && email != "" {
-		if err := h.db.Where("email = ?", email).First(&user).Error; err == nil {
+		if err := h.db.Where("email = ? OR username = ?", email, email).First(&user).Error; err == nil {
 			found = true
 		}
 	}
@@ -291,7 +329,7 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 			updates["google_id"] = googleID
 			user.GoogleID = googleID
 		}
-		if email != "" && user.Email == "" {
+		if email != "" && (user.Email == "" || strings.HasSuffix(strings.ToLower(user.Email), "@user.local")) {
 			updates["email"] = email
 			user.Email = email
 		}
