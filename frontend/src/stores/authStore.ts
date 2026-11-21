@@ -7,13 +7,16 @@ import { queryClient } from '@/lib/queryClient';
 import { toast } from '@/components/ui/Toast';
 import { stopBackgroundAudio } from '@/lib/backgroundAudioKeeper';
 import { stopBackgroundSleepTimer } from '@/lib/sleepTimerWorker';
+import { clearSwrCache } from '@/lib/swrCache';
 
 interface AuthState {
   user: User | null;
   token: string | null;
   isLive: boolean;
   isLoading: boolean;
+  isRevalidating: boolean;
   isInitialized: boolean;
+  hydrateFromCache: () => void;
   initAuth: () => Promise<void>;
   login: (payload: LoginPayload) => Promise<void>;
   register: (payload: RegisterPayload) => Promise<void>;
@@ -25,24 +28,72 @@ interface AuthState {
   setLiveStatus: (isLive: boolean) => void;
 }
 
+function readCachedAuth(): { user: User | null; token: string | null } {
+  if (typeof localStorage === 'undefined') {
+    return { user: null, token: null };
+  }
+  const token = localStorage.getItem('auth_token');
+  const rawUser = localStorage.getItem('auth_user');
+  if (rawUser) {
+    try {
+      const parsed = JSON.parse(rawUser) as User;
+      if (parsed && (parsed.id !== undefined || parsed.isGuest)) {
+        return { user: parsed, token };
+      }
+    } catch {
+      // Ignore malformed cached auth
+    }
+  }
+  return { user: null, token };
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
-  token: typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null,
-  isLive: false,
+  token: null,
+  isLive: true,
   isLoading: false,
+  isRevalidating: false,
   isInitialized: false,
 
+  hydrateFromCache: () => {
+    const { user: current } = get();
+    if (current) return;
+    const { user: cachedUser, token } = readCachedAuth();
+    if (cachedUser) {
+      set({ user: cachedUser, token, isInitialized: true });
+      if (cachedUser.id) {
+        setCurrentPlayerUserId(cachedUser.id);
+        usePlayerStore.getState().syncUserPlaybackRate(cachedUser.id);
+      } else {
+        setCurrentPlayerUserId(null);
+        usePlayerStore.getState().syncUserPlaybackRate('guest');
+      }
+    }
+  },
+
   initAuth: async () => {
-    set({ isLoading: true });
+    get().hydrateFromCache();
+    const hasCachedUser = Boolean(get().user);
+    // Only block with loading state if we have a token but no cached user profile yet
+    const storedToken = typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    if (!hasCachedUser && storedToken) {
+      set({ isLoading: true, isRevalidating: true });
+    } else {
+      set({ isRevalidating: true });
+    }
+
     try {
+      const prevLive = get().isLive;
       const isLive = await api.init();
       set({ isLive });
+      if (!prevLive && isLive) {
+        queryClient.invalidateQueries({ refetchType: 'active' });
+      }
 
-      const storedToken = typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null;
       if (storedToken && isLive) {
         const user = await api.auth.getMe();
         if (user) {
-          set({ user, token: storedToken });
+          set({ user, token: storedToken, isInitialized: true });
           if (typeof localStorage !== 'undefined') {
             localStorage.setItem('auth_user', JSON.stringify(user));
           }
@@ -60,7 +111,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         try {
           const cachedUser = JSON.parse(cachedUserStr);
           if (cachedUser && cachedUser.id) {
-            set({ user: cachedUser, token: storedToken });
+            set({ user: cachedUser, token: storedToken, isInitialized: true });
             setCurrentPlayerUserId(cachedUser.id);
             usePlayerStore.getState().syncUserPlaybackRate(cachedUser.id);
             return;
@@ -80,12 +131,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         localStorage.setItem('auth_user', JSON.stringify(guestUser));
       }
       setCurrentPlayerUserId(null);
-      set({ user: guestUser, token: null });
+      set({ user: guestUser, token: null, isInitialized: true });
       usePlayerStore.getState().syncUserPlaybackRate('guest');
     } catch (err) {
       console.warn('Auth init error:', err);
     } finally {
-      set({ isLoading: false, isInitialized: true });
+      set({ isLoading: false, isRevalidating: false, isInitialized: true });
     }
   },
 
@@ -232,6 +283,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       sessionStorage.clear();
     }
     guestSessionService.clearGuestSession();
+    clearSwrCache();
 
     // 5. Xóa toàn bộ cache dữ liệu của React Query (xóa sạch vết user cũ, không lưu lẫn lộn sang acc khác)
     queryClient.clear();

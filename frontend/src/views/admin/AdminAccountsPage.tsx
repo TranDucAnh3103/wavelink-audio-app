@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { Info } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
+import { useDelayedFallback } from '@/hooks/useDelayedFallback';
 import { User } from '@/types';
 import { AdminTabs } from './AdminTabs';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from '@/components/ui/Toast';
 import { api } from '@/services/api';
-import { LoadingState } from '@/components/common/LoadingState';
 import { AdminTableSkeleton } from '@/components/common/Skeletons';
 import { Pagination } from '@/components/ui/Pagination';
 import { DEFAULT_PAGE_SIZE } from '@/config/pagination';
@@ -17,7 +18,6 @@ export const AdminAccountsPage: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Pagination (12 users per page by default, configurable via env)
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = DEFAULT_PAGE_SIZE;
   const totalUserPages = Math.max(1, Math.ceil(users.length / pageSize));
@@ -29,11 +29,8 @@ export const AdminAccountsPage: React.FC = () => {
     }
   }, [currentPage, totalUserPages]);
 
-  // Role Modal
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [newRole, setNewRole] = useState<'USER' | 'VIP' | 'ADMIN'>('USER');
-
-  // Delete Modal
   const [deletingUserId, setDeletingUserId] = useState<number | null>(null);
 
   const loadUsers = async () => {
@@ -50,7 +47,10 @@ export const AdminAccountsPage: React.FC = () => {
 
   useEffect(() => {
     loadUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive]);
+
+  const showSkeletonFallback = useDelayedFallback(isLoading && users.length === 0, 180);
 
   const openRoleModal = (u: User) => {
     setSelectedUser(u);
@@ -87,24 +87,26 @@ export const AdminAccountsPage: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col w-full pb-36 fade-in-comic">
+    <div className="flex flex-col w-full pb-36 md:pb-28 fade-in-comic">
       <AdminTabs activeTab="accounts" />
 
-      <div className="px-4 flex flex-col gap-3">
+      <div className="w-full max-w-7xl mx-auto px-4 md:px-6 flex flex-col gap-4">
         <div className="flex items-center justify-between">
-          <h2 className="font-extrabold text-xs uppercase text-black">Người Dùng & Phân Quyền RBAC</h2>
+          <h2 className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+            Người Dùng & Phân Quyền RBAC
+          </h2>
           <span className="badge-comic badge-comic-purple text-[9px] font-black">ADMIN ACCESS</span>
         </div>
 
-        {isLoading ? (
+        {showSkeletonFallback ? (
           <AdminTableSkeleton rows={4} />
         ) : users.length === 0 ? (
-          <div className="card-comic p-6 text-center text-xs font-bold text-gray-600 bg-white">
+          <div className="card-comic p-6 text-center text-xs font-bold text-[var(--ink-secondary)]">
             Chưa có tài khoản người dùng nào trên hệ thống.
           </div>
         ) : (
           <>
-            <div className="flex flex-col gap-2.5">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {users
                 .slice((safeUserPage - 1) * pageSize, safeUserPage * pageSize)
                 .map((u) => {
@@ -112,35 +114,38 @@ export const AdminAccountsPage: React.FC = () => {
                     u.role === 'ADMIN'
                       ? 'badge-comic-red'
                       : u.role === 'VIP'
-                      ? 'badge-comic-purple'
-                      : u.isGuest
-                      ? 'badge-comic-yellow'
-                      : 'badge-comic-white';
+                        ? 'badge-comic-purple'
+                        : u.isGuest
+                          ? 'badge-comic-yellow'
+                          : 'badge-comic-white';
 
                   return (
-                    <div key={u.id} className="card-comic-sm p-3 bg-white flex items-center justify-between gap-2.5">
+                    <div
+                      key={u.id}
+                      className="card-comic-sm p-3.5 bg-[var(--surface-card)] flex items-center justify-between gap-2.5"
+                    >
                       <div className="flex items-center gap-2.5 min-w-0">
                         <div
-                          className={`w-9 h-9 rounded-full border-2 border-black ${
+                          className={`w-10 h-10 rounded-xl border-2 border-[#111113] ${
                             u.role === 'ADMIN'
                               ? 'bg-[#E63946] text-white'
                               : u.role === 'VIP'
-                              ? 'bg-[#8338EC] text-white'
-                              : 'bg-[#FFE600] text-black'
+                                ? 'bg-[#8338EC] text-white'
+                                : 'bg-[#FFE600] text-[#111113]'
                           } flex items-center justify-center font-bold text-xs shrink-0 shadow-comic-sm`}
                         >
                           {u.username.substring(0, 2).toUpperCase()}
                         </div>
                         <div className="flex flex-col min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-extrabold text-xs text-black truncate leading-tight">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-extrabold text-xs text-[var(--ink-primary)] truncate leading-tight">
                               {u.username}
                             </span>
                             <span className={`badge-comic ${roleColor} text-[8px] py-0 px-1 font-black`}>
                               {u.role || 'USER'}
                             </span>
                           </div>
-                          <span className="text-[11px] font-semibold text-gray-500 truncate mt-0.5">
+                          <span className="text-[11px] font-semibold text-[var(--ink-muted)] truncate mt-0.5">
                             {u.email || (u.isGuest ? 'Khách vãng lai' : 'Chưa có email')}
                           </span>
                         </div>
@@ -148,15 +153,17 @@ export const AdminAccountsPage: React.FC = () => {
 
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button
+                          type="button"
                           onClick={() => openRoleModal(u)}
-                          className="btn-comic text-[11px] py-1 px-2 bg-gray-100"
+                          className="btn-comic text-[11px] py-1 px-2.5"
                         >
                           Quyền
                         </button>
                         {u.role !== 'ADMIN' && (
                           <button
+                            type="button"
                             onClick={() => setDeletingUserId(u.id)}
-                            className="btn-comic btn-comic-red text-[11px] py-1 px-2"
+                            className="btn-comic btn-comic-red text-[11px] py-1 px-2.5"
                           >
                             Xóa
                           </button>
@@ -188,13 +195,17 @@ export const AdminAccountsPage: React.FC = () => {
         title={`PHÂN QUYỀN: ${selectedUser?.username}`}
         confirmText="Lưu Phân Quyền"
         onConfirm={handleSaveRole}
+        size="sm"
       >
-        <div className="flex flex-col gap-2">
-          <p className="text-[11px] font-semibold text-gray-700 leading-tight">
+        <div className="flex flex-col gap-2.5">
+          <p className="text-[11px] font-semibold text-[var(--ink-secondary)] leading-tight">
             Chọn vai trò hệ thống (Hạng hội viên & thời hạn VIP 30 ngày sẽ tự động đồng bộ theo Role):
           </p>
-          <div className="flex flex-col gap-0.5">
-            <label className="font-extrabold text-[11px] uppercase text-black" htmlFor="user-role-select">
+          <div className="flex flex-col gap-1">
+            <label
+              className="font-extrabold text-[11px] uppercase text-[var(--ink-primary)]"
+              htmlFor="user-role-select"
+            >
               Vai trò hệ thống (Role)
             </label>
             <select
@@ -208,8 +219,11 @@ export const AdminAccountsPage: React.FC = () => {
               <option value="ADMIN">ADMIN (Quản trị viên tối cao)</option>
             </select>
           </div>
-          <div className="card-comic-sm p-1.5 bg-[#FEF9C3] text-[10px] font-semibold text-gray-700 border border-black leading-tight">
-            <i className="ri-information-line text-black font-bold" /> Khi chọn <strong>VIP</strong>, hệ thống tự động đồng bộ Hạng <strong>VIP</strong> và kích hoạt hạn 30 ngày. Chọn <strong>USER</strong>, tài khoản về hạng <strong>FREE</strong>.
+          <div className="card-comic-sm p-2.5 bg-[var(--surface-accent-soft)] text-[10px] font-semibold text-[var(--ink-secondary)] flex items-start gap-1.5 leading-snug">
+            <Info className="w-3.5 h-3.5 text-[var(--ink-primary)] shrink-0 mt-0.5" />
+            <span>
+              Khi chọn <strong>VIP</strong>, hệ thống tự động đồng bộ Hạng <strong>VIP</strong> và kích hoạt hạn 30 ngày. Chọn <strong>USER</strong>, tài khoản về hạng <strong>FREE</strong>.
+            </span>
           </div>
         </div>
       </Modal>
@@ -222,12 +236,12 @@ export const AdminAccountsPage: React.FC = () => {
         isDanger
         confirmText="Xóa Vĩnh Viễn"
         onConfirm={handleDeleteUser}
+        size="sm"
       >
-        <p className="text-xs font-semibold text-gray-800 leading-snug">
+        <p className="text-xs font-semibold text-[var(--ink-secondary)] leading-snug">
           Bạn có chắc chắn muốn xóa tài khoản này? Toàn bộ lịch sử nghe và danh sách yêu thích của người này sẽ bị xóa sạch.
         </p>
       </Modal>
     </div>
   );
 };
-

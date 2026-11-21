@@ -2,29 +2,58 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { PaymentInfo, MembershipPackage } from '@/types';
+import { readSwrCache, writeSwrCache } from '@/lib/swrCache';
+import { useIsHydrated } from '@/hooks/useDelayedFallback';
 
 export function useMembershipPackages() {
-  const { isLive, user } = useAuthStore();
+  const { user } = useAuthStore();
+  const hydrated = useIsHydrated();
   return useQuery({
-    queryKey: ['membership-packages', isLive, user?.id, user?.role, user?.membership],
-    queryFn: () => api.membership.getPackages(isLive),
+    queryKey: ['membership-packages', user?.id, user?.role, user?.membership],
+    queryFn: async () => {
+      const { isLive } = useAuthStore.getState();
+      const data = await api.membership.getPackages(isLive);
+      if (Array.isArray(data) && data.length > 0) {
+        writeSwrCache('membership-packages', data);
+      }
+      return data;
+    },
+    placeholderData: (prev) => {
+      if (prev !== undefined) return prev;
+      if (!hydrated) return undefined;
+      return readSwrCache<MembershipPackage[]>('membership-packages')?.data;
+    },
   });
 }
 
 export function usePaymentInfo() {
-  const { isLive } = useAuthStore();
+  const hydrated = useIsHydrated();
   return useQuery({
-    queryKey: ['payment-info', isLive],
-    queryFn: () => api.membership.getPaymentInfo(isLive),
+    queryKey: ['payment-info'],
+    queryFn: async () => {
+      const { isLive } = useAuthStore.getState();
+      const data = await api.membership.getPaymentInfo(isLive);
+      if (data) {
+        writeSwrCache('payment-info', data);
+      }
+      return data;
+    },
+    placeholderData: (prev) => {
+      if (prev !== undefined) return prev;
+      if (!hydrated) return undefined;
+      return readSwrCache<PaymentInfo>('payment-info')?.data;
+    },
   });
 }
 
 export function useUpdatePaymentInfo() {
   const queryClient = useQueryClient();
-  const { isLive } = useAuthStore();
 
   return useMutation({
-    mutationFn: (info: PaymentInfo) => api.membership.updatePaymentInfo(info, isLive),
+    mutationFn: (info: PaymentInfo) => {
+      const { isLive } = useAuthStore.getState();
+      return api.membership.updatePaymentInfo(info, isLive);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payment-info'] });
       queryClient.invalidateQueries({ queryKey: ['membership-packages'] });
@@ -34,10 +63,12 @@ export function useUpdatePaymentInfo() {
 
 export function useUpdatePackages() {
   const queryClient = useQueryClient();
-  const { isLive } = useAuthStore();
 
   return useMutation({
-    mutationFn: (packages: MembershipPackage[]) => api.membership.updatePackages(packages, isLive),
+    mutationFn: (packages: MembershipPackage[]) => {
+      const { isLive } = useAuthStore.getState();
+      return api.membership.updatePackages(packages, isLive);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['membership-packages'] });
     },
@@ -46,10 +77,12 @@ export function useUpdatePackages() {
 
 export function useResetPackages() {
   const queryClient = useQueryClient();
-  const { isLive } = useAuthStore();
 
   return useMutation({
-    mutationFn: () => api.membership.resetPackages(isLive),
+    mutationFn: () => {
+      const { isLive } = useAuthStore.getState();
+      return api.membership.resetPackages(isLive);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['membership-packages'] });
     },
@@ -57,27 +90,34 @@ export function useResetPackages() {
 }
 
 export function useMyMembership() {
-  const { isLive, user } = useAuthStore();
+  const { user } = useAuthStore();
   return useQuery({
-    queryKey: ['my-membership', isLive, user?.id],
-    queryFn: () => api.membership.getMyMembership(isLive),
+    queryKey: ['my-membership', user?.id],
+    queryFn: () => {
+      const { isLive } = useAuthStore.getState();
+      return api.membership.getMyMembership(isLive);
+    },
   });
 }
 
 export function useCreateMembershipOrder() {
-  const { isLive } = useAuthStore();
   return useMutation({
-    mutationFn: (packageId: string) => api.membership.createOrder(packageId, isLive),
+    mutationFn: (packageId: string) => {
+      const { isLive } = useAuthStore.getState();
+      return api.membership.createOrder(packageId, isLive);
+    },
   });
 }
 
 export function useSimulatePayment() {
   const queryClient = useQueryClient();
-  const { isLive, refreshUser } = useAuthStore();
+  const { refreshUser } = useAuthStore();
 
   return useMutation({
-    mutationFn: ({ orderCode, status }: { orderCode: string; status: 'SUCCESS' | 'FAILED' }) =>
-      api.membership.simulatePayment(orderCode, status, isLive),
+    mutationFn: ({ orderCode, status }: { orderCode: string; status: 'SUCCESS' | 'FAILED' }) => {
+      const { isLive } = useAuthStore.getState();
+      return api.membership.simulatePayment(orderCode, status, isLive);
+    },
     onSuccess: async () => {
       await refreshUser();
       queryClient.invalidateQueries({ queryKey: ['my-membership'] });

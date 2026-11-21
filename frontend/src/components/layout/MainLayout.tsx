@@ -2,6 +2,7 @@ import React from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Header } from './Header';
 import { Footer } from './Footer';
+import { SidebarNav } from './SidebarNav';
 import { MiniPlayer } from './MiniPlayer';
 import { YouTubeEngineHost } from './YouTubeEngineHost';
 import { ScreenLockOverlay } from './ScreenLockOverlay';
@@ -14,17 +15,24 @@ export const MainLayout: React.FC = () => {
   const { isScreenLocked, setScreenLocked, currentAudio } = usePlayerStore();
 
   return (
-    <div className="mobile-app-shell">
+    <div className="app-shell">
+      {!isAuthPage && <SidebarNav />}
       {!isAuthPage && <Header />}
 
-      <main id="app-main" className={`flex-1 flex flex-col relative w-full ${isAuthPage ? 'pt-4' : 'pt-16'}`}>
+      <main
+        id="app-main"
+        className={`flex-1 flex flex-col relative w-full ${
+          isAuthPage
+            ? 'pt-4 md:pt-8 justify-center'
+            : 'pt-16 md:pt-20 md:pl-[76px] lg:pl-60'
+        }`}
+      >
         <Outlet />
       </main>
 
       {!isAuthPage && <MiniPlayer />}
       {!isAuthPage && <Footer />}
 
-      {/* Lớp phủ khóa màn hình (Giữ màn hình / Tránh chạm) che phủ toàn bộ app */}
       {isScreenLocked && currentAudio && (
         <ScreenLockOverlay onClose={() => setScreenLocked(false)} />
       )}

@@ -192,15 +192,18 @@ describe('5 Issues Fixes Verification Suite', () => {
       expect(favButton).toBeDefined();
 
       // Initially unfilled
-      const icon = favButton.querySelector('i');
-      expect(icon?.className).toContain('ri-heart-3-line');
+      const icon = favButton.querySelector('svg');
+      expect(icon).toBeTruthy();
+      expect(icon?.getAttribute('class') ?? '').not.toContain('text-[#E63946]');
+      expect(icon?.getAttribute('class') ?? '').not.toContain('fill-[#E63946]');
 
       // Click to toggle favorite
       fireEvent.click(favButton);
 
       // Optimistically changes to filled red
-      expect(icon?.className).toContain('ri-heart-3-fill');
-      expect(icon?.className).toContain('text-[#E63946]');
+      const updatedIcon = favButton.querySelector('svg');
+      expect(updatedIcon?.getAttribute('class') ?? '').toContain('text-[#E63946]');
+      expect(updatedIcon?.getAttribute('class') ?? '').toContain('fill-[#E63946]');
       expect(mutateSpy).toHaveBeenCalledWith(99, expect.any(Object));
     });
   });

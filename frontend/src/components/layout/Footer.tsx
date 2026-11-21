@@ -1,5 +1,8 @@
+'use client';
+
 import React from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Home, Library, Plus, LayoutDashboard, Users, User } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 
 export const Footer: React.FC = React.memo(() => {
@@ -14,17 +17,17 @@ export const Footer: React.FC = React.memo(() => {
   const isLibraryActive = pathname.startsWith('/library');
   const isAdminActive = pathname.startsWith('/admin') || pathname === '/settings';
   const isCommunityActive = pathname === '/community';
-  const isProfileActive = pathname === '/profile';
+  const isProfileActive = pathname.startsWith('/profile');
 
   return (
-    <nav className="bottom-nav-comic pb-safe">
-      <div className="relative flex justify-around items-center h-[62px] px-2">
+    <nav className="bottom-nav-comic pb-safe md:hidden" aria-label="Điều hướng di động">
+      <div className="relative flex justify-around items-center h-[62px] px-1.5">
         {/* Tab 1: Trang chủ */}
         <NavLink
           to="/home"
           className={`nav-tab-comic ${isHomeActive ? 'active' : ''}`}
         >
-          <i className={isHomeActive ? 'ri-home-5-fill' : 'ri-home-5-line'} />
+          <Home className="w-5 h-5" strokeWidth={isHomeActive ? 2.5 : 2} />
           <span>Trang chủ</span>
         </NavLink>
 
@@ -33,21 +36,22 @@ export const Footer: React.FC = React.memo(() => {
           to="/library"
           className={`nav-tab-comic ${isLibraryActive ? 'active' : ''}`}
         >
-          <i className={isLibraryActive ? 'ri-book-read-fill' : 'ri-book-read-line'} />
+          <Library className="w-5 h-5" strokeWidth={isLibraryActive ? 2.5 : 2} />
           <span>Thư viện</span>
         </NavLink>
 
         {/* Center Raised Comic FAB: Nhập link YouTube */}
-        <div className="relative flex flex-col items-center justify-center flex-1">
+        <div className="relative flex flex-col items-center justify-end flex-1 pb-1.5">
           <button
+            type="button"
             onClick={() => navigate('/upload')}
             aria-label="Nhập link YouTube"
             className="fab-comic"
             title="Nhập link YouTube"
           >
-            <i className="ri-add-line font-black" />
+            <Plus className="w-6 h-6" strokeWidth={3} />
           </button>
-          <span className="text-[10px] font-black uppercase text-black tracking-tighter -mt-3">
+          <span className="text-[10px] font-black uppercase text-[var(--ink-primary)] tracking-tight leading-none -mt-2">
             Nhập Link
           </span>
         </div>
@@ -58,7 +62,7 @@ export const Footer: React.FC = React.memo(() => {
             to="/admin"
             className={`nav-tab-comic ${isAdminActive ? 'active' : ''}`}
           >
-            <i className={isAdminActive ? 'ri-dashboard-3-fill' : 'ri-dashboard-3-line'} />
+            <LayoutDashboard className="w-5 h-5" strokeWidth={isAdminActive ? 2.5 : 2} />
             <span>Quản trị</span>
           </NavLink>
         ) : (
@@ -66,7 +70,7 @@ export const Footer: React.FC = React.memo(() => {
             to="/community"
             className={`nav-tab-comic ${isCommunityActive ? 'active' : ''}`}
           >
-            <i className={isCommunityActive ? 'ri-group-fill' : 'ri-group-line'} />
+            <Users className="w-5 h-5" strokeWidth={isCommunityActive ? 2.5 : 2} />
             <span>Cộng đồng</span>
           </NavLink>
         )}
@@ -76,7 +80,7 @@ export const Footer: React.FC = React.memo(() => {
           to="/profile"
           className={`nav-tab-comic ${isProfileActive ? 'active' : ''}`}
         >
-          <i className={isProfileActive ? 'ri-user-3-fill' : 'ri-user-3-line'} />
+          <User className="w-5 h-5" strokeWidth={isProfileActive ? 2.5 : 2} />
           <span>Cá nhân</span>
         </NavLink>
       </div>
@@ -84,3 +88,4 @@ export const Footer: React.FC = React.memo(() => {
   );
 });
 
+Footer.displayName = 'Footer';

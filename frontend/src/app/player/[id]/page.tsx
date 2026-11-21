@@ -207,7 +207,7 @@ export default async function PlayerRoutePage({ params }: PageProps) {
       )}
 
       {/* Interactive WaveLink Player Client Component */}
-      <PlayerClient />
+      <PlayerClient initialAudio={audio} />
     </>
   );
 }

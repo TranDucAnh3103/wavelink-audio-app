@@ -5,7 +5,13 @@ export default {
   theme: {
     extend: {
       colors: {
-        'comic-bg': '#F4F4F0',
+        'comic-bg': 'var(--surface-bg)',
+        'comic-card': 'var(--surface-card)',
+        'comic-elevated': 'var(--surface-elevated)',
+        'comic-muted': 'var(--surface-muted)',
+        'comic-ink': 'var(--ink-primary)',
+        'comic-subink': 'var(--ink-secondary)',
+        'comic-border': 'var(--border-ink)',
         'comic-yellow': '#FFE600',
         'comic-blue': '#3A86FF',
         'comic-teal': '#2A9D8F',
@@ -14,8 +20,9 @@ export default {
         'comic-purple': '#8338EC',
       },
       fontFamily: {
-        sans: ['Plus Jakarta Sans', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
-        comic: ['Space Grotesk', 'sans-serif'],
+        sans: ['var(--font-sans)', 'Plus Jakarta Sans', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        comic: ['var(--font-comic)', 'Space Grotesk', 'sans-serif'],
+        mono: ['var(--font-mono)', 'JetBrains Mono', 'monospace'],
       },
     },
   },

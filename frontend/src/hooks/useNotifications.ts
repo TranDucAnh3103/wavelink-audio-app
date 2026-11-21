@@ -1,9 +1,11 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
-import { NotificationPreferences } from '@/types';
+import { NotificationItem, NotificationPreferences } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 import { playNotificationSound } from '@/lib/soundEffects';
+import { readSwrCache, writeSwrCache } from '@/lib/swrCache';
+import { useIsHydrated } from '@/hooks/useDelayedFallback';
 
 const LAST_KNOWN_UNREAD_KEY = 'wavelink_last_known_unread_count';
 
@@ -20,9 +22,6 @@ function getInitialKnownUnreadCount(): number | null {
 let prevUnreadCount: number | null = getInitialKnownUnreadCount();
 let isInitialFetch = true;
 
-/**
- * Kích hoạt đồng bộ thông báo thời gian thực và phát chuông ngay lập tức
- */
 export function triggerNotificationSync(playChime = true) {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('wavelink:notification:sync', { detail: { playChime } }));
@@ -30,18 +29,31 @@ export function triggerNotificationSync(playChime = true) {
 }
 
 export function useNotifications() {
-  const { isLive } = useAuthStore();
+  const { user } = useAuthStore();
+  const hydrated = useIsHydrated();
+  const cacheKey = `notifications:${user?.id || 'guest'}`;
+
   return useQuery({
-    queryKey: ['notifications', isLive],
-    queryFn: () => api.notification.getNotifications(isLive),
+    queryKey: ['notifications', user?.id || 'guest'],
+    queryFn: async () => {
+      const { isLive } = useAuthStore.getState();
+      const data = await api.notification.getNotifications(isLive);
+      if (Array.isArray(data)) {
+        writeSwrCache(cacheKey, data);
+      }
+      return data;
+    },
+    placeholderData: (prev) => {
+      if (prev !== undefined) return prev;
+      if (!hydrated) return undefined;
+      return readSwrCache<NotificationItem[]>(cacheKey)?.data;
+    },
   });
 }
 
 export function useUnreadNotificationCount() {
   const queryClient = useQueryClient();
-  const { isLive } = useAuthStore();
 
-  // Lắng nghe sự kiện đồng bộ thông báo thời gian thực từ các component/tab khác
   useEffect(() => {
     const handleSync = (e: Event) => {
       const customEvent = e as CustomEvent<{ playChime?: boolean }>;
@@ -57,10 +69,10 @@ export function useUnreadNotificationCount() {
   }, [queryClient]);
 
   return useQuery({
-    queryKey: ['unread-notification-count', isLive],
+    queryKey: ['unread-notification-count'],
     queryFn: async () => {
+      const { isLive } = useAuthStore.getState();
       const count = await api.notification.getUnreadCount(isLive);
-      // Chỉ phát chuông khi có thông báo MỚI phát sinh trong phiên, không kêu khi reload lại trang
       if (!isInitialFetch && prevUnreadCount !== null && count > prevUnreadCount) {
         playNotificationSound();
       }
@@ -71,17 +83,19 @@ export function useUnreadNotificationCount() {
       } catch {}
       return count;
     },
-    refetchInterval: 8000, // Thăm dò mỗi 8 giây đảm bảo thời gian thực
+    refetchInterval: 8000,
     refetchOnWindowFocus: true,
   });
 }
 
 export function useMarkNotificationAsRead() {
   const queryClient = useQueryClient();
-  const { isLive } = useAuthStore();
 
   return useMutation({
-    mutationFn: (id: number | string) => api.notification.markAsRead(id, isLive),
+    mutationFn: (id: number | string) => {
+      const { isLive } = useAuthStore.getState();
+      return api.notification.markAsRead(id, isLive);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       queryClient.invalidateQueries({ queryKey: ['unread-notification-count'] });
@@ -91,10 +105,12 @@ export function useMarkNotificationAsRead() {
 
 export function useMarkAllNotificationsAsRead() {
   const queryClient = useQueryClient();
-  const { isLive } = useAuthStore();
 
   return useMutation({
-    mutationFn: () => api.notification.markAllAsRead(isLive),
+    mutationFn: () => {
+      const { isLive } = useAuthStore.getState();
+      return api.notification.markAllAsRead(isLive);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       queryClient.invalidateQueries({ queryKey: ['unread-notification-count'] });
@@ -104,10 +120,12 @@ export function useMarkAllNotificationsAsRead() {
 
 export function useDeleteNotification() {
   const queryClient = useQueryClient();
-  const { isLive } = useAuthStore();
 
   return useMutation({
-    mutationFn: (id: number | string) => api.notification.deleteNotification(id, isLive),
+    mutationFn: (id: number | string) => {
+      const { isLive } = useAuthStore.getState();
+      return api.notification.deleteNotification(id, isLive);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       queryClient.invalidateQueries({ queryKey: ['unread-notification-count'] });
@@ -117,10 +135,12 @@ export function useDeleteNotification() {
 
 export function useDeleteAllNotifications() {
   const queryClient = useQueryClient();
-  const { isLive } = useAuthStore();
 
   return useMutation({
-    mutationFn: () => api.notification.deleteAllNotifications(isLive),
+    mutationFn: () => {
+      const { isLive } = useAuthStore.getState();
+      return api.notification.deleteAllNotifications(isLive);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       queryClient.invalidateQueries({ queryKey: ['unread-notification-count'] });
@@ -129,19 +149,23 @@ export function useDeleteAllNotifications() {
 }
 
 export function useNotificationPreferences() {
-  const { isLive } = useAuthStore();
   return useQuery({
-    queryKey: ['notification-preferences', isLive],
-    queryFn: () => api.notification.getPreferences(isLive),
+    queryKey: ['notification-preferences'],
+    queryFn: () => {
+      const { isLive } = useAuthStore.getState();
+      return api.notification.getPreferences(isLive);
+    },
   });
 }
 
 export function useUpdateNotificationPreferences() {
   const queryClient = useQueryClient();
-  const { isLive } = useAuthStore();
 
   return useMutation({
-    mutationFn: (prefs: NotificationPreferences) => api.notification.updatePreferences(prefs, isLive),
+    mutationFn: (prefs: NotificationPreferences) => {
+      const { isLive } = useAuthStore.getState();
+      return api.notification.updatePreferences(prefs, isLive);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notification-preferences'] });
     },

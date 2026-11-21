@@ -1,8 +1,14 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useCategories, useCreateCategory, useUpdateCategory, useDeleteCategory } from '@/hooks/useCategories';
+import {
+  useCategories,
+  useCreateCategory,
+  useUpdateCategory,
+  useDeleteCategory,
+} from '@/hooks/useCategories';
 import { useTags, useCreateTag, useDeleteTag } from '@/hooks/useTags';
+import { useDelayedFallback } from '@/hooks/useDelayedFallback';
 import { Category } from '@/types';
 import { AdminTabs } from './AdminTabs';
 import { Modal } from '@/components/ui/Modal';
@@ -21,7 +27,6 @@ export const AdminCategoriesPage: React.FC = () => {
   const createTagMutation = useCreateTag();
   const deleteTagMutation = useDeleteTag();
 
-  // Pagination for Categories (12 items per page by default, configurable via env)
   const [currentCatPage, setCurrentCatPage] = useState(1);
   const pageSize = DEFAULT_PAGE_SIZE;
   const totalCatPages = Math.max(1, Math.ceil(categories.length / pageSize));
@@ -33,21 +38,18 @@ export const AdminCategoriesPage: React.FC = () => {
     }
   }, [currentCatPage, totalCatPages]);
 
-  // Category Add Modal
   const [isAddCatOpen, setIsAddCatOpen] = useState(false);
   const [newCatName, setNewCatName] = useState('');
   const [newCatSlug, setNewCatSlug] = useState('');
 
-  // Category Edit Modal
   const [editingCat, setEditingCat] = useState<Category | null>(null);
   const [editCatName, setEditCatName] = useState('');
   const [editCatSlug, setEditCatSlug] = useState('');
 
-  // Category Delete Modal
   const [deletingCatId, setDeletingCatId] = useState<number | null>(null);
-
-  // New Tag State
   const [newTagName, setNewTagName] = useState('');
+
+  const showSkeletonFallback = useDelayedFallback(catLoading && categories.length === 0, 180);
 
   const handleAddCategory = async () => {
     if (!newCatName.trim()) {
@@ -131,53 +133,65 @@ export const AdminCategoriesPage: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col w-full pb-36 fade-in-comic">
+    <div className="flex flex-col w-full pb-36 md:pb-28 fade-in-comic">
       <AdminTabs activeTab="categories" />
 
-      <div className="px-4 flex flex-col gap-4">
-        {/* 1. Quản lý Thể Loại */}
-        <div className="card-comic p-4 bg-white flex flex-col gap-3">
-          <div className="flex items-center justify-between pb-1 border-b-2 border-black">
-            <span className="font-extrabold text-xs uppercase text-black">Thể Loại Audio</span>
+      <div className="w-full max-w-7xl mx-auto px-4 md:px-6 grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* 1. Categories */}
+        <div className="lg:col-span-7 card-comic p-4 flex flex-col gap-3">
+          <div className="flex items-center justify-between pb-2 border-b-2 border-[var(--border-ink)]">
+            <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+              Thể Loại Audio
+            </span>
             <button
+              type="button"
               onClick={() => setIsAddCatOpen(true)}
-              className="btn-comic btn-comic-yellow text-[11px] py-1 px-2.5"
+              className="btn-comic btn-comic-yellow text-[11px] py-1.5 px-3"
             >
               + Thêm Thể Loại
             </button>
           </div>
           <div className="flex flex-col gap-2">
-            {catLoading ? (
+            {showSkeletonFallback ? (
               <AdminTableSkeleton rows={3} />
             ) : categories.length === 0 ? (
-              <div className="card-comic p-4 text-center text-xs font-bold text-gray-500">Chưa có thể loại nào.</div>
+              <div className="p-4 text-center text-xs font-bold text-[var(--ink-muted)]">
+                Chưa có thể loại nào.
+              </div>
             ) : (
               categories
                 .slice((safeCatPage - 1) * pageSize, safeCatPage * pageSize)
                 .map((c) => (
-                <div key={c.id} className="card-comic-sm p-2.5 bg-white flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="badge-comic badge-comic-blue text-[9px] py-0 px-1.5 font-bold truncate">
-                      {c.slug}
-                    </span>
-                    <span className="font-extrabold text-xs text-black truncate">{c.name}</span>
+                  <div
+                    key={c.id}
+                    className="card-comic-sm p-2.5 bg-[var(--surface-elevated)] flex items-center justify-between gap-2"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="badge-comic badge-comic-blue text-[9px] py-0 px-1.5 font-bold truncate">
+                        {c.slug}
+                      </span>
+                      <span className="font-extrabold text-xs text-[var(--ink-primary)] truncate">
+                        {c.name}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => openEditCategory(c)}
+                        className="btn-comic text-[11px] py-1 px-2.5"
+                      >
+                        Sửa
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeletingCatId(c.id)}
+                        className="btn-comic btn-comic-red text-[11px] py-1 px-2.5"
+                      >
+                        Xóa
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      onClick={() => openEditCategory(c)}
-                      className="btn-comic text-[11px] py-0.5 px-2 bg-gray-100"
-                    >
-                      Sửa
-                    </button>
-                    <button
-                      onClick={() => setDeletingCatId(c.id)}
-                      className="btn-comic btn-comic-red text-[11px] py-0.5 px-2"
-                    >
-                      Xóa
-                    </button>
-                  </div>
-                </div>
-              ))
+                ))
             )}
           </div>
 
@@ -190,10 +204,12 @@ export const AdminCategoriesPage: React.FC = () => {
           />
         </div>
 
-        {/* 2. Quản lý Thẻ Tags */}
-        <div className="card-comic p-4 bg-white flex flex-col gap-3">
-          <div className="flex items-center justify-between pb-1 border-b-2 border-black">
-            <span className="font-extrabold text-xs uppercase text-black">Thẻ Phân Loại (Tags)</span>
+        {/* 2. Tags */}
+        <div className="lg:col-span-5 card-comic p-4 flex flex-col gap-3">
+          <div className="flex items-center justify-between pb-2 border-b-2 border-[var(--border-ink)]">
+            <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+              Thẻ Phân Loại (Tags)
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -210,6 +226,7 @@ export const AdminCategoriesPage: React.FC = () => {
               className="input-comic text-xs flex-1 min-w-0"
             />
             <button
+              type="button"
               onClick={handleCreateTag}
               className="btn-comic btn-comic-primary text-xs py-2 px-3 whitespace-nowrap shrink-0"
             >
@@ -224,8 +241,9 @@ export const AdminCategoriesPage: React.FC = () => {
               >
                 #{t.name}
                 <button
+                  type="button"
                   onClick={() => handleDeleteTag(t.id)}
-                  className="font-black text-black hover:text-red-600"
+                  className="font-black text-[#111113] hover:text-[#E63946] cursor-pointer"
                 >
                   ×
                 </button>
@@ -242,9 +260,12 @@ export const AdminCategoriesPage: React.FC = () => {
         title="TẠO THỂ LOẠI MỚI"
         confirmText="Tạo Ngay"
         onConfirm={handleAddCategory}
+        size="sm"
       >
-        <div className="flex flex-col gap-1.5">
-          <label className="font-extrabold text-[11px] uppercase text-black">Tên thể loại</label>
+        <div className="flex flex-col gap-2">
+          <label className="font-extrabold text-[11px] uppercase text-[var(--ink-primary)]">
+            Tên thể loại
+          </label>
           <input
             type="text"
             placeholder="VD: Tiên Hiệp"
@@ -255,7 +276,9 @@ export const AdminCategoriesPage: React.FC = () => {
             }}
             className="input-comic text-xs py-1.5"
           />
-          <label className="font-extrabold text-[11px] uppercase text-black mt-0.5">Slug</label>
+          <label className="font-extrabold text-[11px] uppercase text-[var(--ink-primary)] mt-0.5">
+            Slug
+          </label>
           <input
             type="text"
             placeholder="VD: tien-hiep"
@@ -273,16 +296,21 @@ export const AdminCategoriesPage: React.FC = () => {
         title="SỬA THỂ LOẠI"
         confirmText="Lưu"
         onConfirm={handleSaveEditCategory}
+        size="sm"
       >
-        <div className="flex flex-col gap-1.5">
-          <label className="font-extrabold text-[11px] uppercase text-black">Tên thể loại</label>
+        <div className="flex flex-col gap-2">
+          <label className="font-extrabold text-[11px] uppercase text-[var(--ink-primary)]">
+            Tên thể loại
+          </label>
           <input
             type="text"
             value={editCatName}
             onChange={(e) => setEditCatName(e.target.value)}
             className="input-comic text-xs py-1.5"
           />
-          <label className="font-extrabold text-[11px] uppercase text-black mt-0.5">Slug đường dẫn</label>
+          <label className="font-extrabold text-[11px] uppercase text-[var(--ink-primary)] mt-0.5">
+            Slug đường dẫn
+          </label>
           <input
             type="text"
             value={editCatSlug}
@@ -300,12 +328,12 @@ export const AdminCategoriesPage: React.FC = () => {
         isDanger
         confirmText="Xóa"
         onConfirm={handleDeleteCategory}
+        size="sm"
       >
-        <p className="text-xs font-semibold text-gray-800 leading-snug">
+        <p className="text-xs font-semibold text-[var(--ink-secondary)] leading-snug">
           Bạn có chắc chắn muốn xóa thể loại này? Các audio thuộc thể loại này sẽ về trạng thái Chung.
         </p>
       </Modal>
     </div>
   );
 };
-

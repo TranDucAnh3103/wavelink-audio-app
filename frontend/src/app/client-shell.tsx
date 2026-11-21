@@ -1,14 +1,20 @@
 'use client';
 
 import React, { Suspense } from 'react';
+import dynamic from 'next/dynamic';
 import { usePathname } from 'next/navigation';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
+import { SidebarNav } from '@/components/layout/SidebarNav';
 import { MiniPlayer } from '@/components/layout/MiniPlayer';
 import { YouTubeEngineHost } from '@/components/layout/YouTubeEngineHost';
-import { ScreenLockOverlay } from '@/components/layout/ScreenLockOverlay';
 import { ToastContainer } from '@/components/ui/Toast';
 import { usePlayerStore } from '@/stores/playerStore';
+
+const ScreenLockOverlay = dynamic(
+  () => import('@/components/layout/ScreenLockOverlay').then((m) => m.ScreenLockOverlay),
+  { ssr: false }
+);
 
 function ShellBody({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
@@ -16,16 +22,25 @@ function ShellBody({ children }: { children: React.ReactNode }) {
   const { isScreenLocked, setScreenLocked, currentAudio } = usePlayerStore();
 
   return (
-    <div className="mobile-app-shell">
+    <div className="app-shell">
       {!isAuthPage && (
-        <Suspense fallback={<div className="h-16" />}>
-          <Header />
-        </Suspense>
+        <>
+          <Suspense fallback={null}>
+            <SidebarNav />
+          </Suspense>
+          <Suspense fallback={<div className="h-14 md:h-16" />}>
+            <Header />
+          </Suspense>
+        </>
       )}
 
       <main
         id="app-main"
-        className={`flex-1 flex flex-col relative w-full ${isAuthPage ? 'pt-4' : 'pt-16'}`}
+        className={`flex-1 flex flex-col relative w-full ${
+          isAuthPage
+            ? 'pt-4 md:pt-8 justify-center'
+            : 'pt-16 md:pt-20 md:pl-[76px] lg:pl-60'
+        }`}
       >
         <Suspense fallback={null}>
           {children}
@@ -43,7 +58,6 @@ function ShellBody({ children }: { children: React.ReactNode }) {
         </Suspense>
       )}
 
-      {/* Lớp phủ khóa màn hình che phủ toàn bộ app khi bật chế độ chống chạm */}
       {isScreenLocked && currentAudio && (
         <ScreenLockOverlay onClose={() => setScreenLocked(false)} />
       )}

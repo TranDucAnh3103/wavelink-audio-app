@@ -1,4 +1,7 @@
+'use client';
+
 import React, { useEffect, useRef } from 'react';
+import { Lock, RotateCcw, RotateCw, Play, Pause, Gauge, X } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
 
 interface ScreenLockOverlayProps {
@@ -19,11 +22,9 @@ export const ScreenLockOverlay: React.FC<ScreenLockOverlayProps> = ({ onClose })
 
   const wakeLockRef = useRef<any>(null);
 
-  // Khóa cuộn trang và yêu cầu WakeLock để màn hình không tự tắt khi đang ở chế độ giữ màn hình
   useEffect(() => {
     document.body.style.overflow = 'hidden';
 
-    // Acquire WakeLock nếu hỗ trợ
     if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
       (navigator as any).wakeLock
         .request('screen')
@@ -64,18 +65,14 @@ export const ScreenLockOverlay: React.FC<ScreenLockOverlayProps> = ({ onClose })
       aria-modal="true"
       aria-label="Màn hình đang khóa"
     >
-      {/* Lớp phủ mờ bảo vệ toàn bộ giao diện */}
       <div className="screen-lock-backdrop" />
 
-      {/* Chỉ báo trạng thái khóa màn hình ở trên cùng */}
       <div className="screen-lock-indicator">
-        <i className="ri-lock-2-fill text-yellow-400" />
+        <Lock className="w-3.5 h-3.5 text-yellow-400" strokeWidth={2.5} />
         <span>MÀN HÌNH ĐANG KHÓA (TRÁNH CHẠM)</span>
       </div>
 
-      {/* Nội dung trung tâm: Trực quan, tối giản, thanh lịch */}
       <div className="screen-lock-content">
-        {/* Ảnh thumbnail với hiệu ứng sóng âm khi đang phát */}
         <div className="screen-lock-artwork">
           <img
             src={currentAudio.thumbnailUrl || '/wavelink-icon.png'}
@@ -91,7 +88,6 @@ export const ScreenLockOverlay: React.FC<ScreenLockOverlayProps> = ({ onClose })
           )}
         </div>
 
-        {/* Thông tin bài/tập */}
         <div className="screen-lock-meta">
           <p className="screen-lock-episode">
             TẬP {String(currentEpisode?.episodeNumber || 1).padStart(2, '0')} · {currentEpisode?.title || 'Tập 1'}
@@ -102,7 +98,6 @@ export const ScreenLockOverlay: React.FC<ScreenLockOverlayProps> = ({ onClose })
           )}
         </div>
 
-        {/* Thanh tiến trình phát */}
         <div className="screen-lock-progress-wrap">
           <div className="screen-lock-progress-bar">
             <div
@@ -117,7 +112,6 @@ export const ScreenLockOverlay: React.FC<ScreenLockOverlayProps> = ({ onClose })
           </div>
         </div>
 
-        {/* Nút điều khiển nhanh */}
         <div className="screen-lock-controls">
           <button
             type="button"
@@ -125,7 +119,7 @@ export const ScreenLockOverlay: React.FC<ScreenLockOverlayProps> = ({ onClose })
             onClick={() => skipSeconds(-15)}
             title="Tua lùi 15 giây"
           >
-            <i className="ri-replay-15-line" />
+            <RotateCcw className="w-5 h-5" strokeWidth={2.25} />
           </button>
 
           <button
@@ -134,7 +128,11 @@ export const ScreenLockOverlay: React.FC<ScreenLockOverlayProps> = ({ onClose })
             onClick={() => togglePlay()}
             title={isPlaying ? 'Tạm dừng' : 'Phát tiếp'}
           >
-            <i className={isPlaying ? 'ri-pause-fill' : 'ri-play-fill'} />
+            {isPlaying ? (
+              <Pause className="w-7 h-7 fill-current" strokeWidth={2.5} />
+            ) : (
+              <Play className="w-7 h-7 fill-current ml-0.5" strokeWidth={2.5} />
+            )}
           </button>
 
           <button
@@ -143,23 +141,20 @@ export const ScreenLockOverlay: React.FC<ScreenLockOverlayProps> = ({ onClose })
             onClick={() => skipSeconds(30)}
             title="Tua tiến 30 giây"
           >
-            <i className="ri-forward-30-line" />
+            <RotateCw className="w-5 h-5" strokeWidth={2.25} />
           </button>
         </div>
 
-        {/* Badge tốc độ phát */}
         <div className="screen-lock-speed-badge">
-          <i className="ri-speed-line" />
+          <Gauge className="w-3.5 h-3.5" strokeWidth={2.25} />
           <span>Tốc độ: {playbackRate}x</span>
         </div>
 
-        {/* Ghi chú hướng dẫn mở khóa */}
         <p className="screen-lock-hint">
           Nhấn nút <strong className="text-white bg-white/20 px-1 py-0.5 rounded">[✕]</strong> ở góc dưới bên phải để mở khóa
         </p>
       </div>
 
-      {/* Nút [X] duy nhất để thoát màn hình khóa — ở góc dưới bên phải theo đúng yêu cầu */}
       <button
         type="button"
         className="screen-lock-close-btn"
@@ -167,7 +162,7 @@ export const ScreenLockOverlay: React.FC<ScreenLockOverlayProps> = ({ onClose })
         title="Nhấn để tắt lớp bảo vệ màn hình"
         aria-label="Tắt lớp khóa màn hình"
       >
-        <i className="ri-close-line" />
+        <X className="w-6 h-6" strokeWidth={2.5} />
       </button>
     </div>
   );

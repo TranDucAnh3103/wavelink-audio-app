@@ -2,16 +2,39 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import {
+  Youtube,
+  Gauge,
+  LogIn,
+  Crown,
+  AlertTriangle,
+  Link2,
+  X,
+  ClipboardPaste,
+  Loader2,
+  SearchCheck,
+  Check,
+  Calculator,
+  Gift,
+  Lock,
+  CheckCheck,
+  Info,
+} from 'lucide-react';
 import { useCategories } from '@/hooks/useCategories';
 import { useImportYouTube, useImportQuota } from '@/hooks/useAudio';
 import { triggerNotificationSync } from '@/hooks/useNotifications';
+import { useDelayedFallback } from '@/hooks/useDelayedFallback';
 import { useAuthStore } from '@/stores/authStore';
-import { usePlayerStore } from '@/stores/playerStore';
 import { api } from '@/services/api';
 import { YouTubePreviewData, AudioItem } from '@/types';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from '@/components/ui/Toast';
-import { extractYouTubeId, formatTime, formatDuration, parseDurationToSec, computeLogicalEpisodes } from '@/lib/utils';
+import {
+  extractYouTubeId,
+  formatDuration,
+  parseDurationToSec,
+  computeLogicalEpisodes,
+} from '@/lib/utils';
 import { resolveYouTubeDurationViaIframe } from '@/lib/youtubeResolver';
 import { UploadSkeleton } from '@/components/common/Skeletons';
 
@@ -41,7 +64,7 @@ export const UploadPage: React.FC = () => {
   const isVipOrAdmin = user?.role === 'ADMIN' || user?.role === 'VIP';
   const userRole = user?.role || 'GUEST';
 
-  const checkDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const checkDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (categories.length > 0 && !categoryId) {
@@ -54,15 +77,11 @@ export const UploadPage: React.FC = () => {
     const fullText = `${title} ${descText}`;
     const text = fullText.toLowerCase();
 
-    // 1. Quét và tự động chọn thể loại (Category) phù hợp nhất từ danh sách categories DB
     if (categories.length > 0) {
       let matchedCategory = undefined;
-
-      // a1. Ưu tiên khớp tên thể loại trực tiếp (sắp xếp giảm dần theo độ dài tên)
       const sortedCategories = [...categories].sort((a, b) => b.name.length - a.name.length);
       matchedCategory = sortedCategories.find((c) => text.includes(c.name.toLowerCase()));
 
-      // a2. Tìm khớp theo slug (chuyển '-' thành khoảng trắng)
       if (!matchedCategory) {
         matchedCategory = sortedCategories.find((c) => {
           const slugText = c.slug.replace(/-/g, ' ').toLowerCase();
@@ -70,7 +89,6 @@ export const UploadPage: React.FC = () => {
         });
       }
 
-      // a3. Tìm theo từ khóa ngữ nghĩa nếu tiêu đề/mô tả dùng thuật ngữ tương đương
       if (!matchedCategory) {
         const findCat = (slugs: string[], names: string[]) => {
           return categories.find((c) => {
@@ -128,7 +146,6 @@ export const UploadPage: React.FC = () => {
       }
     }
 
-    // 2. Trích xuất tags từ hashtags trong description/title và từ khóa ngữ nghĩa
     const detectedTags: string[] = [];
     const addDetectedTag = (tag: string) => {
       const clean = tag.replace(/^#+/, '').trim();
@@ -139,7 +156,6 @@ export const UploadPage: React.FC = () => {
       }
     };
 
-    // 2a. Bóc tách hashtag (#...) từ description và title
     const HASHTAG_MAP: Record<string, string> = {
       tienhiep: 'Tiên Hiệp',
       tutien: 'Tu Tiên',
@@ -191,14 +207,13 @@ export const UploadPage: React.FC = () => {
       }
     }
 
-    // 2b. Quét các từ khóa ngữ nghĩa
     const SEMANTIC_KEYWORD_TAGS = [
       'Tiên Hiệp', 'Tu Tiên', 'Kiếm Hiệp', 'Huyền Huyễn', 'Xuyên Không', 'Xuyên Nhanh',
       'Trọng Sinh', 'Đô Thị', 'Kinh Dị', 'Truyện Ma', 'Linh Dị', 'Mạt Thế', 'Khoa Huyễn',
       'Võng Du', 'Hệ Thống', 'Dị Năng', 'Audiobook', 'Sách Nói', 'Trinh Thám',
       'Ngôn Tình', 'Cung Đấu', 'Lịch Sử Quân Sự', 'Hài Hước', 'Tổng Tài',
       'Trọn Bộ', 'Full', 'Truyện Ngắn', 'Vô Địch Lưu', 'Cẩu Đạo', 'Hắc Ám',
-      'Đô Thị Tu Tiên', 'Hậu Cung', 'Sát Phạt Quyết Đoán', 'Bạch Ngọc Sách', 'Audio Dài'
+      'Đô Thị Tu Tiên', 'Hậu Cung', 'Sát Phạt Quyết Đoán', 'Bạch Ngọc Sách', 'Audio Dài',
     ];
     for (const kw of SEMANTIC_KEYWORD_TAGS) {
       if (text.includes(kw.toLowerCase())) {
@@ -240,7 +255,6 @@ export const UploadPage: React.FC = () => {
         } else if (data.durationSeconds > 0) {
           setDurationInput(formatDuration(data.durationSeconds));
         } else {
-          // Fallback probe client-side nếu backend chưa có thời lượng
           const resolvedDur = await resolveYouTubeDurationViaIframe(videoId);
           if (resolvedDur === -1) {
             setUrlError('Video YouTube không tồn tại, ở chế độ riêng tư hoặc không thể phát');
@@ -260,7 +274,6 @@ export const UploadPage: React.FC = () => {
         throw new Error('Video YouTube không tồn tại hoặc bị lỗi phát');
       }
     } catch (err: unknown) {
-      // Backend hoặc oEmbed từ chối video (link rác)
       const probeDur = await resolveYouTubeDurationViaIframe(videoId);
       if (probeDur > 0) {
         setPreviewData({
@@ -330,7 +343,8 @@ export const UploadPage: React.FC = () => {
   const computedEpisodes = computeLogicalEpisodes(calculatedTotalSec, blockSize);
   const calculatedEpisodeCount = computedEpisodes.length;
 
-  const isQuotaExceeded = !isVipOrAdmin && !user?.isGuest && Boolean(importQuota && importQuota.canImport === false);
+  const isQuotaExceeded =
+    !isVipOrAdmin && !user?.isGuest && Boolean(importQuota && importQuota.canImport === false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -340,7 +354,9 @@ export const UploadPage: React.FC = () => {
       return;
     }
     if (isQuotaExceeded) {
-      toast.error('Bạn đã dùng hết hạn mức 5 lượt import hôm nay. Vui lòng nâng cấp VIP để tiếp tục không giới hạn!');
+      toast.error(
+        'Bạn đã dùng hết hạn mức 5 lượt import hôm nay. Vui lòng nâng cấp VIP để tiếp tục không giới hạn!'
+      );
       navigate('/membership');
       return;
     }
@@ -358,13 +374,11 @@ export const UploadPage: React.FC = () => {
     }
 
     let dur = parseDurationToSec(durationInput, previewData?.durationSeconds || 0);
-    // Nếu durationInput trống hoặc xấp xỉ duration của YouTube previewData (lệch < 60s), ưu tiên thời lượng chính xác từ YouTube
     if (previewData && previewData.durationSeconds > 0) {
       if (dur <= 0 || Math.abs(dur - previewData.durationSeconds) < 60) {
         dur = previewData.durationSeconds;
       }
     }
-    // Nếu dur vẫn <= 0, thử probe nhanh thời lượng qua IFrame client-side
     if (dur <= 0) {
       const vid = extractYouTubeId(url.trim());
       if (vid) {
@@ -397,400 +411,466 @@ export const UploadPage: React.FC = () => {
     }
   };
 
-  const isAuthLoading =
-    isLoading ||
-    (!isInitialized &&
-      !user &&
-      Boolean(typeof localStorage !== 'undefined' && localStorage.getItem('auth_token')));
+  const isAuthBlocking =
+    !user &&
+    (isLoading ||
+      (!isInitialized &&
+        Boolean(typeof localStorage !== 'undefined' && localStorage.getItem('auth_token'))));
+  const showSkeletonFallback = useDelayedFallback(isAuthBlocking, 180);
 
-  if (isAuthLoading) {
+  if (showSkeletonFallback) {
     return <UploadSkeleton />;
   }
 
   return (
-    <div className="flex flex-col w-full px-4 pb-36 gap-4 pt-2 fade-in-comic">
+    <div className="w-full max-w-5xl mx-auto px-4 md:px-6 flex flex-col pb-36 md:pb-28 gap-4 pt-2 fade-in-comic">
       {/* 1. Header Banner */}
-      <div className="card-comic p-4 bg-[#FFE600] flex flex-col gap-1 border-2 border-black">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black font-black shadow-comic-sm">
-              <i className="ri-youtube-fill text-xl text-[#E63946]" />
+      <div className="card-comic p-4 bg-[#FFE600] text-[#111113] flex flex-col gap-1 border-2 border-[#111113]">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl border-2 border-[#111113] bg-white flex items-center justify-center shadow-comic-sm shrink-0">
+              <Youtube className="w-5 h-5 text-[#E63946]" strokeWidth={2.5} />
             </div>
-            <h2 className="font-extrabold text-base uppercase text-black tracking-tight">Nhập Nguồn YouTube</h2>
+            <h1 className="font-comic font-extrabold text-base md:text-lg uppercase text-[#111113] tracking-tight">
+              Nhập Nguồn YouTube
+            </h1>
           </div>
-          <span className="badge-comic badge-comic-white text-[9px] font-black">100% POLICY COMPLIANT</span>
+          <span className="badge-comic badge-comic-white text-[9px] font-black">
+            100% POLICY COMPLIANT
+          </span>
         </div>
-        <p className="text-xs font-bold text-gray-800 mt-1">
+        <p className="text-xs font-bold text-[#111113]/80 mt-0.5">
           Hệ thống máy phát ảo MP3: Không tải tệp về server, trực tiếp phát luồng từ Google CDN.
         </p>
       </div>
 
       {/* 2. Quota Status Card */}
-      <div className="card-comic-sm p-3 bg-white flex items-center justify-between border-2 border-black shadow-comic-sm">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded border border-black bg-gray-100 flex items-center justify-center font-bold text-black">
-            <i className="ri-dashboard-3-line text-lg" />
+      <div className="card-comic-sm p-3.5 bg-[var(--surface-card)] flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-9 h-9 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] flex items-center justify-center text-[var(--ink-primary)] shrink-0">
+            <Gauge className="w-5 h-5" strokeWidth={2.25} />
           </div>
-          <div className="flex flex-col">
-            <span className="text-[10px] font-extrabold uppercase text-gray-500">
+          <div className="flex flex-col min-w-0">
+            <span className="text-[10px] font-extrabold uppercase text-[var(--ink-muted)]">
               {user?.isGuest ? 'Quyền hạn: Khách vãng lai' : `Hạn mức của bạn (${userRole})`}
             </span>
-            <span className="text-xs font-bold text-black">
+            <span className="text-xs font-bold text-[var(--ink-primary)]">
               {user?.isGuest
-                ? '⚠️ Khách chưa thể nhập link'
+                ? 'Khách chưa thể nhập link — vui lòng đăng nhập'
                 : isVipOrAdmin
-                ? '⚡ Không giới hạn lượt import'
-                : `⚠️ Miễn phí: Đã dùng ${importQuota?.todayImportCount ?? 0}/5 hôm nay (còn ${importQuota?.remaining ?? 5} lượt)`}
+                  ? 'Không giới hạn lượt import'
+                  : `Miễn phí: Đã dùng ${importQuota?.todayImportCount ?? 0}/5 hôm nay (còn ${importQuota?.remaining ?? 5} lượt)`}
             </span>
           </div>
         </div>
         {user?.isGuest ? (
           <button
+            type="button"
             onClick={() => navigate('/login')}
-            className="btn-comic btn-comic-primary text-[10px] py-1 px-2.5 font-bold"
+            className="btn-comic btn-comic-primary text-[11px] py-1.5 px-3 font-bold"
           >
-            <i className="ri-login-box-line font-bold" /> Đăng Nhập
+            <LogIn className="w-3.5 h-3.5" strokeWidth={2.5} />
+            <span>Đăng Nhập</span>
           </button>
         ) : !isVipOrAdmin ? (
           <button
+            type="button"
             onClick={() => navigate('/membership')}
-            className="btn-comic btn-comic-purple text-[10px] py-1 px-2.5"
+            className="btn-comic btn-comic-purple text-[11px] py-1.5 px-3"
           >
-            <i className="ri-vip-crown-fill" /> Lên VIP
+            <Crown className="w-3.5 h-3.5" strokeWidth={2.5} />
+            <span>Lên VIP</span>
           </button>
         ) : (
           <span className="badge-comic badge-comic-teal text-[9px]">UNLIMITED</span>
         )}
       </div>
 
-      {/* Quota Exceeded Warning Banner */}
+      {/* Quota Exceeded Warning */}
       {isQuotaExceeded && (
-        <div className="card-comic-sm p-3 bg-red-50 border-2 border-red-500 flex items-center justify-between gap-2 shadow-comic-sm">
+        <div className="card-comic-sm p-3.5 bg-[#FFF1F2] dark:bg-[#2F161A] border-2 border-[#E63946] flex items-center justify-between gap-3 shadow-comic-sm flex-wrap">
           <div className="flex items-center gap-2">
-            <i className="ri-error-warning-fill text-red-500 text-lg shrink-0" />
-            <span className="text-xs font-bold text-red-700 leading-tight">
+            <AlertTriangle className="w-5 h-5 text-[#E63946] shrink-0" strokeWidth={2.5} />
+            <span className="text-xs font-bold text-[#B91C1C] dark:text-[#FCA5A5] leading-snug">
               Bạn đã dùng hết hạn mức 5 lượt import hôm nay. Vui lòng nâng cấp VIP để tiếp tục không giới hạn!
             </span>
           </div>
           <button
             type="button"
             onClick={() => navigate('/membership')}
-            className="btn-comic btn-comic-purple text-[10px] py-1 px-2.5 shrink-0"
+            className="btn-comic btn-comic-purple text-[11px] py-1.5 px-3 shrink-0"
           >
-            <i className="ri-vip-crown-fill" /> Lên VIP Ngay
+            <Crown className="w-3.5 h-3.5" strokeWidth={2.5} />
+            <span>Lên VIP Ngay</span>
           </button>
         </div>
       )}
 
-      {/* 3. Form Nhập Nguồn */}
-      <form onSubmit={handleSubmit} className="flex flex-col gap-3.5">
-        {/* URL Input Card */}
-        <div className="card-comic p-4 bg-white flex flex-col gap-3">
-          <label className="font-extrabold text-xs uppercase text-black flex items-center justify-between" htmlFor="yt-url-input">
-            <span>
-              YouTube URL (Video, Shorts, Music...) <span className="text-[#E63946]">*</span>
-            </span>
-          </label>
-          <div className="flex flex-col gap-2">
-            <div className="relative w-full">
-              <i className="ri-link absolute left-3 top-1/2 -translate-y-1/2 text-gray-700 text-base pointer-events-none font-bold z-10" />
-              <input
-                id="yt-url-input"
-                type="text"
-                placeholder="https://www.youtube.com/watch?v=..."
-                value={url}
-                onChange={(e) => handleUrlChange(e.target.value)}
-                className="input-comic pl-9 pr-9 text-xs font-mono font-bold w-full"
-                required
-              />
-              {url && (
+      {/* 3. Responsive 2-Column Form Workspace */}
+      <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* Left Column: URL, Duration & Category/Tags */}
+        <div className="lg:col-span-7 flex flex-col gap-4">
+          <div className="card-comic p-4 flex flex-col gap-3">
+            <label
+              className="font-extrabold text-xs uppercase text-[var(--ink-primary)] flex items-center justify-between"
+              htmlFor="yt-url-input"
+            >
+              <span>
+                YouTube URL (Video, Shorts, Music...) <span className="text-[#E63946]">*</span>
+              </span>
+            </label>
+            <div className="flex flex-col gap-2">
+              <div className="relative w-full">
+                <Link2
+                  className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ink-muted)] pointer-events-none z-10"
+                  strokeWidth={2.5}
+                />
+                <input
+                  id="yt-url-input"
+                  type="text"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  value={url}
+                  onChange={(e) => handleUrlChange(e.target.value)}
+                  className="input-comic pl-9 pr-9 text-xs font-mono font-bold w-full"
+                  required
+                />
+                {url && (
+                  <button
+                    type="button"
+                    onClick={() => handleUrlChange('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-md flex items-center justify-center border border-[var(--border-ink)] bg-[var(--surface-elevated)] hover:bg-[var(--surface-muted)] z-10 text-[var(--ink-primary)] cursor-pointer"
+                    title="Xóa URL"
+                  >
+                    <X className="w-3.5 h-3.5" strokeWidth={2.5} />
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => handleUrlChange('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded flex items-center justify-center border border-black bg-white hover:bg-gray-100 active:scale-95 z-10 text-black"
-                  title="Xóa URL"
+                  onClick={handlePasteClipboard}
+                  className="btn-comic text-xs py-1.5 px-3 shrink-0"
+                  title="Dán từ Clipboard"
                 >
-                  <i className="ri-close-line text-xs font-bold" />
+                  <ClipboardPaste className="w-3.5 h-3.5" strokeWidth={2.25} />
+                  <span>Dán</span>
                 </button>
-              )}
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={handlePasteClipboard}
-                className="btn-comic text-xs py-1.5 px-3 bg-gray-100 flex items-center gap-1.5 shrink-0"
-                title="Dán từ Clipboard"
-              >
-                <i className="ri-clipboard-line text-sm" /> Dán
-              </button>
-              <button
-                type="button"
-                onClick={() => checkURL(url)}
-                disabled={isChecking || !url.trim()}
-                className="btn-comic btn-comic-yellow text-xs py-1.5 px-3.5 flex items-center gap-1.5 shrink-0"
-                title="Kiểm tra link YouTube"
-              >
-                {isChecking ? <i className="ri-loader-4-line animate-spin text-sm" /> : <i className="ri-search-eye-line text-sm" />}
-                Kiểm tra
-              </button>
-            </div>
-          </div>
-
-          {/* Error Message Box */}
-          {urlError && (
-            <div className="card-comic-sm p-3 bg-[#FEE2E2] flex items-center gap-2.5 border-2 border-[#EF4444] text-[#B91C1C] fade-in-comic">
-              <i className="ri-error-warning-fill text-lg shrink-0 text-[#DC2626]" />
-              <div className="flex flex-col text-xs font-bold">
-                <span>{urlError}</span>
-                <span className="text-[10px] font-semibold text-gray-600 mt-0.5">Vui lòng kiểm tra lại liên kết YouTube hoặc thử một video hợp lệ khác.</span>
+                <button
+                  type="button"
+                  onClick={() => checkURL(url)}
+                  disabled={isChecking || !url.trim()}
+                  className="btn-comic btn-comic-yellow text-xs py-1.5 px-3.5 shrink-0"
+                  title="Kiểm tra link YouTube"
+                >
+                  {isChecking ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <SearchCheck className="w-3.5 h-3.5" strokeWidth={2.5} />
+                  )}
+                  <span>Kiểm tra</span>
+                </button>
               </div>
             </div>
-          )}
 
-          {/* Live Preview Box */}
-          {previewData && (
-            <div className="card-comic-sm p-3 bg-[#FEF9C3] flex items-center gap-3 border-2 border-black fade-in-comic">
-              <img
-                src={previewData.thumbnailUrl}
-                alt={previewData.title}
-                className="w-16 h-20 rounded border border-black object-cover bg-black shrink-0 shadow-comic-sm"
-              />
-              <div className="flex flex-col min-w-0 flex-1">
-                <span className="font-extrabold text-xs text-black line-clamp-2 leading-tight">
-                  {previewData.title}
-                </span>
-                <span className="text-[11px] font-semibold text-gray-600 truncate mt-1">
-                  Kênh: {previewData.author}
-                </span>
-                <span className="badge-comic badge-comic-teal text-[9px] mt-1.5 w-max">
-                  <i className="ri-check-line" /> Hợp lệ (Ready)
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Duration & Block Size Card */}
-        <div className="card-comic p-4 bg-white flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center justify-between">
-              <label className="font-extrabold text-xs uppercase text-black" htmlFor="yt-duration-input">
-                Thời Lượng Video 
-              </label>
-              <span className="text-[10px] font-bold text-gray-500">
-                {previewData?.formattedDuration ? (
-                  <span className="badge-comic badge-comic-teal text-[9px]">
-                    <i className="ri-check-line" /> {previewData.formattedDuration}
+            {urlError && (
+              <div className="card-comic-sm p-3 bg-[#FEE2E2] dark:bg-[#2F161A] flex items-center gap-2.5 border-2 border-[#E63946] text-[#B91C1C] dark:text-[#FCA5A5] fade-in-comic">
+                <AlertTriangle className="w-5 h-5 shrink-0 text-[#E63946]" strokeWidth={2.5} />
+                <div className="flex flex-col text-xs font-bold">
+                  <span>{urlError}</span>
+                  <span className="text-[10px] font-semibold opacity-80 mt-0.5">
+                    Vui lòng kiểm tra lại liên kết YouTube hoặc thử một video hợp lệ khác.
                   </span>
-                ) : (
-                  'Tự động nhận diện'
-                )}
-              </span>
-            </div>
-            <input
-              id="yt-duration-input"
-              type="text"
-              placeholder="Tự động nhận diện khi nhập URL (hoặc để trống)..."
-              value={durationInput}
-              onChange={(e) => setDurationInput(e.target.value)}
-              className="input-comic text-xs font-mono font-bold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1 mt-1">
-            <label className="font-extrabold text-xs uppercase text-black" htmlFor="block-size-select">
-              Khối Phân Tách Tập (Block Size)
-            </label>
-            <select
-              id="block-size-select"
-              value={blockSize}
-              onChange={(e) => setBlockSize(parseInt(e.target.value, 10))}
-              className="input-comic text-xs font-bold"
-            >
-              <option value={14400}>4 Giờ / Tập (Khuyên dùng cho truyện dài)</option>
-              <option value={7200}>2 Giờ / Tập</option>
-              <option value={3600}>1 Giờ / Tập</option>
-              <option value={1800}>30 Phút / Tập</option>
-            </select>
-          </div>
-
-          {/* Dynamic Episodes Calculation Badge & List */}
-          <div className="card-comic-sm p-3 bg-[#FEF9C3] flex flex-col gap-2 border-2 border-black mt-2">
-            <div className="flex items-center justify-between text-xs font-bold text-black border-b border-black/20 pb-1.5">
-              <span className="flex items-center gap-1.5">
-                <i className="ri-function-line text-sm text-[#3A86FF]" />
-                Công Thức Phân Tập Động:
-              </span>
-              <span className="badge-comic badge-comic-red text-[10px]">
-                {calculatedEpisodeCount > 0
-                  ? `${calculatedEpisodeCount} tập (Tổng: ${formatDuration(calculatedTotalSec)})`
-                  : `Tự động phân tập (${Math.round(blockSize / 3600)}h/tập)`}
-              </span>
-            </div>
-            <div className="flex flex-col gap-1 max-h-48 overflow-y-auto no-scrollbar text-[11px] font-mono">
-              {computedEpisodes.length > 0 ? (
-                computedEpisodes.map((ep) => (
-                  <div key={ep.episodeNumber} className="flex items-center justify-between p-1.5 bg-white rounded border border-black/40">
-                    <span className="font-bold text-black">
-                      Tập {ep.episodeNumber}: {ep.formattedRange}
-                    </span>
-                    <span className="text-gray-600 text-[10px] font-sans font-semibold">{ep.formattedHours}</span>
-                  </div>
-                ))
-              ) : (
-                <span className="text-gray-500 italic">
-                  Hệ thống sẽ tự động bóc tách thời lượng và phân tập từ YouTube ({Math.round(blockSize / 3600)}h/tập) khi bạn xác nhận...
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Category & Tags Card */}
-        <div className="card-comic p-4 bg-white flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="font-extrabold text-xs uppercase text-black" htmlFor="category-select">
-              Thể Loại Truyện
-            </label>
-            <select
-              id="category-select"
-              value={categoryId}
-              onChange={(e) => setCategoryId(parseInt(e.target.value, 10))}
-              className="input-comic text-xs font-bold"
-            >
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col gap-1.5 mt-1">
-            <label className="font-extrabold text-xs uppercase text-black">Thẻ Tag (Phân loại)</label>
-            <div className="flex flex-wrap items-center gap-1.5 min-h-[28px]">
-              {tags.length === 0 ? (
-                <span className="text-gray-400 text-[11px] italic">Chưa có tag nào (tự động nhận diện khi nhập link YouTube)</span>
-              ) : (
-                tags.map((tag) => (
-                  <span key={tag} className="badge-comic badge-comic-yellow text-[10px] py-1 px-2 flex items-center gap-1">
-                    #{tag}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRemoveTag(tag);
-                      }}
-                      className="font-black hover:text-red-600 ml-0.5 leading-none focus:outline-none"
-                      title={`Xóa thẻ #${tag}`}
-                      aria-label={`Xóa thẻ #${tag}`}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))
-              )}
-            </div>
-            <div className="flex items-center gap-1.5 mt-1">
-              <input
-                type="text"
-                placeholder="Thêm tag mới..."
-                value={newTag}
-                onChange={(e) => setNewTag(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddTag();
-                  }
-                }}
-                className="input-comic text-xs py-1 px-2.5 flex-1"
-              />
-              <button
-                type="button"
-                onClick={handleAddTag}
-                className="btn-comic text-xs py-1 px-3 bg-gray-100"
-              >
-                + Thêm
-              </button>
-            </div>
-          </div>
-
-          {/* VIP Only Checkbox & Free Preview Setting */}
-          <div className="flex flex-col gap-2 pt-2 border-t border-gray-200">
-            <div className="flex items-center gap-2">
-              <input
-                id="vip-only-checkbox"
-                type="checkbox"
-                checked={isVipOnly}
-                onChange={(e) => setIsVipOnly(e.target.checked)}
-                className="w-4 h-4 border-2 border-black rounded accent-[#8338EC] cursor-pointer"
-              />
-              <label htmlFor="vip-only-checkbox" className="text-xs font-bold text-black cursor-pointer flex items-center gap-1.5">
-                <span>Độc quyền dành riêng cho thành viên VIP</span>
-                <span className="badge-comic badge-comic-purple text-[8px] py-0 px-1">
-                  <i className="ri-vip-crown-fill" /> VIP
-                </span>
-              </label>
-            </div>
-
-            {isVipOnly && (
-              <div className="card-comic-sm p-3 bg-[#FEF9C3] border-2 border-black flex flex-col gap-1.5 shadow-comic-sm ml-6">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex flex-col">
-                    <span className="text-xs font-black text-black flex items-center gap-1">
-                      <i className="ri-gift-line text-[#E63946]" /> Số tập cho xem/nghe thử FREE:
-                    </span>
-                    <span className="text-[10px] font-medium text-gray-700">
-                      Mặc định là 1 tập. Nhập 0 để khóa toàn bộ, hoặc 2+ tập cho độc giả nghe thử.
-                    </span>
-                  </div>
-                  <input
-                    type="number"
-                    min="0"
-                    max="1000"
-                    value={freeEpisodesCount}
-                    onChange={(e) => setFreeEpisodesCount(Math.max(0, parseInt(e.target.value) || 0))}
-                    className="input-comic text-xs py-1 px-2 w-20 text-center font-black bg-white"
-                  />
                 </div>
               </div>
             )}
           </div>
+
+          {/* Category & Tags Card */}
+          <div className="card-comic p-4 flex flex-col gap-3.5">
+            <div className="flex flex-col gap-1.5">
+              <label
+                className="font-extrabold text-xs uppercase text-[var(--ink-primary)]"
+                htmlFor="category-select"
+              >
+                Thể Loại Truyện
+              </label>
+              <select
+                id="category-select"
+                value={categoryId}
+                onChange={(e) => setCategoryId(parseInt(e.target.value, 10))}
+                className="input-comic text-xs font-bold"
+              >
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="font-extrabold text-xs uppercase text-[var(--ink-primary)]">
+                Thẻ Tag (Phân loại)
+              </label>
+              <div className="flex flex-wrap items-center gap-1.5 min-h-[28px]">
+                {tags.length === 0 ? (
+                  <span className="text-[var(--ink-muted)] text-[11px] italic">
+                    Chưa có tag nào (tự động nhận diện khi nhập link YouTube)
+                  </span>
+                ) : (
+                  tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="badge-comic badge-comic-yellow text-[10px] py-1 px-2 flex items-center gap-1"
+                    >
+                      #{tag}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveTag(tag);
+                        }}
+                        className="font-black hover:text-[#E63946] ml-0.5 leading-none focus:outline-none cursor-pointer"
+                        title={`Xóa thẻ #${tag}`}
+                        aria-label={`Xóa thẻ #${tag}`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))
+                )}
+              </div>
+              <div className="flex items-center gap-2 mt-1">
+                <input
+                  type="text"
+                  placeholder="Thêm tag mới..."
+                  value={newTag}
+                  onChange={(e) => setNewTag(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddTag();
+                    }
+                  }}
+                  className="input-comic text-xs py-1.5 px-3 flex-1"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddTag}
+                  className="btn-comic text-xs py-1.5 px-3"
+                >
+                  + Thêm
+                </button>
+              </div>
+            </div>
+
+            {/* VIP Only Option */}
+            <div className="flex flex-col gap-2 pt-2.5 border-t border-[var(--border-ink)]/25">
+              <div className="flex items-center gap-2">
+                <input
+                  id="vip-only-checkbox"
+                  type="checkbox"
+                  checked={isVipOnly}
+                  onChange={(e) => setIsVipOnly(e.target.checked)}
+                  className="w-4 h-4 border-2 border-[var(--border-ink)] rounded accent-[#8338EC] cursor-pointer"
+                />
+                <label
+                  htmlFor="vip-only-checkbox"
+                  className="text-xs font-bold text-[var(--ink-primary)] cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>Độc quyền dành riêng cho thành viên VIP</span>
+                  <span className="badge-comic badge-comic-purple text-[8px] py-0 px-1.5">
+                    <Crown className="w-2.5 h-2.5" /> VIP
+                  </span>
+                </label>
+              </div>
+
+              {isVipOnly && (
+                <div className="card-comic-sm p-3 bg-[var(--surface-accent-soft)] flex flex-col gap-1.5 ml-0 sm:ml-6">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex flex-col">
+                      <span className="text-xs font-black text-[var(--ink-primary)] flex items-center gap-1">
+                        <Gift className="w-3.5 h-3.5 text-[#E63946]" strokeWidth={2.5} />
+                        <span>Số tập cho xem/nghe thử FREE:</span>
+                      </span>
+                      <span className="text-[10px] font-medium text-[var(--ink-secondary)]">
+                        Mặc định là 1 tập. Nhập 0 để khóa toàn bộ, hoặc 2+ tập cho độc giả nghe thử.
+                      </span>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      max="1000"
+                      value={freeEpisodesCount}
+                      onChange={(e) =>
+                        setFreeEpisodesCount(Math.max(0, parseInt(e.target.value, 10) || 0))
+                      }
+                      className="input-comic text-xs py-1.5 px-2 w-20 text-center font-black"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Submit Button */}
-        <button
-          id="submit-import-btn"
-          type="submit"
-          disabled={importMutation.isPending || isQuotaExceeded || !previewData || Boolean(urlError)}
-          className={`btn-comic ${
-            isQuotaExceeded || !previewData || Boolean(urlError)
-              ? 'bg-gray-300 text-gray-600 border-2 border-gray-500 cursor-not-allowed shadow-none'
-              : 'btn-comic-primary'
-          } text-sm py-3 px-4 font-black shadow-comic-md mt-1`}
-        >
-          {importMutation.isPending ? (
-            <>
-              <i className="ri-loader-4-line animate-spin text-lg" />
-              <span>Đang xử lý phân tập...</span>
-            </>
-          ) : isQuotaExceeded ? (
-            <>
-              <i className="ri-lock-2-line text-lg" />
-              <span>Đã Hết Lượt Import Hôm Nay (5/5)</span>
-            </>
-          ) : !previewData || urlError ? (
-            <>
-              <i className="ri-error-warning-line text-lg" />
-              <span>Vui lòng kiểm tra link YouTube hợp lệ</span>
-            </>
-          ) : (
-            <>
-              <i className="ri-check-double-line text-lg" />
-              <span>Xác Nhận & Phân Tập Tự Động</span>
-            </>
-          )}
-        </button>
+        {/* Right Column: Live Preview + Duration / Episode Splitting + Submit */}
+        <div className="lg:col-span-5 flex flex-col gap-4">
+          {/* Live Preview Box */}
+          <div className="card-comic p-4 flex flex-col gap-3">
+            <span className="font-extrabold text-xs uppercase text-[var(--ink-primary)]">
+              Xem Trước Video
+            </span>
+            {previewData ? (
+              <div className="card-comic-sm p-3 bg-[var(--surface-accent-soft)] flex items-center gap-3 fade-in-comic">
+                <img
+                  src={previewData.thumbnailUrl}
+                  alt={previewData.title}
+                  className="w-16 h-20 rounded-lg border border-[var(--border-ink)] object-cover bg-[#111113] shrink-0 shadow-comic-sm"
+                />
+                <div className="flex flex-col min-w-0 flex-1">
+                  <span className="font-extrabold text-xs text-[var(--ink-primary)] line-clamp-2 leading-tight">
+                    {previewData.title}
+                  </span>
+                  <span className="text-[11px] font-semibold text-[var(--ink-secondary)] truncate mt-1">
+                    Kênh: {previewData.author}
+                  </span>
+                  <span className="badge-comic badge-comic-teal text-[9px] mt-1.5 w-max">
+                    <Check className="w-2.5 h-2.5" strokeWidth={3} /> Hợp lệ (Ready)
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="p-5 rounded-xl border-2 border-dashed border-[var(--border-ink)]/40 bg-[var(--surface-elevated)] text-center flex flex-col items-center gap-1.5">
+                <Youtube className="w-7 h-7 text-[var(--ink-muted)]" strokeWidth={1.75} />
+                <span className="text-xs font-bold text-[var(--ink-secondary)]">
+                  Dán link YouTube để xem trước thông tin & phân tập
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Duration & Block Size Card */}
+          <div className="card-comic p-4 flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <label
+                  className="font-extrabold text-xs uppercase text-[var(--ink-primary)]"
+                  htmlFor="yt-duration-input"
+                >
+                  Thời Lượng Video
+                </label>
+                <span className="text-[10px] font-bold text-[var(--ink-muted)]">
+                  {previewData?.formattedDuration ? (
+                    <span className="badge-comic badge-comic-teal text-[9px]">
+                      <Check className="w-2.5 h-2.5" strokeWidth={3} /> {previewData.formattedDuration}
+                    </span>
+                  ) : (
+                    'Tự động nhận diện'
+                  )}
+                </span>
+              </div>
+              <input
+                id="yt-duration-input"
+                type="text"
+                placeholder="Tự động nhận diện khi nhập URL (hoặc để trống)..."
+                value={durationInput}
+                onChange={(e) => setDurationInput(e.target.value)}
+                className="input-comic text-xs font-mono font-bold"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label
+                className="font-extrabold text-xs uppercase text-[var(--ink-primary)]"
+                htmlFor="block-size-select"
+              >
+                Khối Phân Tách Tập (Block Size)
+              </label>
+              <select
+                id="block-size-select"
+                value={blockSize}
+                onChange={(e) => setBlockSize(parseInt(e.target.value, 10))}
+                className="input-comic text-xs font-bold"
+              >
+                <option value={14400}>4 Giờ / Tập (Khuyên dùng cho truyện dài)</option>
+                <option value={7200}>2 Giờ / Tập</option>
+                <option value={3600}>1 Giờ / Tập</option>
+                <option value={1800}>30 Phút / Tập</option>
+              </select>
+            </div>
+
+            <div className="card-comic-sm p-3 bg-[var(--surface-accent-soft)] flex flex-col gap-2 mt-1">
+              <div className="flex items-center justify-between text-xs font-bold text-[var(--ink-primary)] border-b border-[var(--border-ink)]/20 pb-1.5 flex-wrap gap-1">
+                <span className="flex items-center gap-1.5">
+                  <Calculator className="w-4 h-4 text-[#3A86FF]" strokeWidth={2.5} />
+                  <span>Công Thức Phân Tập Động:</span>
+                </span>
+                <span className="badge-comic badge-comic-red text-[10px]">
+                  {calculatedEpisodeCount > 0
+                    ? `${calculatedEpisodeCount} tập (Tổng: ${formatDuration(calculatedTotalSec)})`
+                    : `Tự động phân tập (${Math.round(blockSize / 3600)}h/tập)`}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1 max-h-44 overflow-y-auto no-scrollbar text-[11px] font-mono">
+                {computedEpisodes.length > 0 ? (
+                  computedEpisodes.map((ep) => (
+                    <div
+                      key={ep.episodeNumber}
+                      className="flex items-center justify-between p-1.5 bg-[var(--surface-card)] rounded-lg border border-[var(--border-ink)]/40"
+                    >
+                      <span className="font-bold text-[var(--ink-primary)]">
+                        Tập {ep.episodeNumber}: {ep.formattedRange}
+                      </span>
+                      <span className="text-[var(--ink-secondary)] text-[10px] font-sans font-semibold">
+                        {ep.formattedHours}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <span className="text-[var(--ink-muted)] italic font-sans">
+                    Hệ thống sẽ tự động bóc tách thời lượng và phân tập từ YouTube (
+                    {Math.round(blockSize / 3600)}h/tập) khi bạn xác nhận...
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Submit Button */}
+          <button
+            id="submit-import-btn"
+            type="submit"
+            disabled={importMutation.isPending || isQuotaExceeded || !previewData || Boolean(urlError)}
+            className={`btn-comic ${
+              isQuotaExceeded || !previewData || Boolean(urlError)
+                ? 'bg-[var(--surface-muted)] text-[var(--ink-muted)] cursor-not-allowed'
+                : 'btn-comic-primary'
+            } text-sm py-3 px-4 font-black shadow-comic-md w-full`}
+          >
+            {importMutation.isPending ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Đang xử lý phân tập...</span>
+              </>
+            ) : isQuotaExceeded ? (
+              <>
+                <Lock className="w-4 h-4" />
+                <span>Đã Hết Lượt Import Hôm Nay (5/5)</span>
+              </>
+            ) : !previewData || urlError ? (
+              <>
+                <AlertTriangle className="w-4 h-4" />
+                <span>Vui lòng kiểm tra link YouTube hợp lệ</span>
+              </>
+            ) : (
+              <>
+                <CheckCheck className="w-4 h-4" strokeWidth={2.5} />
+                <span>Xác Nhận & Phân Tập Tự Động</span>
+              </>
+            )}
+          </button>
+        </div>
       </form>
 
       {/* Duplicate Video Modal */}
@@ -804,13 +884,19 @@ export const UploadPage: React.FC = () => {
           if (duplicateModalAudio) navigate(`/player/${duplicateModalAudio.id}`);
         }}
       >
-        <div className="flex flex-col items-center text-center gap-2 py-1">
-          <div className="w-10 h-10 rounded-full border-2 border-black bg-[#FFE600] text-black flex items-center justify-center shadow-comic-sm">
-            <i className="ri-information-line text-xl font-black" />
+        <div className="flex flex-col items-center text-center gap-2.5 py-1">
+          <div className="w-11 h-11 rounded-2xl border-2 border-[#111113] bg-[#FFE600] text-[#111113] flex items-center justify-center shadow-comic-sm">
+            <Info className="w-5 h-5" strokeWidth={2.5} />
           </div>
-          <h4 className="font-extrabold text-xs sm:text-sm text-black uppercase leading-tight line-clamp-2">{duplicateModalAudio?.title}</h4>
-          <p className="text-[11px] sm:text-xs font-semibold text-gray-700 leading-snug">
-            Video này đã có trên hệ thống với <strong>{duplicateModalAudio?.totalEpisodes || duplicateModalAudio?.episodes?.length || 1} tập logic</strong> ({duplicateModalAudio?.formattedDuration || 'chuẩn'}). Bạn không cần phân tập lại!
+          <h4 className="font-extrabold text-xs sm:text-sm text-[var(--ink-primary)] uppercase leading-tight line-clamp-2">
+            {duplicateModalAudio?.title}
+          </h4>
+          <p className="text-[11px] sm:text-xs font-semibold text-[var(--ink-secondary)] leading-snug">
+            Video này đã có trên hệ thống với{' '}
+            <strong>
+              {duplicateModalAudio?.totalEpisodes || duplicateModalAudio?.episodes?.length || 1} tập logic
+            </strong>{' '}
+            ({duplicateModalAudio?.formattedDuration || 'chuẩn'}). Bạn không cần phân tập lại!
           </p>
         </div>
       </Modal>
@@ -819,24 +905,29 @@ export const UploadPage: React.FC = () => {
       <Modal
         isOpen={Boolean(successModalAudio)}
         onClose={() => setSuccessModalAudio(null)}
-        title="⚡ NHẬP THÀNH CÔNG!"
+        title="NHẬP THÀNH CÔNG!"
         confirmText="Phát Ngay"
         cancelText="Về Thư Viện"
         onConfirm={() => {
           if (successModalAudio) navigate(`/player/${successModalAudio.id}`);
         }}
       >
-        <div className="flex flex-col items-center text-center gap-2 py-1">
-          <div className="w-10 h-10 rounded-full border-2 border-black bg-[#2A9D8F] text-white flex items-center justify-center shadow-comic-sm">
-            <i className="ri-check-line text-xl font-black" />
+        <div className="flex flex-col items-center text-center gap-2.5 py-1">
+          <div className="w-11 h-11 rounded-2xl border-2 border-[#111113] bg-[#2A9D8F] text-white flex items-center justify-center shadow-comic-sm">
+            <Check className="w-5 h-5" strokeWidth={3} />
           </div>
-          <h4 className="font-extrabold text-xs sm:text-sm text-black uppercase leading-tight line-clamp-2">{successModalAudio?.title}</h4>
-          <p className="text-[11px] sm:text-xs font-semibold text-gray-700 leading-snug">
-            Đã tự động cắt thành <strong>{successModalAudio?.totalEpisodes || successModalAudio?.episodes?.length || 1} tập logic</strong> chuẩn 100% YouTube ToS.
+          <h4 className="font-extrabold text-xs sm:text-sm text-[var(--ink-primary)] uppercase leading-tight line-clamp-2">
+            {successModalAudio?.title}
+          </h4>
+          <p className="text-[11px] sm:text-xs font-semibold text-[var(--ink-secondary)] leading-snug">
+            Đã tự động cắt thành{' '}
+            <strong>
+              {successModalAudio?.totalEpisodes || successModalAudio?.episodes?.length || 1} tập logic
+            </strong>{' '}
+            chuẩn 100% YouTube ToS.
           </p>
         </div>
       </Modal>
     </div>
   );
 };
-

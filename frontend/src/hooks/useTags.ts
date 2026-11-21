@@ -1,22 +1,38 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
-import { CreateTagPayload } from '@/types';
+import { CreateTagPayload, Tag } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
+import { readSwrCache, writeSwrCache } from '@/lib/swrCache';
+import { useIsHydrated } from '@/hooks/useDelayedFallback';
 
 export function useTags() {
-  const { isLive } = useAuthStore();
+  const hydrated = useIsHydrated();
   return useQuery({
-    queryKey: ['tags', isLive],
-    queryFn: () => api.tag.getTags(isLive),
+    queryKey: ['tags'],
+    queryFn: async () => {
+      const { isLive } = useAuthStore.getState();
+      const data = await api.tag.getTags(isLive);
+      if (Array.isArray(data) && data.length > 0) {
+        writeSwrCache('tags', data);
+      }
+      return data;
+    },
+    placeholderData: (prev) => {
+      if (prev !== undefined) return prev;
+      if (!hydrated) return undefined;
+      return readSwrCache<Tag[]>('tags')?.data;
+    },
   });
 }
 
 export function useCreateTag() {
   const queryClient = useQueryClient();
-  const { isLive } = useAuthStore();
 
   return useMutation({
-    mutationFn: (payload: CreateTagPayload) => api.tag.createTag(payload, isLive),
+    mutationFn: (payload: CreateTagPayload) => {
+      const { isLive } = useAuthStore.getState();
+      return api.tag.createTag(payload, isLive);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
     },
@@ -25,10 +41,12 @@ export function useCreateTag() {
 
 export function useDeleteTag() {
   const queryClient = useQueryClient();
-  const { isLive } = useAuthStore();
 
   return useMutation({
-    mutationFn: (id: number | string) => api.tag.deleteTag(id, isLive),
+    mutationFn: (id: number | string) => {
+      const { isLive } = useAuthStore.getState();
+      return api.tag.deleteTag(id, isLive);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
     },
