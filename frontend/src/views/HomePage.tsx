@@ -234,7 +234,7 @@ export const HomePage: React.FC = () => {
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 <Flame className="w-4 h-4 text-[#E63946]" strokeWidth={2.5} />
                 <h2 className="font-comic font-extrabold text-sm uppercase text-[var(--ink-primary)] tracking-tight">
@@ -243,6 +243,18 @@ export const HomePage: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-1.5">
+                {top3Audios.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setHeroIndex((prev) => (prev - 1 + top3Audios.length) % top3Audios.length)
+                    }
+                    className="w-7 h-7 rounded-lg bg-[var(--surface-card)] border-2 border-[var(--border-ink)] shadow-comic-sm flex items-center justify-center text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113] active:scale-95 transition-all cursor-pointer"
+                    aria-label="Truyện trước"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" strokeWidth={2.5} />
+                  </button>
+                )}
                 {top3Audios.map((_, idx) => (
                   <button
                     key={idx}
@@ -256,6 +268,16 @@ export const HomePage: React.FC = () => {
                     aria-label={`Chuyển tới truyện số ${idx + 1}`}
                   />
                 ))}
+                {top3Audios.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setHeroIndex((prev) => (prev + 1) % top3Audios.length)}
+                    className="w-7 h-7 rounded-lg bg-[var(--surface-card)] border-2 border-[var(--border-ink)] shadow-comic-sm flex items-center justify-center text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113] active:scale-95 transition-all cursor-pointer"
+                    aria-label="Truyện kế tiếp"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" strokeWidth={2.5} />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -405,13 +427,13 @@ export const HomePage: React.FC = () => {
                         </div>
                       )}
 
-                      <div className="flex items-center justify-between pt-2 border-t-2 border-[var(--border-ink)]/30">
+                      <div className="flex items-center justify-between gap-2 pt-2 border-t-2 border-[var(--border-ink)]/30">
                         <button
                           type="button"
                           onClick={() => navigate(`/player/${audio.id}`)}
-                          className="btn-comic text-xs py-1.5 px-3"
+                          className="btn-comic text-xs h-9 px-3 whitespace-nowrap"
                         >
-                          <ListMusic className="w-3.5 h-3.5" strokeWidth={2.25} />
+                          <ListMusic className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
                           <span>Danh sách tập</span>
                         </button>
                         <button
@@ -419,12 +441,12 @@ export const HomePage: React.FC = () => {
                           onClick={handlePlay}
                           className={`btn-comic ${
                             isThisPlaying ? 'btn-comic-yellow' : 'btn-comic-primary'
-                          } text-xs py-1.5 px-4 font-black`}
+                          } text-xs h-9 px-4 font-black whitespace-nowrap`}
                         >
                           {isThisPlaying ? (
-                            <Pause className="w-4 h-4 fill-current" strokeWidth={2.5} />
+                            <Pause className="w-4 h-4 fill-current shrink-0" strokeWidth={2.5} />
                           ) : (
-                            <Play className="w-4 h-4 fill-current" strokeWidth={2.5} />
+                            <Play className="w-4 h-4 fill-current shrink-0" strokeWidth={2.5} />
                           )}
                           <span>
                             {isThisPlaying
@@ -439,29 +461,6 @@ export const HomePage: React.FC = () => {
                   );
                 })}
               </div>
-
-              {top3Audios.length > 1 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setHeroIndex((prev) => (prev - 1 + top3Audios.length) % top3Audios.length)
-                    }
-                    className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-[var(--surface-card)]/90 border-2 border-[var(--border-ink)] shadow-comic-sm flex items-center justify-center text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113] active:scale-90 transition-all z-10 cursor-pointer"
-                    aria-label="Truyện trước"
-                  >
-                    <ChevronLeft className="w-4 h-4" strokeWidth={2.5} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHeroIndex((prev) => (prev + 1) % top3Audios.length)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-[var(--surface-card)]/90 border-2 border-[var(--border-ink)] shadow-comic-sm flex items-center justify-center text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113] active:scale-90 transition-all z-10 cursor-pointer"
-                    aria-label="Truyện kế tiếp"
-                  >
-                    <ChevronRight className="w-4 h-4" strokeWidth={2.5} />
-                  </button>
-                </>
-              )}
             </div>
           </section>
         ) : (
@@ -674,15 +673,12 @@ export const HomePage: React.FC = () => {
                 Bộ Truyện Nhiều Phần ({groupedSeries.length})
               </h2>
             </div>
-            <span className="text-[11px] font-bold text-[var(--ink-muted)]">
-              Hiển thị {visibleSeries.length}/{groupedSeries.length} bộ • Lướt ngang để tải thêm
-            </span>
           </div>
 
           <div
             data-testid="series-horizontal-scroller"
             onScroll={handleSeriesScroll}
-            className="flex overflow-x-auto gap-3.5 pb-2 no-scrollbar flex-nowrap"
+            className="flex overflow-x-auto gap-3.5 py-1 px-0.5 pb-2 no-scrollbar flex-nowrap"
           >
             {visibleSeries.map((series) => (
               <div
@@ -769,18 +765,13 @@ export const HomePage: React.FC = () => {
       {/* 6. TỪ KHÓA NỔI BẬT */}
       {discoveryTags.length > 0 && (
         <section className="card-comic p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5">
-              <Hash className="w-4 h-4 text-[#E63946]" strokeWidth={2.5} />
-              <h2 className="font-comic font-extrabold text-sm uppercase text-[var(--ink-primary)] tracking-tight">
-                Từ Khóa Nổi Bật
-              </h2>
-            </div>
-            <span className="text-[10px] font-bold text-[var(--ink-muted)]">
-              Chạm để tìm nhanh
-            </span>
+          <div className="flex items-center gap-1.5">
+            <Hash className="w-4 h-4 text-[#E63946]" strokeWidth={2.5} />
+            <h2 className="font-comic font-extrabold text-sm uppercase text-[var(--ink-primary)] tracking-tight">
+              Từ Khóa Nổi Bật
+            </h2>
           </div>
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar flex-nowrap">
+          <div className="flex items-center gap-2 overflow-x-auto py-1 px-0.5 no-scrollbar flex-nowrap">
             {discoveryTags.map((tag) => (
               <button
                 key={tag}
@@ -802,7 +793,7 @@ export const HomePage: React.FC = () => {
             <div className="flex items-center gap-1.5">
               <Clock className="w-4 h-4 text-[#2A9D8F]" strokeWidth={2.5} />
               <h2 className="font-comic font-extrabold text-sm uppercase text-[var(--ink-primary)] tracking-tight">
-                Cày Xuyên Đêm • Thời Lượng Khủng
+                Cày Xuyên Đêm
               </h2>
             </div>
             <button
@@ -817,7 +808,7 @@ export const HomePage: React.FC = () => {
 
           <div
             data-testid="marathon-horizontal-scroller"
-            className="flex overflow-x-auto gap-3.5 pb-2 no-scrollbar flex-nowrap"
+            className="flex overflow-x-auto gap-3.5 py-1 px-0.5 pb-2 no-scrollbar flex-nowrap"
           >
             {marathonPicks.map((audio) => (
               <div
@@ -866,21 +857,16 @@ export const HomePage: React.FC = () => {
       {/* 8. KÊNH & TÁC GIẢ NỔI BẬT (Lướt sang ngang) */}
       {topAuthors.length > 0 && (
         <section className="flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5">
-              <Mic2 className="w-4 h-4 text-[#3A86FF]" strokeWidth={2.5} />
-              <h2 className="font-comic font-extrabold text-sm uppercase text-[var(--ink-primary)] tracking-tight">
-                Kênh & Tác Giả Nổi Bật
-              </h2>
-            </div>
-            <span className="text-[10px] font-bold text-[var(--ink-muted)]">
-              Lướt ngang để khám phá
-            </span>
+          <div className="flex items-center gap-1.5">
+            <Mic2 className="w-4 h-4 text-[#3A86FF]" strokeWidth={2.5} />
+            <h2 className="font-comic font-extrabold text-sm uppercase text-[var(--ink-primary)] tracking-tight">
+              Kênh & Tác Giả Nổi Bật
+            </h2>
           </div>
 
           <div
             data-testid="authors-horizontal-scroller"
-            className="flex overflow-x-auto gap-3 pb-2 no-scrollbar flex-nowrap"
+            className="flex overflow-x-auto gap-3 py-1 px-0.5 pb-2 no-scrollbar flex-nowrap"
           >
             {topAuthors.map((author) => (
               <button

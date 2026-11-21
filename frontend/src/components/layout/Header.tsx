@@ -50,9 +50,6 @@ export const Header: React.FC = React.memo(() => {
                 {isLive ? 'LIVE' : 'OFF'}
               </span>
             </span>
-            <span className="text-[10px] font-bold text-[var(--ink-muted)] truncate leading-tight">
-              <strong className="font-extrabold text-[var(--ink-primary)]">{displayName}</strong> trực tuyến
-            </span>
           </div>
         </div>
 

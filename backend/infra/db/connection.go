@@ -39,8 +39,9 @@ func InitDatabase(driver, source string, isProduction bool) (*gorm.DB, error) {
 	}
 
 	db, err := gorm.Open(dialector, &gorm.Config{
-		PrepareStmt: true, // Bật cache Prepared Statements tối ưu hiệu năng truy vấn gấp 2-3 lần
-		Logger:      logger.Default.LogMode(logger.Warn),
+		PrepareStmt:                              true, // Bật cache Prepared Statements tối ưu hiệu năng truy vấn gấp 2-3 lần
+		DisableForeignKeyConstraintWhenMigrating: true, // Tránh lỗi MySQL 3780 khi migrate bảng có khóa ngoại cũ khác kiểu INT/BIGINT
+		Logger:                                   logger.Default.LogMode(logger.Warn),
 		NowFunc: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -107,7 +108,7 @@ func InitDatabase(driver, source string, isProduction bool) (*gorm.DB, error) {
 // AutoMigrate tự động đồng bộ hóa cấu trúc Schema từ các Struct Domain
 func AutoMigrate(db *gorm.DB) error {
 	slog.Info("Đang chạy GORM AutoMigrate cho tất cả thực thể...")
-	err := db.AutoMigrate(
+	models := []interface{}{
 		&domain.User{},
 		&domain.Category{},
 		&domain.Tag{},
@@ -121,9 +122,16 @@ func AutoMigrate(db *gorm.DB) error {
 		&domain.MembershipOrder{},
 		&domain.SystemSetting{},
 		&domain.CommunityMessage{},
-	)
-	if err != nil {
-		slog.Warn("GORM AutoMigrate gặp cảnh báo", "error", err)
+	}
+
+	var firstErr error
+	for _, model := range models {
+		if err := db.AutoMigrate(model); err != nil {
+			slog.Warn("GORM AutoMigrate gặp cảnh báo trên model", "model", fmt.Sprintf("%T", model), "error", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
 	}
 
 	// Đảm bảo an toàn tuyệt đối cho MySQL/SQLite nếu bảng đã tồn tại từ migration cũ
@@ -151,7 +159,29 @@ func AutoMigrate(db *gorm.DB) error {
 		_ = m.AddColumn(&domain.NotificationPreference{}, "welcome_seeded")
 	}
 
-	return err
+	// Đảm bảo bảng membership_orders có đầy đủ các cột phục vụ cổng thanh toán payOS
+	orderColumns := []string{
+		"payos_order_code",
+		"payment_link_id",
+		"checkout_url",
+		"qr_code_data",
+		"qr_code_url",
+		"provider",
+		"bank_bin",
+		"account_number",
+		"account_name",
+		"transfer_content",
+		"duration_days",
+		"expires_at",
+		"paid_at",
+	}
+	for _, col := range orderColumns {
+		if !m.HasColumn(&domain.MembershipOrder{}, col) {
+			_ = m.AddColumn(&domain.MembershipOrder{}, col)
+		}
+	}
+
+	return firstErr
 }
 
 // SeedInitialData nạp toàn bộ danh mục, tag, tài khoản và audio mẫu chuẩn

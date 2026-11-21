@@ -106,6 +106,40 @@ func SanitizePayOSDescription(desc string) string {
 	return cleaned
 }
 
+// SanitizePayOSBuyerEmail returns a valid public email for PayOS or empty string if the user email is synthetic/invalid
+// (e.g. "user@gmail.com_1234@user.local" or "customer1@clucky.local"), preventing PayOS error [20] "buyer_email must be an email".
+func SanitizePayOSBuyerEmail(raw string) string {
+	email := strings.TrimSpace(raw)
+	if email == "" || strings.ContainsAny(email, " \t\r\n") {
+		return ""
+	}
+	// If synthetic suffix "_xxxxxx@user.local" was appended to a real email, recover the real email prefix
+	if strings.HasSuffix(strings.ToLower(email), "@user.local") && strings.Count(email, "@") == 2 {
+		if idx := strings.LastIndex(email, "_"); idx > 0 {
+			candidate := email[:idx]
+			if strings.Count(candidate, "@") == 1 {
+				email = candidate
+			}
+		}
+	}
+	if strings.Count(email, "@") != 1 {
+		return ""
+	}
+	parts := strings.Split(email, "@")
+	localPart, domainPart := parts[0], strings.ToLower(parts[1])
+	if len(localPart) == 0 || len(domainPart) < 4 || !strings.Contains(domainPart, ".") {
+		return ""
+	}
+	if strings.HasSuffix(domainPart, ".local") || strings.HasSuffix(domainPart, ".internal") || strings.HasSuffix(domainPart, ".localhost") {
+		return ""
+	}
+	tldIdx := strings.LastIndex(domainPart, ".")
+	if tldIdx <= 0 || len(domainPart)-tldIdx-1 < 2 {
+		return ""
+	}
+	return email
+}
+
 // SignPaymentRequest generates PayOS v2 HMAC-SHA256 signature over alphabetical canonical fields.
 func (c *PayOSClient) SignPaymentRequest(amount int, cancelURL, description string, orderCode int64, returnURL string) string {
 	canonical := fmt.Sprintf(
@@ -128,6 +162,8 @@ func (c *PayOSClient) CreatePaymentLink(req PayOSCreatePaymentRequest) (*PayOSPa
 	}
 
 	req.Description = SanitizePayOSDescription(req.Description)
+	req.BuyerEmail = SanitizePayOSBuyerEmail(req.BuyerEmail)
+	req.BuyerName = strings.TrimSpace(req.BuyerName)
 	req.Signature = c.SignPaymentRequest(req.Amount, req.CancelURL, req.Description, req.OrderCode, req.ReturnURL)
 
 	bodyBytes, err := json.Marshal(req)

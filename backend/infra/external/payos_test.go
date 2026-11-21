@@ -131,3 +131,18 @@ func TestPayOSClient_CreateAndQueryPaymentLink(t *testing.T) {
 		t.Fatalf("unexpected order info: %+v", info)
 	}
 }
+
+func TestSanitizePayOSBuyerEmail(t *testing.T) {
+	if got := SanitizePayOSBuyerEmail("tranducanh31032006@gmail.com_1a2b3c@user.local"); got != "tranducanh31032006@gmail.com" {
+		t.Fatalf("expected recovered real email, got %q", got)
+	}
+	if got := SanitizePayOSBuyerEmail("customer1@clucky.local"); got != "" {
+		t.Fatalf("expected .local email to be stripped, got %q", got)
+	}
+	if got := SanitizePayOSBuyerEmail("user_123456@user.local"); got != "" {
+		t.Fatalf("expected synthetic @user.local email to be stripped, got %q", got)
+	}
+	if got := SanitizePayOSBuyerEmail("stephen@gmail.com"); got != "stephen@gmail.com" {
+		t.Fatalf("expected valid email preserved, got %q", got)
+	}
+}
