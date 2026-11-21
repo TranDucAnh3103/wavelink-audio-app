@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from './Button';
 
@@ -13,6 +14,7 @@ export interface ModalProps {
   cancelText?: string;
   isDanger?: boolean;
   showFooter?: boolean;
+  size?: 'sm' | 'md' | 'lg';
   className?: string;
 }
 
@@ -26,6 +28,7 @@ export const Modal: React.FC<ModalProps> = ({
   cancelText = 'Hủy',
   isDanger = false,
   showFooter = true,
+  size = 'md',
   className,
 }) => {
   useEffect(() => {
@@ -58,9 +61,16 @@ export const Modal: React.FC<ModalProps> = ({
     }
   };
 
+  const sizeClass =
+    size === 'sm'
+      ? 'max-w-[380px]'
+      : size === 'lg'
+        ? 'max-w-[640px]'
+        : 'max-w-[460px] md:max-w-[520px]';
+
   const modalNode = (
     <div
-      className="fixed inset-0 z-[99999] bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto overscroll-contain"
+      className="fixed inset-0 z-[99999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto overscroll-contain fade-in-comic"
       style={{ minHeight: '100dvh' }}
       role="dialog"
       aria-modal="true"
@@ -70,41 +80,43 @@ export const Modal: React.FC<ModalProps> = ({
     >
       <div
         className={cn(
-          'card-comic relative w-full max-w-[420px] max-h-[85vh] max-h-[85dvh] flex flex-col p-3.5 sm:p-4 gap-2.5 sm:gap-3 bg-white shadow-comic-lg my-auto transform transition-transform duration-200 scale-100',
+          'card-comic relative w-full max-h-[88dvh] flex flex-col p-4 sm:p-5 gap-3 bg-[var(--surface-card)] text-[var(--ink-primary)] shadow-comic-lg my-auto',
+          sizeClass,
           className
         )}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
-        <div className="flex items-center justify-between pb-1.5 border-b-2 border-black shrink-0">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#FFE600] border border-black inline-block shrink-0" />
-            <h3 className="font-extrabold text-xs sm:text-sm uppercase tracking-tight text-black truncate">
+        <div className="flex items-center justify-between pb-2.5 border-b-2 border-[var(--border-ink)] shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#FFE600] border border-[#111113] inline-block shrink-0" />
+            <h3 className="font-extrabold text-xs sm:text-sm uppercase tracking-tight text-[var(--ink-primary)] truncate">
               {title}
             </h3>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="w-7 h-7 rounded border-2 border-black bg-white flex items-center justify-center text-black hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5 shrink-0 ml-2"
+            className="w-8 h-8 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] flex items-center justify-center text-[var(--ink-primary)] hover:bg-[var(--surface-muted)] active:translate-x-0.5 active:translate-y-0.5 shrink-0 ml-2 transition-colors"
             aria-label="Đóng"
           >
-            <i className="ri-close-line text-lg font-bold" />
+            <X className="w-4 h-4" strokeWidth={2.5} />
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="text-xs sm:text-sm font-semibold text-gray-800 flex flex-col gap-2.5 overflow-y-auto py-1 flex-1 min-h-0 pr-1">
+        <div className="text-xs sm:text-sm font-medium text-[var(--ink-secondary)] flex flex-col gap-3 overflow-y-auto py-1 flex-1 min-h-0 pr-1">
           {children}
         </div>
 
         {/* Modal Footer */}
         {showFooter && (
-          <div className="flex items-center justify-end gap-2 pt-2 border-t-2 border-black shrink-0">
+          <div className="flex items-center justify-end gap-2 pt-2.5 border-t-2 border-[var(--border-ink)] shrink-0">
             <Button
               variant="default"
               size="sm"
               onClick={onClose}
-              className="text-xs py-1.5 px-3 min-h-[34px]"
+              className="text-xs py-1.5 px-3 min-h-[36px]"
             >
               {cancelText}
             </Button>
@@ -112,7 +124,7 @@ export const Modal: React.FC<ModalProps> = ({
               variant={isDanger ? 'red' : 'primary'}
               size="sm"
               onClick={handleConfirm}
-              className="text-xs py-1.5 px-3.5 min-h-[34px]"
+              className="text-xs py-1.5 px-3.5 min-h-[36px]"
             >
               {confirmText}
             </Button>
@@ -124,4 +136,3 @@ export const Modal: React.FC<ModalProps> = ({
 
   return createPortal(modalNode, document.body);
 };
-

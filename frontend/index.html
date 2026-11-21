@@ -10,7 +10,7 @@
   <link rel="manifest" href="/manifest.json">
 
   <!-- Theme color cho Android Chrome address bar -->
-  <meta name="theme-color" content="#6366f1">
+  <meta name="theme-color" content="#F6F5F0">
   <meta name="mobile-web-app-capable" content="yes">
 
   <!-- Apple PWA (iOS Safari background audio support) -->
@@ -19,6 +19,21 @@
   <meta name="apple-mobile-web-app-title" content="WaveLink">
   <link rel="apple-touch-icon" href="/wavelink-icon.png">
 
+  <!-- Anti-FOUC theme initializer -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('setting_theme');
+        var d = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (d) {
+          document.documentElement.classList.add('dark', 'dark-comic');
+          var m = document.querySelector('meta[name="theme-color"]');
+          if (m) m.setAttribute('content', '#141418');
+        }
+      } catch (e) {}
+    })();
+  </script>
+
   <!-- Google Identity Services SDK -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
@@ -26,9 +41,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;700;900&display=swap" rel="stylesheet">
-
-  <!-- RemixIcon instant stylesheet to prevent square box cross glyph flash -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.6.0/fonts/remixicon.min.css" crossorigin="anonymous">
 
   <!-- WaveLink Runtime Environment Config (Web Hosting Production) -->
   <script src="/env-config.js?v=2"></script>

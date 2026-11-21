@@ -2,16 +2,48 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import {
+  Settings,
+  Palette,
+  Sun,
+  Moon,
+  Monitor,
+  Smile,
+  LogIn,
+  UserPlus,
+  UserCog,
+  Pencil,
+  ImagePlus,
+  KeyRound,
+  CheckCircle2,
+  Crown,
+  XCircle,
+  RotateCcw,
+  Gauge,
+  Bell,
+  Ban,
+  BellRing,
+  Send,
+  ShieldCheck,
+  Headphones,
+  MessageSquarePlus,
+  RefreshCw,
+  Trash2,
+  LogOut,
+  Chrome,
+} from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useMyMembership } from '@/hooks/useMembership';
+import { useDelayedFallback } from '@/hooks/useDelayedFallback';
 import { AdminTabs } from '@/pages/admin/AdminTabs';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { toast } from '@/components/ui/Toast';
 import { SettingsSkeleton } from '@/components/common/Skeletons';
 import { api } from '@/services/api';
+import { clearSwrCache } from '@/lib/swrCache';
 import {
   useNotificationPreferences,
   useUpdateNotificationPreferences,
@@ -21,32 +53,6 @@ import { externalNotificationService } from '@/services/externalNotificationServ
 
 const GOOGLE_CLIENT_ID = '1843465297-bbnnggqpe1s5r82gtvi2h0kli7fves7c.apps.googleusercontent.com';
 
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        id: {
-          initialize: (config: {
-            client_id: string;
-            callback: (response: { credential?: string; select_by?: string }) => void;
-            auto_select?: boolean;
-          }) => void;
-          renderButton: (
-            parent: HTMLElement,
-            options: {
-              theme?: string;
-              size?: string;
-              text?: string;
-              shape?: string;
-              width?: number | string;
-            }
-          ) => void;
-        };
-      };
-    };
-  }
-}
-
 export const SettingsPage: React.FC = () => {
   const navigate = useNavigate();
   const { user, isLive, logout, refreshUser, isLoading, isInitialized } = useAuthStore();
@@ -54,7 +60,6 @@ export const SettingsPage: React.FC = () => {
   const { playbackRate, setPlaybackRate } = usePlayerStore();
   const { data: myMembership } = useMyMembership();
 
-  // State modals
   const [isEditNameOpen, setIsEditNameOpen] = useState(false);
   const [nameInput, setNameInput] = useState(user?.username || '');
 
@@ -85,7 +90,6 @@ export const SettingsPage: React.FC = () => {
 
   const isVip = myMembership?.isVip || user?.role === 'VIP' || user?.role === 'ADMIN';
 
-  // Notification preferences and background external alerts
   const { data: notifPrefs } = useNotificationPreferences();
   const updateNotifPrefsMutation = useUpdateNotificationPreferences();
   const { data: unreadNotifCount = 0 } = useUnreadNotificationCount();
@@ -161,11 +165,14 @@ export const SettingsPage: React.FC = () => {
       toast.error('Trình duyệt chưa cấp quyền hiển thị thông báo ngoài màn hình');
       return;
     }
-    const sent = await externalNotificationService.showSystemNotification('WaveLink • Thử Nghiệm Thông Báo 🎧', {
-      body: 'Thông báo audio mới ngoài app hoạt động tốt! Bạn sẽ nhận tin khi có tập mới.',
-      url: '/#/notifications',
-      tag: `test-settings-${Date.now()}`,
-    });
+    const sent = await externalNotificationService.showSystemNotification(
+      'WaveLink • Thử Nghiệm Thông Báo',
+      {
+        body: 'Thông báo audio mới ngoài app hoạt động tốt! Bạn sẽ nhận tin khi có tập mới.',
+        url: '/notifications',
+        tag: `test-settings-${Date.now()}`,
+      }
+    );
     if (sent) {
       toast.success('Đã gửi thông báo thử nghiệm ra ngoài app!');
     } else {
@@ -173,16 +180,26 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
-  // Preset anime/comic cover wallpapers
   const wallpaperPresets = [
-    { name: 'Cyber City', url: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=800&auto=format&fit=crop&q=80' },
-    { name: 'Manga Studio', url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80' },
-    { name: 'Neon Wave', url: 'https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=800&auto=format&fit=crop&q=80' },
-    { name: 'Galaxy Beats', url: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop&q=80' },
+    {
+      name: 'Cyber City',
+      url: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=800&auto=format&fit=crop&q=80',
+    },
+    {
+      name: 'Manga Studio',
+      url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80',
+    },
+    {
+      name: 'Neon Wave',
+      url: 'https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=800&auto=format&fit=crop&q=80',
+    },
+    {
+      name: 'Galaxy Beats',
+      url: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop&q=80',
+    },
   ];
 
   const handleGoogleLinkClick = () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const google = (window as any).google;
     if (google?.accounts?.oauth2) {
       const tokenClient = google.accounts.oauth2.initTokenClient({
@@ -206,7 +223,7 @@ export const SettingsPage: React.FC = () => {
                   isLive
                 );
                 await refreshUser();
-                toast.success('🎉 Đã liên kết tài khoản Google thành công!');
+                toast.success('Đã liên kết tài khoản Google thành công!');
               }
             } catch (err: unknown) {
               toast.error((err as Error).message || 'Lỗi khi liên kết Google');
@@ -220,7 +237,6 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
-  // Handlers
   const handleUpdateName = async () => {
     if (!nameInput.trim()) {
       toast.error('Tên không được để trống');
@@ -298,7 +314,12 @@ export const SettingsPage: React.FC = () => {
       return false;
     }
     try {
-      await api.membership.requestRefund(refundOrderCode.trim(), refundReason.trim(), refundBank.trim(), isLive);
+      await api.membership.requestRefund(
+        refundOrderCode.trim(),
+        refundReason.trim(),
+        refundBank.trim(),
+        isLive
+      );
       toast.success('Yêu cầu hoàn tiền đã được gửi! Ban quản trị sẽ xử lý trong 24h.');
       setRefundReason('');
       setRefundBank('');
@@ -348,6 +369,7 @@ export const SettingsPage: React.FC = () => {
 
   const handleClearCache = () => {
     localStorage.removeItem('audio_library_db');
+    clearSwrCache();
     toast.success('Đã dọn dẹp cache! Đang tải lại...');
     setTimeout(() => {
       window.location.reload();
@@ -360,470 +382,546 @@ export const SettingsPage: React.FC = () => {
     navigate('/login');
   };
 
-  const isAuthLoading =
-    isLoading ||
-    (!isInitialized &&
-      !user &&
-      Boolean(typeof localStorage !== 'undefined' && localStorage.getItem('auth_token')));
+  const isAuthBlocking =
+    !user &&
+    (isLoading ||
+      (!isInitialized &&
+        Boolean(typeof localStorage !== 'undefined' && localStorage.getItem('auth_token'))));
+  const showSkeletonFallback = useDelayedFallback(isAuthBlocking, 180);
 
-  if (isAuthLoading) {
+  if (showSkeletonFallback) {
     return <SettingsSkeleton />;
   }
 
   return (
-    <div className="flex flex-col w-full pb-36 fade-in-comic">
+    <div className="flex flex-col w-full pb-36 md:pb-28 fade-in-comic">
       {user?.role === 'ADMIN' && <AdminTabs activeTab="settings" />}
 
-      <div className="px-4 flex flex-col gap-4 pt-1">
+      <div className="w-full max-w-5xl mx-auto px-4 md:px-6 flex flex-col gap-5 pt-2">
         {/* Banner Card */}
-        <div className="card-comic p-4 bg-[#FFE600] flex flex-col gap-1 border-2 border-black relative overflow-hidden">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black font-black shadow-comic-sm">
-              <i className="ri-settings-4-fill text-lg" />
-            </div>
-            <div>
-              <h1 className="font-extrabold text-base uppercase tracking-tight text-black">
-                Cài Đặt Hệ Thống & Tài Khoản
-              </h1>
-              <p className="text-[11px] font-bold text-gray-800">
-                Tùy biến giao diện, bảo mật tài khoản, hình nền, gói VIP & hỗ trợ
-              </p>
-            </div>
+        <div className="card-comic p-4 md:p-5 bg-[#FFE600] text-[#111113] flex items-center gap-3 border-2 border-[#111113]">
+          <div className="w-10 h-10 rounded-xl border-2 border-[#111113] bg-white flex items-center justify-center shadow-comic-sm shrink-0">
+            <Settings className="w-5 h-5 text-[#111113]" strokeWidth={2.5} />
           </div>
-        </div>
-
-        {/* 1. Giao diện sáng / tối */}
-        <div className="card-comic p-4 bg-white flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <i className="ri-palette-fill text-base text-[#8338EC]" />
-              <span className="font-extrabold text-xs uppercase text-black">Chế Độ Hiển Thị Giao Diện</span>
-            </div>
-            <span className="badge-comic badge-comic-yellow text-[9px] font-black uppercase">
-              {theme === 'dark' ? 'Dark Ink' : 'Light Paper'}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => setTheme('light')}
-              className={`btn-comic text-xs py-2.5 ${theme !== 'dark' ? 'btn-comic-yellow' : 'bg-white'}`}
-            >
-              <i className="ri-sun-fill text-base mr-1" /> Manga Giấy Trắng
-            </button>
-            <button
-              onClick={() => setTheme('dark')}
-              className={`btn-comic text-xs py-2.5 ${theme === 'dark' ? 'btn-comic-yellow' : 'bg-white'}`}
-            >
-              <i className="ri-moon-fill text-base mr-1" /> Mực Đen Dark Ink
-            </button>
-          </div>
-        </div>
-
-        {/* 2. Quản lý Hồ sơ & Tên hiển thị & Hình nền */}
-        {user?.isGuest ? (
-          <div className="card-comic p-4 bg-white flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <i className="ri-user-smile-fill text-base text-[#3A86FF]" />
-              <span className="font-extrabold text-xs uppercase text-black">Tài Khoản Khách Vãng Lai</span>
-            </div>
-            <p className="text-xs font-semibold text-gray-600">
-              Bạn đang duyệt ở chế độ khách nghe thử (chưa đăng nhập). Đăng nhập hoặc tạo tài khoản để lưu vĩnh viễn tiến trình nghe, tùy chỉnh tên hiển thị và bảo mật tài khoản.
+          <div>
+            <h1 className="font-comic font-extrabold text-base md:text-lg uppercase tracking-tight text-[#111113]">
+              Cài Đặt Hệ Thống & Tài Khoản
+            </h1>
+            <p className="text-xs font-bold text-[#111113]/80">
+              Tùy biến giao diện Sáng/Tối/Hệ thống, bảo mật tài khoản, hình nền, gói VIP & hỗ trợ
             </p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => navigate('/login')}
-                className="btn-comic btn-comic-primary text-xs py-2 font-black"
-              >
-                <i className="ri-login-box-line font-bold" /> Đăng Nhập
-              </button>
-              <button
-                onClick={() => navigate('/register')}
-                className="btn-comic btn-comic-white text-xs py-2 font-black"
-              >
-                <i className="ri-user-add-line font-bold" /> Đăng Ký
-              </button>
-            </div>
           </div>
-        ) : (
-          <div className="card-comic p-4 bg-white flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <i className="ri-user-settings-fill text-base text-[#3A86FF]" />
-              <span className="font-extrabold text-xs uppercase text-black">Hồ Sơ & Hình Nền Tài Khoản</span>
-            </div>
+        </div>
 
-            {/* User info preview */}
-            <div className="card-comic-sm p-3 bg-gray-50 flex items-center gap-3 relative overflow-hidden">
-              {user?.coverUrl && (
-                <div
-                  className="absolute inset-0 bg-cover bg-center opacity-30"
-                  style={{ backgroundImage: `url(${user.coverUrl})` }}
-                />
-              )}
-              <div className="relative z-10 w-12 h-12 rounded-full border-2 border-black bg-[#FFE600] flex items-center justify-center font-black text-lg overflow-hidden shrink-0 shadow-comic-sm">
-                {user?.avatarUrl ? (
-                  <img src={user.avatarUrl} alt={user.username} className="w-full h-full object-cover" />
-                ) : (
-                  (user?.username || 'U').substring(0, 2).toUpperCase()
-                )}
-              </div>
-              <div className="relative z-10 flex flex-col min-w-0 flex-1">
-                <span className="font-black text-sm text-black truncate">{user?.username || 'Khách vãng lai'}</span>
-                <span className="text-xs font-semibold text-gray-600 truncate">{user?.email || 'Chưa liên kết email'}</span>
-                <span className="text-[10px] font-bold text-gray-500">
-                  Hình nền: {user?.coverUrl ? 'Đã cài đặt hình nền riêng' : 'Mặc định'}
+        {/* 2-Column Settings Cards Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          {/* 1. Theme Selection (Light / Dark / System) */}
+          <div className="card-comic p-4 md:p-5 flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Palette className="w-4 h-4 text-[#8338EC]" strokeWidth={2.5} />
+                <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+                  Chế Độ Hiển Thị Giao Diện
                 </span>
               </div>
+              <span className="badge-comic badge-comic-yellow text-[9px] font-black uppercase">
+                {theme === 'system' ? 'Auto System' : theme === 'dark' ? 'Dark Ink' : 'Light Paper'}
+              </span>
             </div>
-
-            {/* Quick actions for profile */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => {
-                  setNameInput(user?.username || '');
-                  setIsEditNameOpen(true);
-                }}
-                className="btn-comic text-xs py-2 px-3 bg-gray-100 flex items-center justify-center gap-1.5"
-              >
-                <i className="ri-edit-2-line font-bold" /> Đổi Tên Hiển Thị
-              </button>
-              <button
-                onClick={() => {
-                  setCoverInput(user?.coverUrl || '');
-                  setIsCoverOpen(true);
-                }}
-                className="btn-comic text-xs py-2 px-3 bg-[#FFE600] text-black flex items-center justify-center gap-1.5"
-              >
-                <i className="ri-image-add-line font-bold" /> Đổi Hình Nền
-              </button>
-            </div>
-
-            <button
-              onClick={() => setIsPasswordOpen(true)}
-              className="btn-comic text-xs py-2 px-3 bg-white border-2 border-black flex items-center justify-center gap-1.5"
-            >
-              <i className="ri-lock-password-line font-bold" /> Đổi Mật Khẩu Đăng Nhập
-            </button>
-          </div>
-        )}
-
-        {/* 3. Liên kết tài khoản Google (chỉ cho user đã đăng nhập) */}
-        {!user?.isGuest && (
-        <div className="card-comic p-4 bg-white flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <i className="ri-google-fill text-base text-[#EA4335]" />
-              <span className="font-extrabold text-xs uppercase text-black">Liên Kết Google Account</span>
-            </div>
-            <span
-              className={`badge-comic ${
-                user?.googleId ? 'badge-comic-teal' : 'badge-comic-orange'
-              } text-[9px] font-black`}
-            >
-              {user?.googleId ? 'ĐÃ LIÊN KẾT' : 'CHƯA LIÊN KẾT'}
-            </span>
-          </div>
-
-          {user?.googleId ? (
-            <div className="card-comic-sm p-3 bg-teal-50 border-teal-300 flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full border border-teal-500 bg-white flex items-center justify-center overflow-hidden shrink-0">
-                {user.avatarUrl ? (
-                  <img src={user.avatarUrl} alt="Google Avatar" className="w-full h-full object-cover" />
-                ) : (
-                  <i className="ri-google-fill text-teal-600 font-bold" />
-                )}
-              </div>
-              <div className="flex flex-col min-w-0 flex-1">
-                <span className="font-bold text-xs text-teal-900 truncate">
-                  Tài khoản Google đã kết nối an toàn
-                </span>
-                <span className="text-[11px] font-mono font-semibold text-teal-700 truncate">
-                  ID: {user.googleId.substring(0, 14)}...
-                </span>
-              </div>
-              <i className="ri-checkbox-circle-fill text-lg text-[#2A9D8F]" />
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <p className="text-xs font-semibold text-gray-600">
-                Liên kết tài khoản Google để đăng nhập 1 chạm và tự động đồng bộ ảnh đại diện từ Google.
-              </p>
+            <div className="grid grid-cols-3 gap-2">
               <button
                 type="button"
-                onClick={handleGoogleLinkClick}
-                className="btn-comic bg-white hover:bg-gray-50 text-black text-xs py-2 px-3.5 font-extrabold shadow-comic flex items-center justify-center gap-2 border-2 border-black w-max mx-auto"
-              >
-                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                  <path
-                    fill="#4285F4"
-                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
-                  />
-                  <path
-                    fill="#EA4335"
-                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-                  />
-                </svg>
-                <span>Liên Kết Với Google</span>
-              </button>
-            </div>
-          )}
-        </div>
-        )}
-
-        {/* 4. Gói VIP, Hủy VIP & Hoàn Tiền (chỉ cho user đã đăng nhập) */}
-        {!user?.isGuest && (
-        <div className="card-comic p-4 bg-white flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <i className="ri-vip-crown-fill text-base text-[#FFE600]" />
-              <span className="font-extrabold text-xs uppercase text-black">Hội Viên VIP & Thanh Toán</span>
-            </div>
-            <span
-              className={`badge-comic ${
-                isVip ? 'badge-comic-purple' : 'badge-comic-white'
-              } text-[9px] font-black`}
-            >
-              {isVip ? 'VIP ACTIVE' : 'FREE TIER'}
-            </span>
-          </div>
-
-          <div className="card-comic-sm p-3 bg-purple-50 border-purple-300 flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="font-black text-xs text-purple-950">
-                Trạng thái: {isVip ? 'Đang kích hoạt gói VIP' : 'Tài khoản thường'}
-              </span>
-              <span className="text-[11px] font-semibold text-purple-800">
-                {user?.vipExpiresAt
-                  ? `Hạn dùng đến: ${new Date(user.vipExpiresAt).toLocaleDateString('vi-VN')}`
-                  : 'Nâng cấp VIP để mở khóa truyện độc quyền & bỏ giới hạn'}
-              </span>
-            </div>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => navigate('/membership')}
-              className="text-xs py-1.5 px-3 shrink-0"
-            >
-              {isVip ? 'Xem Gói' : 'Nâng Cấp'}
-            </Button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 pt-1 border-t border-gray-200">
-            {isVip && (
-              <button
-                onClick={() => setIsCancelVipOpen(true)}
-                className="btn-comic text-xs py-2 px-3 bg-[#FFF1F2] text-[#E63946] flex items-center justify-center gap-1.5"
-              >
-                <i className="ri-close-circle-line font-bold" /> Hủy Gói VIP
-              </button>
-            )}
-            <button
-              onClick={() => {
-                setRefundOrderCode(myMembership?.latestOrder?.orderCode || '');
-                setIsRefundOpen(true);
-              }}
-              className={`btn-comic text-xs py-2 px-3 bg-gray-100 flex items-center justify-center gap-1.5 ${
-                !isVip ? 'col-span-2' : ''
-              }`}
-            >
-              <i className="ri-refund-2-line font-bold" /> Yêu Cầu Hoàn Tiền
-            </button>
-          </div>
-        </div>
-        )}
-
-        {/* 5. Cài đặt phát Audio mặc định */}
-        <div className="card-comic p-4 bg-white flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <i className="ri-speed-line text-base text-[#2A9D8F]" />
-              <span className="font-extrabold text-xs uppercase text-black">Tốc Độ Phát Mặc Định</span>
-            </div>
-            <span className="badge-comic badge-comic-teal text-[9px] font-black">
-              HIỆN TẠI: {playbackRate}x
-            </span>
-          </div>
-          <p className="text-xs font-semibold text-gray-600">
-            Tốc độ này sẽ tự động lưu và áp dụng cho toàn bộ các tập audio khi bạn phát.
-          </p>
-          <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
-            {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((s) => (
-              <button
-                key={s}
-                onClick={() => {
-                  setPlaybackRate(s, user?.id);
-                  toast.success(`Đã lưu tốc độ phát mặc định: ${s}x`);
-                }}
-                className={`btn-comic text-xs py-2 font-black ${
-                  Math.abs(playbackRate - s) < 0.05 ? 'btn-comic-yellow ring-2 ring-black' : 'bg-gray-100 hover:bg-gray-200'
+                onClick={() => setTheme('light')}
+                className={`btn-comic text-xs py-2.5 flex-col sm:flex-row gap-1 ${
+                  theme === 'light' ? 'btn-comic-yellow' : ''
                 }`}
               >
-                {s}x
+                <Sun className="w-4 h-4" strokeWidth={2.25} />
+                <span>Giấy Trắng</span>
               </button>
-            ))}
+              <button
+                type="button"
+                onClick={() => setTheme('dark')}
+                className={`btn-comic text-xs py-2.5 flex-col sm:flex-row gap-1 ${
+                  theme === 'dark' ? 'btn-comic-yellow' : ''
+                }`}
+              >
+                <Moon className="w-4 h-4" strokeWidth={2.25} />
+                <span>Dark Ink</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTheme('system')}
+                className={`btn-comic text-xs py-2.5 flex-col sm:flex-row gap-1 ${
+                  theme === 'system' ? 'btn-comic-yellow' : ''
+                }`}
+              >
+                <Monitor className="w-4 h-4" strokeWidth={2.25} />
+                <span>Hệ Thống</span>
+              </button>
+            </div>
           </div>
-        </div>
 
-        {/* 6. Cài Đặt Thông Báo & Nhận Tin Ngoài App */}
-        <div className="card-comic p-4 bg-white flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <i className="ri-notification-3-fill text-base text-[#3A86FF]" />
-              <span className="font-extrabold text-xs uppercase text-black">
-                Cài Đặt Thông Báo & Nhận Tin Ngoài App
+          {/* 2. Default Playback Speed */}
+          <div className="card-comic p-4 md:p-5 flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Gauge className="w-4 h-4 text-[#2A9D8F]" strokeWidth={2.5} />
+                <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+                  Tốc Độ Phát Mặc Định
+                </span>
+              </div>
+              <span className="badge-comic badge-comic-teal text-[9px] font-black">
+                HIỆN TẠI: {playbackRate}x
               </span>
             </div>
-            <button
-              onClick={() => navigate('/notifications')}
-              className="badge-comic badge-comic-yellow text-[9px] font-black hover:scale-105 cursor-pointer"
-              title="Mở Hộp thư thông báo"
-            >
-              HỘP THƯ ({unreadNotifCount} MỚI) →
-            </button>
+            <p className="text-xs font-medium text-[var(--ink-secondary)]">
+              Tốc độ này sẽ tự động lưu và áp dụng cho toàn bộ các tập audio khi bạn phát.
+            </p>
+            <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
+              {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => {
+                    setPlaybackRate(s, user?.id);
+                    toast.success(`Đã lưu tốc độ phát mặc định: ${s}x`);
+                  }}
+                  className={`btn-comic text-xs py-2 font-black ${
+                    Math.abs(playbackRate - s) < 0.05 ? 'btn-comic-yellow' : ''
+                  }`}
+                >
+                  {s}x
+                </button>
+              ))}
+            </div>
           </div>
 
-          <p className="text-xs font-semibold text-gray-600">
-            Tùy biến nhận thông báo audio mới ngoài app, chặn thông báo khi nghỉ ngơi và cập nhật nội dung phù hợp với WaveLink.
-          </p>
-
-          <div className="flex flex-col gap-2.5">
-            {/* Chặn thông báo (Không làm phiền) */}
-            <div className={`p-3 rounded-lg border-2 ${prefBlockAll ? 'bg-red-50 border-red-500' : 'bg-gray-50 border-black'}`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <strong className="text-black text-xs font-black flex items-center gap-1.5">
-                    <i className="ri-prohibited-line text-red-500 text-base" /> Chặn toàn bộ thông báo (Không làm phiền)
-                  </strong>
-                  <p className="text-[11px] text-gray-600 mt-0.5">
-                    Tắt tất cả thông báo trong app và hệ thống ngoài app để tập trung nghe truyện
-                  </p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={prefBlockAll}
-                  onChange={(e) => handleToggleBlockAll(e.target.checked)}
-                  className="w-4 h-4 border-2 border-black rounded accent-red-600 cursor-pointer"
-                />
-              </div>
-              {prefBlockAll && (
-                <div className="mt-2 text-[10px] text-red-700 font-bold bg-white/70 p-1.5 rounded border border-red-200">
-                  ⚠️ Đang bật chế độ chặn: Mọi thông báo sẽ tạm dừng để không làm phiền bạn.
-                </div>
-              )}
-            </div>
-
-            {/* Nhận thông báo audio mới ngoài app */}
-            <div className={`p-3 rounded-lg border-2 ${prefExternalAudio && !prefBlockAll ? 'bg-blue-50 border-[#3A86FF]' : 'bg-gray-50 border-black opacity-85'}`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <strong className="text-black text-xs font-black flex items-center gap-1.5">
-                    <i className="ri-notification-badge-line text-[#3A86FF] text-base" /> Nhận thông báo audio mới ngoài app
-                  </strong>
-                  <p className="text-[11px] text-gray-600 mt-0.5">
-                    Gửi thông báo màn hình hệ điều hành (Windows/Desktop) khi có tập truyện mới được cập nhật, ngay cả khi đang đóng hoặc ẩn ứng dụng
-                  </p>
-                </div>
-                <input
-                  type="checkbox"
-                  disabled={prefBlockAll}
-                  checked={prefExternalAudio && !prefBlockAll}
-                  onChange={(e) => handleToggleExternalAudio(e.target.checked)}
-                  className="w-4 h-4 border-2 border-black rounded accent-[#3A86FF] cursor-pointer"
-                />
-              </div>
-
-              <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-gray-200">
-                <span className="text-[10px] text-gray-600 font-semibold">
-                  Trạng thái quyền: {permissionStatus === 'granted' ? (
-                    <span className="text-green-600 font-bold">✓ Đã cấp quyền hệ thống</span>
-                  ) : permissionStatus === 'denied' ? (
-                    <span className="text-red-500 font-bold">✕ Đang bị chặn bởi trình duyệt</span>
-                  ) : (
-                    <span className="text-yellow-600 font-bold">Chưa cấp quyền</span>
-                  )}
+          {/* 3. Account Profile & Wallpaper */}
+          {user?.isGuest ? (
+            <div className="card-comic p-4 md:p-5 flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                <Smile className="w-4 h-4 text-[#3A86FF]" strokeWidth={2.5} />
+                <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+                  Tài Khoản Khách Vãng Lai
                 </span>
+              </div>
+              <p className="text-xs font-medium text-[var(--ink-secondary)] leading-relaxed">
+                Bạn đang duyệt ở chế độ khách nghe thử (chưa đăng nhập). Đăng nhập hoặc tạo tài khoản để lưu vĩnh viễn tiến trình nghe, tùy chỉnh tên hiển thị và bảo mật tài khoản.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={handleTestSystemNotification}
-                  disabled={prefBlockAll}
-                  className="btn-comic text-[10px] py-1 px-2.5 bg-white hover:bg-gray-100 flex items-center gap-1"
+                  onClick={() => navigate('/login')}
+                  className="btn-comic btn-comic-primary text-xs py-2.5 font-black"
                 >
-                  <i className="ri-send-plane-line" /> Thử gửi thông báo ngoài app
+                  <LogIn className="w-4 h-4" strokeWidth={2.5} />
+                  <span>Đăng Nhập</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/register')}
+                  className="btn-comic text-xs py-2.5 font-black"
+                >
+                  <UserPlus className="w-4 h-4" strokeWidth={2.5} />
+                  <span>Đăng Ký</span>
                 </button>
               </div>
             </div>
+          ) : (
+            <div className="card-comic p-4 md:p-5 flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                <UserCog className="w-4 h-4 text-[#3A86FF]" strokeWidth={2.5} />
+                <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+                  Hồ Sơ & Hình Nền Tài Khoản
+                </span>
+              </div>
 
-            {/* Chống spam & Bảo vệ trải nghiệm */}
-            <div className="p-2.5 bg-[#FEF9C3] border-2 border-black rounded-lg flex items-start gap-2">
-              <i className="ri-shield-check-fill text-base text-yellow-700 shrink-0 mt-0.5" />
-              <div className="text-[10px] text-gray-800 leading-tight">
-                <strong className="font-extrabold text-black">Chế độ lọc thông minh & Chống Spam:</strong> Hệ thống tự động giới hạn tần suất, không gửi lặp lại các thông báo cùng loại và chỉ tóm tắt các nội dung audio thực sự hữu ích.
+              <div className="card-comic-sm p-3 bg-[var(--surface-elevated)] flex items-center gap-3 relative overflow-hidden">
+                {user?.coverUrl && (
+                  <div
+                    className="absolute inset-0 bg-cover bg-center opacity-30"
+                    style={{ backgroundImage: `url(${user.coverUrl})` }}
+                  />
+                )}
+                <div className="relative z-10 w-12 h-12 rounded-xl border-2 border-[#111113] bg-[#FFE600] text-[#111113] flex items-center justify-center font-black text-lg overflow-hidden shrink-0 shadow-comic-sm">
+                  {user?.avatarUrl ? (
+                    <img src={user.avatarUrl} alt={user.username} className="w-full h-full object-cover" />
+                  ) : (
+                    (user?.username || 'U').substring(0, 2).toUpperCase()
+                  )}
+                </div>
+                <div className="relative z-10 flex flex-col min-w-0 flex-1">
+                  <span className="font-black text-sm text-[var(--ink-primary)] truncate">
+                    {user?.username || 'Khách vãng lai'}
+                  </span>
+                  <span className="text-xs font-semibold text-[var(--ink-secondary)] truncate">
+                    {user?.email || 'Chưa liên kết email'}
+                  </span>
+                  <span className="text-[10px] font-bold text-[var(--ink-muted)]">
+                    Hình nền: {user?.coverUrl ? 'Đã cài đặt hình nền riêng' : 'Mặc định'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNameInput(user?.username || '');
+                    setIsEditNameOpen(true);
+                  }}
+                  className="btn-comic text-xs py-2 px-3"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  <span>Đổi Tên Hiển Thị</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCoverInput(user?.coverUrl || '');
+                    setIsCoverOpen(true);
+                  }}
+                  className="btn-comic btn-comic-yellow text-xs py-2 px-3"
+                >
+                  <ImagePlus className="w-3.5 h-3.5" />
+                  <span>Đổi Hình Nền</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsPasswordOpen(true)}
+                className="btn-comic text-xs py-2 px-3"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>Đổi Mật Khẩu Đăng Nhập</span>
+              </button>
+            </div>
+          )}
+
+          {/* 4. Google Account Link */}
+          {!user?.isGuest && (
+            <div className="card-comic p-4 md:p-5 flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Chrome className="w-4 h-4 text-[#EA4335]" strokeWidth={2.5} />
+                  <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+                    Liên Kết Google Account
+                  </span>
+                </div>
+                <span
+                  className={`badge-comic ${
+                    user?.googleId ? 'badge-comic-teal' : 'badge-comic-orange'
+                  } text-[9px] font-black`}
+                >
+                  {user?.googleId ? 'ĐÃ LIÊN KẾT' : 'CHƯA LIÊN KẾT'}
+                </span>
+              </div>
+
+              {user?.googleId ? (
+                <div className="card-comic-sm p-3 bg-[#ECFDF5] dark:bg-[#132A23] border-[#2A9D8F] flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full border border-[#2A9D8F] bg-white flex items-center justify-center overflow-hidden shrink-0">
+                    {user.avatarUrl ? (
+                      <img
+                        src={user.avatarUrl}
+                        alt="Google Avatar"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <Chrome className="w-4 h-4 text-[#2A9D8F]" />
+                    )}
+                  </div>
+                  <div className="flex flex-col min-w-0 flex-1">
+                    <span className="font-bold text-xs text-[#115E59] dark:text-[#99F6E4] truncate">
+                      Tài khoản Google đã kết nối an toàn
+                    </span>
+                    <span className="text-[11px] font-mono font-semibold text-[#0F766E] dark:text-[#5EEAD4] truncate">
+                      ID: {user.googleId.substring(0, 14)}...
+                    </span>
+                  </div>
+                  <CheckCircle2 className="w-5 h-5 text-[#2A9D8F] shrink-0" />
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2.5">
+                  <p className="text-xs font-medium text-[var(--ink-secondary)]">
+                    Liên kết tài khoản Google để đăng nhập 1 chạm và tự động đồng bộ ảnh đại diện từ Google.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleGoogleLinkClick}
+                    className="btn-comic text-xs py-2 px-4 font-extrabold self-start"
+                  >
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                      <path
+                        fill="#4285F4"
+                        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+                      />
+                      <path
+                        fill="#34A853"
+                        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
+                      />
+                      <path
+                        fill="#FBBC05"
+                        d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+                      />
+                      <path
+                        fill="#EA4335"
+                        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                      />
+                    </svg>
+                    <span>Liên Kết Với Google</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 5. VIP & Payment */}
+          {!user?.isGuest && (
+            <div className="card-comic p-4 md:p-5 flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Crown className="w-4 h-4 text-[#D97706]" strokeWidth={2.5} />
+                  <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+                    Hội Viên VIP & Thanh Toán
+                  </span>
+                </div>
+                <span
+                  className={`badge-comic ${
+                    isVip ? 'badge-comic-purple' : 'badge-comic-white'
+                  } text-[9px] font-black`}
+                >
+                  {isVip ? 'VIP ACTIVE' : 'FREE TIER'}
+                </span>
+              </div>
+
+              <div className="card-comic-sm p-3 bg-[#F3E8FF] dark:bg-[#261B38] border-[#8338EC] flex items-center justify-between gap-2">
+                <div className="flex flex-col min-w-0">
+                  <span className="font-black text-xs text-[#3B0764] dark:text-[#E9D5FF]">
+                    Trạng thái: {isVip ? 'Đang kích hoạt gói VIP' : 'Tài khoản thường'}
+                  </span>
+                  <span className="text-[11px] font-semibold text-[#581C87] dark:text-[#D8B4FE]">
+                    {user?.vipExpiresAt
+                      ? `Hạn dùng đến: ${new Date(user.vipExpiresAt).toLocaleDateString('vi-VN')}`
+                      : 'Nâng cấp VIP để mở khóa truyện độc quyền & bỏ giới hạn'}
+                  </span>
+                </div>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => navigate('/membership')}
+                  className="text-xs py-1.5 px-3 shrink-0"
+                >
+                  {isVip ? 'Xem Gói' : 'Nâng Cấp'}
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[var(--border-ink)]/20">
+                {isVip && (
+                  <button
+                    type="button"
+                    onClick={() => setIsCancelVipOpen(true)}
+                    className="btn-comic text-xs py-2 px-3 bg-[#FFF1F2] dark:bg-[#2F161A] text-[#E63946]"
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                    <span>Hủy Gói VIP</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRefundOrderCode(myMembership?.latestOrder?.orderCode || '');
+                    setIsRefundOpen(true);
+                  }}
+                  className={`btn-comic text-xs py-2 px-3 ${!isVip ? 'col-span-2' : ''}`}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Yêu Cầu Hoàn Tiền</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 6. Notification Preferences */}
+          <div className="card-comic p-4 md:p-5 flex flex-col gap-3 lg:col-span-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Bell className="w-4 h-4 text-[#3A86FF]" strokeWidth={2.5} />
+                <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+                  Cài Đặt Thông Báo & Nhận Tin Ngoài App
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate('/notifications')}
+                className="badge-comic badge-comic-yellow text-[9px] font-black hover:scale-105 cursor-pointer"
+                title="Mở Hộp thư thông báo"
+              >
+                HỘP THƯ ({unreadNotifCount} MỚI) →
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div
+                className={`p-3.5 rounded-xl border-2 ${
+                  prefBlockAll
+                    ? 'bg-[#FFF1F2] dark:bg-[#2F161A] border-[#E63946]'
+                    : 'bg-[var(--surface-elevated)] border-[var(--border-ink)]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <strong className="text-[var(--ink-primary)] text-xs font-black flex items-center gap-1.5">
+                      <Ban className="w-4 h-4 text-[#E63946]" />
+                      <span>Chặn toàn bộ thông báo (Không làm phiền)</span>
+                    </strong>
+                    <p className="text-[11px] text-[var(--ink-muted)] mt-1">
+                      Tắt tất cả thông báo trong app và hệ thống ngoài app để tập trung nghe truyện
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={prefBlockAll}
+                    onChange={(e) => handleToggleBlockAll(e.target.checked)}
+                    className="w-4 h-4 rounded accent-[#E63946] cursor-pointer shrink-0"
+                  />
+                </div>
+                {prefBlockAll && (
+                  <div className="mt-2 text-[10px] text-[#E63946] font-bold bg-[var(--surface-card)] p-2 rounded-lg border border-[#E63946]/40">
+                    Đang bật chế độ chặn: Mọi thông báo sẽ tạm dừng để không làm phiền bạn.
+                  </div>
+                )}
+              </div>
+
+              <div
+                className={`p-3.5 rounded-xl border-2 ${
+                  prefExternalAudio && !prefBlockAll
+                    ? 'bg-[#EFF6FF] dark:bg-[#17233B] border-[#3A86FF]'
+                    : 'bg-[var(--surface-elevated)] border-[var(--border-ink)] opacity-85'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <strong className="text-[var(--ink-primary)] text-xs font-black flex items-center gap-1.5">
+                      <BellRing className="w-4 h-4 text-[#3A86FF]" />
+                      <span>Nhận thông báo audio mới ngoài app</span>
+                    </strong>
+                    <p className="text-[11px] text-[var(--ink-muted)] mt-1">
+                      Gửi thông báo hệ điều hành khi có tập truyện mới ngay cả khi đang đóng hoặc ẩn ứng dụng
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    disabled={prefBlockAll}
+                    checked={prefExternalAudio && !prefBlockAll}
+                    onChange={(e) => handleToggleExternalAudio(e.target.checked)}
+                    className="w-4 h-4 rounded accent-[#3A86FF] cursor-pointer shrink-0"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-[var(--border-ink)]/20 flex-wrap gap-2">
+                  <span className="text-[10px] text-[var(--ink-secondary)] font-semibold">
+                    Trạng thái quyền:{' '}
+                    {permissionStatus === 'granted' ? (
+                      <span className="text-[#2A9D8F] font-bold">Đã cấp quyền</span>
+                    ) : permissionStatus === 'denied' ? (
+                      <span className="text-[#E63946] font-bold">Đang bị chặn</span>
+                    ) : (
+                      <span className="text-[#D97706] font-bold">Chưa cấp quyền</span>
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleTestSystemNotification}
+                    disabled={prefBlockAll}
+                    className="btn-comic text-[10px] py-1 px-2.5"
+                  >
+                    <Send className="w-3 h-3" />
+                    <span>Thử gửi thông báo</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-3 bg-[var(--surface-accent-soft)] border border-[var(--border-ink)]/40 rounded-xl flex items-start gap-2">
+              <ShieldCheck className="w-4 h-4 text-[#D97706] shrink-0 mt-0.5" />
+              <div className="text-[11px] text-[var(--ink-secondary)] leading-snug">
+                <strong className="font-extrabold text-[var(--ink-primary)]">
+                  Chế độ lọc thông minh & Chống Spam:
+                </strong>{' '}
+                Hệ thống tự động giới hạn tần suất, không gửi lặp lại các thông báo cùng loại và chỉ tóm tắt các nội dung audio thực sự hữu ích.
               </div>
             </div>
           </div>
-        </div>
 
-        {/* 7. Khiếu Nại & Góp Ý */}
-        <div className="card-comic p-4 bg-white flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <i className="ri-customer-service-2-fill text-base text-[#F4A261]" />
-              <span className="font-extrabold text-xs uppercase text-black">Khiếu Nại & Hỗ Trợ Kỹ Thuật</span>
+          {/* 7. Support & Complaints */}
+          <div className="card-comic p-4 md:p-5 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Headphones className="w-4 h-4 text-[#F4A261]" strokeWidth={2.5} />
+                <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+                  Khiếu Nại & Hỗ Trợ Kỹ Thuật
+                </span>
+              </div>
+              <span className="badge-comic badge-comic-white text-[9px]">24/7 SUPPORT</span>
             </div>
-            <span className="badge-comic badge-comic-white text-[9px]">24/7 SUPPORT</span>
-          </div>
-          <p className="text-xs font-semibold text-gray-600">
-            Gặp vấn đề về bản quyền, nạp VIP, âm thanh hoặc trải nghiệm? Gửi ngay phản hồi cho ban quản trị.
-          </p>
-          <button
-            onClick={() => setIsComplaintOpen(true)}
-            className="btn-comic btn-comic-yellow text-xs py-2 px-3 flex items-center justify-center gap-1.5"
-          >
-            <i className="ri-feedback-line font-bold" /> Gửi Khiếu Nại / Yêu Cầu Hỗ Trợ
-          </button>
-        </div>
-
-        {/* 8. Bộ nhớ đệm & Đăng xuất */}
-        <div className="card-comic p-4 bg-white flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <span className="font-extrabold text-xs uppercase text-black">Hệ Thống & Bộ Nhớ Tạm</span>
-            <span className="badge-comic badge-comic-teal text-[9px]">ONLINE</span>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
+            <p className="text-xs font-medium text-[var(--ink-secondary)]">
+              Gặp vấn đề về bản quyền, nạp VIP, âm thanh hoặc trải nghiệm? Gửi ngay phản hồi cho ban quản trị.
+            </p>
             <button
-              onClick={handleForceSync}
-              disabled={isSyncing}
-              className="btn-comic text-xs py-2 px-3 bg-gray-100 flex items-center justify-center gap-1"
+              type="button"
+              onClick={() => setIsComplaintOpen(true)}
+              className="btn-comic btn-comic-yellow text-xs py-2 px-3"
             >
-              <i className={`ri-refresh-line ${isSyncing ? 'animate-spin' : ''}`} /> Đồng Bộ Ngay
-            </button>
-            <button
-              onClick={() => setIsClearCacheModalOpen(true)}
-              className="btn-comic text-xs py-2 px-3 bg-gray-100 flex items-center justify-center gap-1"
-            >
-              <i className="ri-delete-bin-line" /> Xóa Cache
+              <MessageSquarePlus className="w-4 h-4" strokeWidth={2.25} />
+              <span>Gửi Khiếu Nại / Yêu Cầu Hỗ Trợ</span>
             </button>
           </div>
 
-          {!user?.isGuest && (
-            <button
-              onClick={() => setIsLogoutModalOpen(true)}
-              className="btn-comic btn-comic-red text-xs py-2.5 px-3 flex items-center justify-center gap-1.5 mt-1"
-            >
-              <i className="ri-logout-box-line font-bold" /> Đăng Xuất Khỏi Thiết Bị
-            </button>
-          )}
+          {/* 8. Cache & Logout */}
+          <div className="card-comic p-4 md:p-5 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+                Hệ Thống & Bộ Nhớ Tạm
+              </span>
+              <span className="badge-comic badge-comic-teal text-[9px]">ONLINE</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={handleForceSync}
+                disabled={isSyncing}
+                className="btn-comic text-xs py-2 px-3"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>Đồng Bộ Ngay</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsClearCacheModalOpen(true)}
+                className="btn-comic text-xs py-2 px-3"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Xóa Cache</span>
+              </button>
+            </div>
+
+            {!user?.isGuest && (
+              <button
+                type="button"
+                onClick={() => setIsLogoutModalOpen(true)}
+                className="btn-comic btn-comic-red text-xs py-2.5 px-3 mt-1"
+              >
+                <LogOut className="w-4 h-4" strokeWidth={2.5} />
+                <span>Đăng Xuất Khỏi Thiết Bị</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* MODAL 1: Sửa Tên Tài Khoản */}
+      {/* MODAL 1: Edit Display Name */}
       <Modal
         isOpen={isEditNameOpen}
         onClose={() => setIsEditNameOpen(false)}
@@ -831,9 +929,10 @@ export const SettingsPage: React.FC = () => {
         confirmText="Lưu Tên"
         cancelText="Hủy"
         onConfirm={handleUpdateName}
+        size="sm"
       >
         <div className="flex flex-col gap-2.5 py-1">
-          <label className="text-xs font-bold text-gray-700">Tên hiển thị mới:</label>
+          <label className="text-xs font-bold text-[var(--ink-primary)]">Tên hiển thị mới:</label>
           <input
             type="text"
             value={nameInput}
@@ -842,13 +941,13 @@ export const SettingsPage: React.FC = () => {
             className="input-comic text-xs font-bold"
             maxLength={50}
           />
-          <p className="text-[11px] font-semibold text-gray-500">
+          <p className="text-[11px] font-medium text-[var(--ink-muted)]">
             Tên này sẽ hiển thị trên cộng đồng bình luận và trang cá nhân của bạn.
           </p>
         </div>
       </Modal>
 
-      {/* MODAL 2: Cài Đặt Hình Nền */}
+      {/* MODAL 2: Cover Wallpaper */}
       <Modal
         isOpen={isCoverOpen}
         onClose={() => setIsCoverOpen(false)}
@@ -856,10 +955,13 @@ export const SettingsPage: React.FC = () => {
         confirmText="Áp Dụng"
         cancelText="Hủy"
         onConfirm={() => handleUpdateCover()}
+        size="md"
       >
         <div className="flex flex-col gap-3 py-1">
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-gray-700">Link ảnh hình nền (URL):</label>
+            <label className="text-xs font-bold text-[var(--ink-primary)]">
+              Link ảnh hình nền (URL):
+            </label>
             <input
               type="url"
               value={coverInput}
@@ -869,31 +971,39 @@ export const SettingsPage: React.FC = () => {
             />
           </div>
 
-          {/* Preset Wallpapers */}
           <div className="flex flex-col gap-1.5">
-            <span className="text-[11px] font-bold text-gray-600">Hoặc chọn mẫu Manga/Anime có sẵn:</span>
+            <span className="text-[11px] font-bold text-[var(--ink-secondary)]">
+              Hoặc chọn mẫu Manga/Anime có sẵn:
+            </span>
             <div className="grid grid-cols-2 gap-2">
               {wallpaperPresets.map((preset) => (
                 <div
                   key={preset.name}
                   onClick={() => setCoverInput(preset.url)}
-                  className={`card-comic-sm p-1.5 flex flex-col gap-1 cursor-pointer hover:border-black ${
-                    coverInput === preset.url ? 'border-2 border-black bg-yellow-100' : 'bg-gray-50'
+                  className={`card-comic-sm p-1.5 flex flex-col gap-1 cursor-pointer ${
+                    coverInput === preset.url
+                      ? 'bg-[var(--surface-accent-soft)] !border-[#FFE600]'
+                      : 'bg-[var(--surface-elevated)]'
                   }`}
                 >
-                  <img src={preset.url} alt={preset.name} className="w-full h-14 object-cover rounded" />
-                  <span className="text-[10px] font-black truncate">{preset.name}</span>
+                  <img
+                    src={preset.url}
+                    alt={preset.name}
+                    className="w-full h-14 object-cover rounded"
+                  />
+                  <span className="text-[10px] font-black text-[var(--ink-primary)] truncate">
+                    {preset.name}
+                  </span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Preview */}
           {coverInput && (
             <div className="flex flex-col gap-1">
-              <span className="text-[11px] font-bold text-gray-600">Xem trước:</span>
+              <span className="text-[11px] font-bold text-[var(--ink-secondary)]">Xem trước:</span>
               <div
-                className="w-full h-20 rounded border-2 border-black bg-cover bg-center shadow-comic-sm"
+                className="w-full h-20 rounded-xl border-2 border-[var(--border-ink)] bg-cover bg-center shadow-comic-sm"
                 style={{ backgroundImage: `url(${coverInput})` }}
               />
             </div>
@@ -903,15 +1013,16 @@ export const SettingsPage: React.FC = () => {
             <button
               type="button"
               onClick={() => handleUpdateCover('')}
-              className="btn-comic text-[11px] py-1.5 bg-[#FFF1F2] text-[#E63946] flex items-center justify-center gap-1"
+              className="btn-comic text-[11px] py-1.5 bg-[#FFF1F2] dark:bg-[#2F161A] text-[#E63946]"
             >
-              <i className="ri-delete-bin-line" /> Xóa hình nền hiện tại
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Xóa hình nền hiện tại</span>
             </button>
           )}
         </div>
       </Modal>
 
-      {/* MODAL 3: Đổi Mật Khẩu */}
+      {/* MODAL 3: Change Password */}
       <Modal
         isOpen={isPasswordOpen}
         onClose={() => setIsPasswordOpen(false)}
@@ -919,10 +1030,13 @@ export const SettingsPage: React.FC = () => {
         confirmText="Xác Nhận"
         cancelText="Hủy"
         onConfirm={handleChangePassword}
+        size="sm"
       >
         <div className="flex flex-col gap-2.5 py-1">
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-gray-700">Mật khẩu hiện tại:</label>
+            <label className="text-xs font-bold text-[var(--ink-primary)]">
+              Mật khẩu hiện tại:
+            </label>
             <input
               type="password"
               value={oldPassword}
@@ -932,7 +1046,9 @@ export const SettingsPage: React.FC = () => {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-gray-700">Mật khẩu mới (tối thiểu 6 ký tự):</label>
+            <label className="text-xs font-bold text-[var(--ink-primary)]">
+              Mật khẩu mới (tối thiểu 6 ký tự):
+            </label>
             <input
               type="password"
               value={newPassword}
@@ -942,7 +1058,9 @@ export const SettingsPage: React.FC = () => {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-gray-700">Xác nhận mật khẩu mới:</label>
+            <label className="text-xs font-bold text-[var(--ink-primary)]">
+              Xác nhận mật khẩu mới:
+            </label>
             <input
               type="password"
               value={confirmPassword}
@@ -954,7 +1072,7 @@ export const SettingsPage: React.FC = () => {
         </div>
       </Modal>
 
-      {/* MODAL 4: Hủy Gói VIP */}
+      {/* MODAL 4: Cancel VIP */}
       <Modal
         isOpen={isCancelVipOpen}
         onClose={() => setIsCancelVipOpen(false)}
@@ -963,13 +1081,16 @@ export const SettingsPage: React.FC = () => {
         confirmText="Hủy Gói VIP"
         cancelText="Giữ Gói VIP"
         onConfirm={handleCancelVip}
+        size="sm"
       >
         <div className="flex flex-col gap-2.5 py-1">
-          <p className="text-xs font-bold text-red-600">
+          <p className="text-xs font-bold text-[#E63946]">
             Cảnh báo: Sau khi hủy, tài khoản của bạn sẽ mất các đặc quyền VIP (truyện VIP Only, không giới hạn YouTube).
           </p>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-gray-700">Lý do hủy (tùy chọn):</label>
+            <label className="text-xs font-bold text-[var(--ink-primary)]">
+              Lý do hủy (tùy chọn):
+            </label>
             <textarea
               value={cancelReason}
               onChange={(e) => setCancelReason(e.target.value)}
@@ -980,7 +1101,7 @@ export const SettingsPage: React.FC = () => {
         </div>
       </Modal>
 
-      {/* MODAL 5: Yêu Cầu Hoàn Tiền */}
+      {/* MODAL 5: Refund Request */}
       <Modal
         isOpen={isRefundOpen}
         onClose={() => setIsRefundOpen(false)}
@@ -991,7 +1112,9 @@ export const SettingsPage: React.FC = () => {
       >
         <div className="flex flex-col gap-2.5 py-1">
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-gray-700">Mã đơn hàng VIP (nếu có):</label>
+            <label className="text-xs font-bold text-[var(--ink-primary)]">
+              Mã đơn hàng VIP (nếu có):
+            </label>
             <input
               type="text"
               value={refundOrderCode}
@@ -1001,7 +1124,9 @@ export const SettingsPage: React.FC = () => {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-gray-700">Lý do hoàn tiền (*):</label>
+            <label className="text-xs font-bold text-[var(--ink-primary)]">
+              Lý do hoàn tiền (*):
+            </label>
             <textarea
               value={refundReason}
               onChange={(e) => setRefundReason(e.target.value)}
@@ -1011,7 +1136,9 @@ export const SettingsPage: React.FC = () => {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-gray-700">Thông tin ngân hàng nhận tiền:</label>
+            <label className="text-xs font-bold text-[var(--ink-primary)]">
+              Thông tin ngân hàng nhận tiền:
+            </label>
             <input
               type="text"
               value={refundBank}
@@ -1020,13 +1147,13 @@ export const SettingsPage: React.FC = () => {
               className="input-comic text-xs font-bold"
             />
           </div>
-          <p className="text-[11px] font-semibold text-gray-500">
+          <p className="text-[11px] font-medium text-[var(--ink-muted)]">
             Chính sách: Hoàn tiền 100% trong vòng 7 ngày đầu nếu gặp lỗi kỹ thuật không khắc phục được.
           </p>
         </div>
       </Modal>
 
-      {/* MODAL 6: Gửi Khiếu Nại & Hỗ Trợ */}
+      {/* MODAL 6: Complaint & Support */}
       <Modal
         isOpen={isComplaintOpen}
         onClose={() => setIsComplaintOpen(false)}
@@ -1037,11 +1164,13 @@ export const SettingsPage: React.FC = () => {
       >
         <div className="flex flex-col gap-2.5 py-1">
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-gray-700">Chủ đề khiếu nại:</label>
+            <label className="text-xs font-bold text-[var(--ink-primary)]">
+              Chủ đề khiếu nại:
+            </label>
             <select
               value={complaintCategory}
               onChange={(e) => setComplaintCategory(e.target.value)}
-              className="input-comic text-xs font-bold bg-white"
+              className="input-comic text-xs font-bold"
             >
               <option value="Bản quyền truyện">Bản quyền nội dung / DMCA</option>
               <option value="Thanh toán & VIP">Sự cố nạp VIP / Đơn hàng</option>
@@ -1052,7 +1181,9 @@ export const SettingsPage: React.FC = () => {
             </select>
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-gray-700">Tiêu đề ngắn gọn (*):</label>
+            <label className="text-xs font-bold text-[var(--ink-primary)]">
+              Tiêu đề ngắn gọn (*):
+            </label>
             <input
               type="text"
               value={complaintSubject}
@@ -1063,7 +1194,9 @@ export const SettingsPage: React.FC = () => {
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-bold text-gray-700">Nội dung chi tiết (*):</label>
+            <label className="text-xs font-bold text-[var(--ink-primary)]">
+              Nội dung chi tiết (*):
+            </label>
             <textarea
               value={complaintContent}
               onChange={(e) => setComplaintContent(e.target.value)}
@@ -1075,7 +1208,7 @@ export const SettingsPage: React.FC = () => {
         </div>
       </Modal>
 
-      {/* MODAL 7: Xóa Cache */}
+      {/* MODAL 7: Clear Cache */}
       <Modal
         isOpen={isClearCacheModalOpen}
         onClose={() => setIsClearCacheModalOpen(false)}
@@ -1083,13 +1216,14 @@ export const SettingsPage: React.FC = () => {
         isDanger
         confirmText="Xác Nhận"
         onConfirm={handleClearCache}
+        size="sm"
       >
-        <p className="text-xs font-semibold text-gray-800">
-          Thao tác này sẽ xóa cache db.json cục bộ. Phiên đăng nhập sẽ được giữ nguyên.
+        <p className="text-xs font-semibold text-[var(--ink-secondary)]">
+          Thao tác này sẽ xóa cache cục bộ và làm mới dữ liệu. Phiên đăng nhập sẽ được giữ nguyên.
         </p>
       </Modal>
 
-      {/* MODAL 8: Đăng Xuất */}
+      {/* MODAL 8: Logout */}
       <Modal
         isOpen={isLogoutModalOpen}
         onClose={() => setIsLogoutModalOpen(false)}
@@ -1098,8 +1232,9 @@ export const SettingsPage: React.FC = () => {
         confirmText="Đăng Xuất"
         cancelText="Ở Lại"
         onConfirm={handleLogout}
+        size="sm"
       >
-        <p className="text-xs font-semibold text-gray-800">
+        <p className="text-xs font-semibold text-[var(--ink-secondary)]">
           Bạn có chắc chắn muốn đăng xuất khỏi WaveLink? Tiến trình nghe của bạn đã được bảo toàn trên đám mây.
         </p>
       </Modal>

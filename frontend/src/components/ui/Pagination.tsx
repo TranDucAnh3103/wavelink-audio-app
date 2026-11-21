@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 export interface PaginationProps {
   currentPage: number;
@@ -28,11 +29,9 @@ export const Pagination: React.FC<PaginationProps> = ({
     return null;
   }
 
-  // Generate page numbers with clean windowing
   const getPageNumbers = (): (number | string)[] => {
     if (validTotalPages <= 1) return [1];
 
-    // Hiển thị tất cả các trang nếu <= 7 trang để không bao giờ bị che khuất trang 3, 4, 5
     if (validTotalPages <= 7) {
       const pages: number[] = [];
       for (let i = 1; i <= validTotalPages; i++) {
@@ -41,14 +40,10 @@ export const Pagination: React.FC<PaginationProps> = ({
       return pages;
     }
 
-    // Khi có nhiều hơn 7 trang:
-    // Trường hợp 1: Đang ở gần đầu (trang 1 -> 4) -> hiển thị 1, 2, 3, 4, 5, '...', validTotalPages
-    // Đảm bảo trang 3 luôn luôn xuất hiện và bấm trực tiếp được ngay!
     if (validCurrentPage <= 4) {
       return [1, 2, 3, 4, 5, '...', validTotalPages];
     }
 
-    // Trường hợp 2: Đang ở gần cuối
     if (validCurrentPage >= validTotalPages - 3) {
       return [
         1,
@@ -61,7 +56,6 @@ export const Pagination: React.FC<PaginationProps> = ({
       ];
     }
 
-    // Trường hợp 3: Đang ở đoạn giữa
     return [
       1,
       '...',
@@ -84,12 +78,14 @@ export const Pagination: React.FC<PaginationProps> = ({
           type="button"
           onClick={() => onPageChange(Math.max(1, validCurrentPage - 1))}
           disabled={validCurrentPage <= 1}
-          className={`btn-comic text-xs py-1 px-2.5 flex items-center gap-1 bg-white ${
-            validCurrentPage <= 1 ? 'opacity-40 cursor-not-allowed pointer-events-none' : 'hover:bg-gray-100 cursor-pointer'
+          className={`btn-comic text-xs py-1 px-2.5 flex items-center gap-1 ${
+            validCurrentPage <= 1
+              ? 'opacity-40 cursor-not-allowed pointer-events-none'
+              : 'cursor-pointer'
           }`}
           title="Trang trước"
         >
-          <i className="ri-arrow-left-s-line text-sm font-bold" />
+          <ChevronLeft className="w-4 h-4" strokeWidth={2.5} />
           <span className="hidden sm:inline font-bold">Trước</span>
         </button>
 
@@ -106,7 +102,7 @@ export const Pagination: React.FC<PaginationProps> = ({
                 key={`ellipsis-${idx}`}
                 type="button"
                 onClick={() => onPageChange(jumpTarget)}
-                className="w-8 h-8 rounded border-2 border-dashed border-gray-300 hover:border-black hover:bg-[#FFE600]/30 text-xs font-bold text-gray-500 hover:text-black flex items-center justify-center transition-all select-none cursor-pointer"
+                className="w-8 h-8 rounded-lg border-2 border-dashed border-[var(--border-ink)]/50 hover:border-[var(--border-ink)] hover:bg-[#FFE600]/20 text-xs font-bold text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] flex items-center justify-center transition-all select-none cursor-pointer"
                 title={isLeft ? 'Lùi 5 trang' : 'Tiến 5 trang'}
               >
                 ...
@@ -122,10 +118,10 @@ export const Pagination: React.FC<PaginationProps> = ({
               key={`page-${pageNum}`}
               type="button"
               onClick={() => onPageChange(pageNum)}
-              className={`w-8 h-8 rounded border-2 border-black flex items-center justify-center text-xs font-black transition-all cursor-pointer ${
+              className={`w-8 h-8 rounded-lg border-2 flex items-center justify-center text-xs font-black transition-all cursor-pointer ${
                 isActive
-                  ? 'bg-[#FFE600] text-black shadow-comic-sm scale-105'
-                  : 'bg-white text-gray-700 hover:bg-gray-100'
+                  ? 'bg-[#FFE600] text-[#111113] border-[#111113] shadow-comic-sm scale-105'
+                  : 'bg-[var(--surface-card)] text-[var(--ink-secondary)] border-[var(--border-ink)] hover:bg-[var(--surface-muted)] hover:text-[var(--ink-primary)]'
               }`}
             >
               {pageNum}
@@ -138,27 +134,29 @@ export const Pagination: React.FC<PaginationProps> = ({
           type="button"
           onClick={() => onPageChange(Math.min(validTotalPages, validCurrentPage + 1))}
           disabled={validCurrentPage >= validTotalPages}
-          className={`btn-comic text-xs py-1 px-2.5 flex items-center gap-1 bg-white ${
-            validCurrentPage >= validTotalPages ? 'opacity-40 cursor-not-allowed pointer-events-none' : 'hover:bg-gray-100 cursor-pointer'
+          className={`btn-comic text-xs py-1 px-2.5 flex items-center gap-1 ${
+            validCurrentPage >= validTotalPages
+              ? 'opacity-40 cursor-not-allowed pointer-events-none'
+              : 'cursor-pointer'
           }`}
           title="Trang sau"
         >
           <span className="hidden sm:inline font-bold">Sau</span>
-          <i className="ri-arrow-right-s-line text-sm font-bold" />
+          <ChevronRight className="w-4 h-4" strokeWidth={2.5} />
         </button>
       </div>
 
       {/* Info indicator */}
       {showItemCount && (
-        <div className="flex items-center gap-2 text-[11px] font-bold text-gray-500">
+        <div className="flex items-center gap-2 text-[11px] font-bold text-[var(--ink-muted)]">
           <span>
-            Trang <strong className="text-black">{validCurrentPage}</strong> / {validTotalPages}
+            Trang <strong className="text-[var(--ink-primary)]">{validCurrentPage}</strong> / {validTotalPages}
           </span>
           {typeof totalItems === 'number' && (
             <>
               <span>•</span>
               <span>
-                Tổng <strong className="text-black">{totalItems}</strong> mục ({pageSize || 12}/trang)
+                Tổng <strong className="text-[var(--ink-primary)]">{totalItems}</strong> mục ({pageSize || 12}/trang)
               </span>
             </>
           )}

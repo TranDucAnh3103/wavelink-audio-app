@@ -1,4 +1,5 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 
 interface Props {
@@ -27,15 +28,17 @@ export class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="card-comic p-8 m-4 text-center bg-white flex flex-col items-center gap-3">
-          <div className="w-14 h-14 rounded-full border-2 border-black bg-[#E63946] text-white flex items-center justify-center shadow-comic">
-            <i className="ri-error-warning-line text-3xl font-black" />
+        <div className="card-comic p-8 m-4 max-w-md mx-auto text-center bg-[var(--surface-card)] flex flex-col items-center gap-3">
+          <div className="w-14 h-14 rounded-2xl border-2 border-[#111113] bg-[#E63946] text-white flex items-center justify-center shadow-comic">
+            <AlertTriangle className="w-7 h-7" strokeWidth={2.5} />
           </div>
-          <h3 className="font-extrabold text-base uppercase text-black">Đã xảy ra lỗi giao diện</h3>
-          <p className="text-xs font-semibold text-gray-600 max-w-xs">
+          <h3 className="font-extrabold text-base uppercase text-[var(--ink-primary)]">
+            Đã xảy ra lỗi giao diện
+          </h3>
+          <p className="text-xs font-medium text-[var(--ink-secondary)] max-w-xs">
             Hệ thống gặp sự cố không mong muốn. Bạn có thể tải lại trang hoặc quay về trang chủ.
           </p>
-          <div className="flex gap-2">
+          <div className="flex gap-2 mt-1">
             <Button
               variant="default"
               size="sm"

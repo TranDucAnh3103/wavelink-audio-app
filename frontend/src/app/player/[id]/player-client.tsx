@@ -2,7 +2,12 @@
 
 import React from 'react';
 import { PlayerPage } from '@/pages/PlayerPage';
+import { AudioItem } from '@/types';
 
-export function PlayerClient() {
-  return <PlayerPage />;
+interface PlayerClientProps {
+  initialAudio?: AudioItem | null;
+}
+
+export function PlayerClient({ initialAudio }: PlayerClientProps) {
+  return <PlayerPage initialAudio={initialAudio} />;
 }

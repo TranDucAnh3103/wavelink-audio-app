@@ -1,11 +1,32 @@
 import React from 'react';
 import type { Metadata, Viewport } from 'next';
 import Script from 'next/script';
+import { Plus_Jakarta_Sans, Space_Grotesk, JetBrains_Mono } from 'next/font/google';
 import '@/styles/globals.css';
 import { AppProviders } from './providers';
 import { ClientShell } from './client-shell';
-
 import { getSiteUrl } from '@/lib/siteConfig';
+
+const plusJakartaSans = Plus_Jakarta_Sans({
+  subsets: ['latin', 'vietnamese'],
+  weight: ['400', '500', '600', '700', '800'],
+  variable: '--font-sans',
+  display: 'swap',
+});
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ['latin', 'vietnamese'],
+  weight: ['500', '600', '700'],
+  variable: '--font-comic',
+  display: 'swap',
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin', 'vietnamese'],
+  weight: ['500', '700'],
+  variable: '--font-mono',
+  display: 'swap',
+});
 
 const siteUrl = getSiteUrl();
 
@@ -79,11 +100,15 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  maximumScale: 5,
   viewportFit: 'cover',
-  themeColor: '#6366f1',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#F6F5F0' },
+    { media: '(prefers-color-scheme: dark)', color: '#141418' },
+  ],
 };
+
+const THEME_INIT_SCRIPT = `(function(){try{var t=localStorage.getItem('setting_theme');var d=t==='dark'||(t==='system'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);var r=document.documentElement;if(d){r.classList.add('dark','dark-comic');}else{r.classList.remove('dark','dark-comic');}var m=document.querySelector('meta[name="theme-color"]');if(m){m.setAttribute('content',d?'#141418':'#F6F5F0');}}catch(e){}})();`;
 
 export default function RootLayout({
   children,
@@ -91,21 +116,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="vi" className="h-full">
+    <html
+      lang="vi"
+      suppressHydrationWarning
+      className={`h-full ${plusJakartaSans.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}
+    >
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          rel="stylesheet"
-          href="https://cdn.jsdelivr.net/npm/remixicon@4.6.0/fonts/remixicon.min.css"
-          crossOrigin="anonymous"
-        />
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <Script
           src="https://accounts.google.com/gsi/client"
           strategy="afterInteractive"
         />
       </head>
-      <body className="flex flex-col min-h-screen">
+      <body className="flex flex-col min-h-screen antialiased">
         <AppProviders>
           <ClientShell>{children}</ClientShell>
         </AppProviders>

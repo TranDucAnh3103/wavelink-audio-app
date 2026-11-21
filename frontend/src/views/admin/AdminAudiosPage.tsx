@@ -2,13 +2,23 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import {
+  Search,
+  X,
+  Plus,
+  Crown,
+  Play,
+  Scissors,
+  Pencil,
+  Trash2,
+} from 'lucide-react';
 import { useAudios, useUpdateAudio, useDeleteAudio } from '@/hooks/useAudio';
 import { useCategories } from '@/hooks/useCategories';
+import { useDelayedFallback } from '@/hooks/useDelayedFallback';
 import { AudioItem } from '@/types';
 import { AdminTabs } from './AdminTabs';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from '@/components/ui/Toast';
-import { LoadingState } from '@/components/common/LoadingState';
 import { AdminTableSkeleton } from '@/components/common/Skeletons';
 import { Pagination } from '@/components/ui/Pagination';
 import { DEFAULT_PAGE_SIZE } from '@/config/pagination';
@@ -40,7 +50,6 @@ export const AdminAudiosPage: React.FC = () => {
       a.youtubeVideoId.toLowerCase().includes(search.toLowerCase())
   );
 
-  // Pagination (12 audios per page by default, configurable via env)
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = DEFAULT_PAGE_SIZE;
 
@@ -57,7 +66,12 @@ export const AdminAudiosPage: React.FC = () => {
     }
   }, [currentPage, totalPages]);
 
-  const paginatedAudios = filteredAudios.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize);
+  const paginatedAudios = filteredAudios.slice(
+    (safeCurrentPage - 1) * pageSize,
+    safeCurrentPage * pageSize
+  );
+
+  const showSkeletonFallback = useDelayedFallback(isLoading && audios.length === 0, 180);
 
   const openEditModal = (a: AudioItem) => {
     setEditingAudio(a);
@@ -118,17 +132,16 @@ export const AdminAudiosPage: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col w-full pb-36 fade-in-comic">
+    <div className="flex flex-col w-full pb-36 md:pb-28 fade-in-comic">
       <AdminTabs activeTab="audios" />
 
-      <div className="px-4 flex flex-col gap-3">
-        {/* Search & Counter Header */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="relative flex-1">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-600 font-bold pointer-events-none z-10" />
+      <div className="w-full max-w-7xl mx-auto px-4 md:px-6 flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-2.5 flex-wrap">
+          <div className="relative flex-1 min-w-[220px]">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ink-muted)] pointer-events-none z-10" />
             <input
               type="text"
-              placeholder="Tìm theo tên truyện, ID..."
+              placeholder="Tìm theo tên truyện, tác giả, video ID..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="input-comic pl-9 pr-8 text-xs"
@@ -137,110 +150,124 @@ export const AdminAudiosPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setSearch('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded flex items-center justify-center border border-black bg-white text-black z-10"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded flex items-center justify-center border border-[var(--border-ink)] bg-[var(--surface-elevated)] text-[var(--ink-primary)] z-10 cursor-pointer"
                 title="Xóa tìm kiếm"
               >
-                <i className="ri-close-line text-xs font-bold" />
+                <X className="w-3 h-3" />
               </button>
             )}
           </div>
           <button
+            type="button"
             onClick={() => navigate('/upload')}
-            className="btn-comic btn-comic-yellow text-xs py-2 px-3 shrink-0"
+            className="btn-comic btn-comic-yellow text-xs py-2 px-3.5 shrink-0"
           >
-            <i className="ri-add-line font-black" /> Thêm Audio
+            <Plus className="w-4 h-4" strokeWidth={2.5} />
+            <span>Thêm Audio</span>
           </button>
         </div>
 
-        {/* List Container */}
-        {isLoading ? (
+        {showSkeletonFallback ? (
           <AdminTableSkeleton rows={4} />
         ) : filteredAudios.length === 0 ? (
-          <div className="card-comic p-6 text-center text-xs font-bold text-gray-600 bg-white">
+          <div className="card-comic p-6 text-center text-xs font-bold text-[var(--ink-secondary)]">
             Không tìm thấy audio nào phù hợp.
           </div>
         ) : (
           <>
-            <div className="flex flex-col gap-3">
-            {paginatedAudios.map((a) => (
-              <div key={a.id} className="card-comic p-3 flex flex-col gap-2 bg-white">
-                <div className="flex items-start gap-3">
-                  <img
-                    src={a.thumbnailUrl}
-                    alt={a.title}
-                    className="w-16 h-20 rounded-lg border-2 border-black object-cover shrink-0 bg-black shadow-comic-sm"
-                  />
-                  <div className="flex flex-col min-w-0 flex-1">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1">
-                        <span className="badge-comic badge-comic-blue text-[9px] py-0 px-1 font-bold">
-                          {a.categoryName || 'Chung'}
-                        </span>
-                        {Boolean(a.isVIPOnly || a.isVipOnly) && (
-                          <span className="badge-comic badge-comic-purple text-[8px] py-0 px-1 font-black">
-                            <i className="ri-vip-crown-fill" /> VIP
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3.5">
+              {paginatedAudios.map((a) => (
+                <div key={a.id} className="card-comic p-3.5 flex flex-col justify-between gap-2.5">
+                  <div className="flex items-start gap-3">
+                    <img
+                      src={a.thumbnailUrl || '/wavelink-icon.png'}
+                      alt={a.title}
+                      className="w-16 h-20 rounded-xl border-2 border-[var(--border-ink)] object-cover shrink-0 bg-[#111113] shadow-comic-sm"
+                    />
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <span className="badge-comic badge-comic-blue text-[9px] py-0 px-1.5 font-bold">
+                            {a.categoryName || 'Chung'}
                           </span>
-                        )}
+                          {Boolean(a.isVIPOnly || a.isVipOnly) && (
+                            <span className="badge-comic badge-comic-purple text-[8px] py-0 px-1 font-black">
+                              <Crown className="w-2.5 h-2.5" /> VIP
+                            </span>
+                          )}
+                        </div>
+                        <span
+                          className={`badge-comic ${
+                            a.status === 'ACTIVE' || !a.status
+                              ? 'badge-comic-teal'
+                              : 'badge-comic-white'
+                          } text-[8px] py-0 px-1`}
+                        >
+                          {a.status === 'ACTIVE' || !a.status ? 'ACTIVE' : 'HIDDEN'}
+                        </span>
                       </div>
-                      <span
-                        className={`badge-comic ${
-                          a.status === 'ACTIVE' || !a.status ? 'badge-comic-teal' : 'badge-comic-white'
-                        } text-[8px] py-0 px-1`}
-                      >
-                        {a.status === 'ACTIVE' || !a.status ? 'ACTIVE' : 'HIDDEN'}
-                      </span>
-                    </div>
-                    <h3 className="font-extrabold text-xs text-black truncate mt-1">{a.title}</h3>
-                    <p className="text-[11px] font-semibold text-gray-500 truncate mt-0.5">
-                      Tác giả: {a.author || 'Chưa rõ'}
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-1 text-[10px] font-mono font-bold text-gray-700">
-                      <span className="badge-comic badge-comic-yellow text-[8px] py-0 px-1">
-                        {a.totalEpisodes || a.episodes?.length || 1} Tập
-                      </span>
-                      <span className="badge-comic badge-comic-white text-[8px] py-0 px-1">
-                        {a.formattedDuration || '24h 00m'}
-                      </span>
-                      <span className="text-gray-400">ID: {a.youtubeVideoId}</span>
+                      <h3 className="font-extrabold text-xs sm:text-sm text-[var(--ink-primary)] truncate mt-1">
+                        {a.title}
+                      </h3>
+                      <p className="text-[11px] font-semibold text-[var(--ink-muted)] truncate mt-0.5">
+                        Tác giả: {a.author || 'Chưa rõ'}
+                      </p>
+                      <div className="flex items-center gap-1.5 mt-1.5 text-[10px] font-mono font-bold flex-wrap">
+                        <span className="badge-comic badge-comic-yellow text-[8px] py-0 px-1">
+                          {a.totalEpisodes || a.episodes?.length || 1} Tập
+                        </span>
+                        <span className="badge-comic badge-comic-white text-[8px] py-0 px-1">
+                          {a.formattedDuration || '24h 00m'}
+                        </span>
+                        <span className="text-[var(--ink-muted)] truncate">
+                          ID: {a.youtubeVideoId}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-black mt-1">
-                  <span className="text-xs font-bold text-gray-700">
-                    Tiến độ: <strong className="text-[#3A86FF]">{a.progressPercent || 0}%</strong>
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => navigate(`/player/${a.id}`)}
-                      className="btn-comic text-[11px] py-1 px-2 bg-white"
-                    >
-                      <i className="ri-play-fill text-sm" /> Nghe
-                    </button>
-                    <button
-                      onClick={() => navigate(`/admin/episodes?audioId=${a.id}`)}
-                      className="btn-comic text-[11px] py-1 px-2 bg-white"
-                    >
-                      <i className="ri-scissors-cut-line text-sm" /> Tập
-                    </button>
-                    <button
-                      onClick={() => openEditModal(a)}
-                      className="btn-comic text-[11px] py-1 px-2 bg-gray-100"
-                    >
-                      <i className="ri-edit-line text-sm" /> Sửa
-                    </button>
-                    <button
-                      onClick={() => setDeletingAudioId(a.id)}
-                      className="btn-comic btn-comic-red text-[11px] py-1 px-2"
-                      title="Xóa"
-                    >
-                      <i className="ri-delete-bin-line text-sm" />
-                    </button>
+                  <div className="flex items-center justify-between pt-2 border-t border-[var(--border-ink)]/30 mt-1 gap-2">
+                    <span className="text-xs font-bold text-[var(--ink-secondary)]">
+                      Tiến độ: <strong className="text-[#3A86FF]">{a.progressPercent || 0}%</strong>
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/player/${a.id}`)}
+                        className="btn-comic text-[11px] py-1 px-2"
+                      >
+                        <Play className="w-3 h-3 fill-current" />
+                        <span>Nghe</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/admin/episodes?audioId=${a.id}`)}
+                        className="btn-comic text-[11px] py-1 px-2"
+                      >
+                        <Scissors className="w-3 h-3" />
+                        <span>Tập</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(a)}
+                        className="btn-comic text-[11px] py-1 px-2"
+                      >
+                        <Pencil className="w-3 h-3" />
+                        <span>Sửa</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeletingAudioId(a.id)}
+                        className="btn-comic btn-comic-red text-[11px] py-1 px-2"
+                        title="Xóa"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
 
             <Pagination
               currentPage={safeCurrentPage}
@@ -265,8 +292,10 @@ export const AdminAudiosPage: React.FC = () => {
         onConfirm={handleSaveEdit}
       >
         <div className="flex flex-col gap-2.5">
-          <div className="flex flex-col gap-0.5">
-            <label className="font-extrabold text-[11px] uppercase text-black">Tiêu đề truyện</label>
+          <div className="flex flex-col gap-1">
+            <label className="font-extrabold text-[11px] uppercase text-[var(--ink-primary)]">
+              Tiêu đề truyện
+            </label>
             <input
               type="text"
               value={editTitle}
@@ -274,8 +303,10 @@ export const AdminAudiosPage: React.FC = () => {
               className="input-comic text-xs py-1.5"
             />
           </div>
-          <div className="flex flex-col gap-0.5">
-            <label className="font-extrabold text-[11px] uppercase text-black">Tác giả</label>
+          <div className="flex flex-col gap-1">
+            <label className="font-extrabold text-[11px] uppercase text-[var(--ink-primary)]">
+              Tác giả
+            </label>
             <input
               type="text"
               value={editAuthor}
@@ -283,12 +314,14 @@ export const AdminAudiosPage: React.FC = () => {
               className="input-comic text-xs py-1.5"
             />
           </div>
-          <div className="flex flex-col gap-0.5">
-            <label className="font-extrabold text-[11px] uppercase text-black">Thể loại</label>
+          <div className="flex flex-col gap-1">
+            <label className="font-extrabold text-[11px] uppercase text-[var(--ink-primary)]">
+              Thể loại
+            </label>
             <select
               value={editCategoryId}
               onChange={(e) => setEditCategoryId(Number(e.target.value))}
-              className="input-comic text-xs py-1.5 bg-white cursor-pointer font-bold"
+              className="input-comic text-xs py-1.5 cursor-pointer font-bold"
             >
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -297,9 +330,10 @@ export const AdminAudiosPage: React.FC = () => {
               ))}
             </select>
           </div>
-          <div className="flex flex-col gap-0.5">
-            <label className="font-extrabold text-[11px] uppercase text-black">
-              Thẻ Tags <span className="text-gray-500 font-normal">(Phân cách bằng dấu phẩy)</span>
+          <div className="flex flex-col gap-1">
+            <label className="font-extrabold text-[11px] uppercase text-[var(--ink-primary)]">
+              Thẻ Tags{' '}
+              <span className="text-[var(--ink-muted)] font-normal">(Phân cách bằng dấu phẩy)</span>
             </label>
             <input
               type="text"
@@ -309,8 +343,10 @@ export const AdminAudiosPage: React.FC = () => {
               className="input-comic text-xs py-1.5 font-bold"
             />
           </div>
-          <div className="flex flex-col gap-0.5">
-            <label className="font-extrabold text-[11px] uppercase text-black">Mô tả tóm tắt</label>
+          <div className="flex flex-col gap-1">
+            <label className="font-extrabold text-[11px] uppercase text-[var(--ink-primary)]">
+              Mô tả tóm tắt
+            </label>
             <textarea
               value={editDesc}
               onChange={(e) => setEditDesc(e.target.value)}
@@ -318,26 +354,30 @@ export const AdminAudiosPage: React.FC = () => {
             />
           </div>
 
-          {/* VIP Toggle & Free Episodes Limit */}
-          <div className="flex flex-col gap-2 p-2.5 rounded-lg border-2 border-black bg-[#FEF9C3] mt-1 shadow-comic-sm">
+          <div className="flex flex-col gap-2 p-3 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--surface-accent-soft)] mt-1">
             <div className="flex items-center gap-2">
               <input
                 id="edit-audio-vip-box"
                 type="checkbox"
                 checked={editVip}
                 onChange={(e) => setEditVip(e.target.checked)}
-                className="w-4 h-4 border-2 border-black rounded accent-[#8338EC] cursor-pointer"
+                className="w-4 h-4 rounded accent-[#8338EC] cursor-pointer"
               />
-              <label htmlFor="edit-audio-vip-box" className="text-xs font-black text-black cursor-pointer flex items-center gap-1">
-                <i className="ri-vip-crown-fill text-[#8338EC]" /> Độc quyền cho thành viên VIP
+              <label
+                htmlFor="edit-audio-vip-box"
+                className="text-xs font-black text-[var(--ink-primary)] cursor-pointer flex items-center gap-1"
+              >
+                <Crown className="w-3.5 h-3.5 text-[#8338EC]" /> Độc quyền cho thành viên VIP
               </label>
             </div>
 
             {editVip && (
-              <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-black/20">
+              <div className="flex items-center justify-between gap-2 pt-2 border-t border-[var(--border-ink)]/20">
                 <div className="flex flex-col">
-                  <span className="text-[11px] font-extrabold text-black">Số tập cho xem/nghe thử FREE:</span>
-                  <span className="text-[10px] font-medium text-gray-600">
+                  <span className="text-[11px] font-extrabold text-[var(--ink-primary)]">
+                    Số tập cho xem/nghe thử FREE:
+                  </span>
+                  <span className="text-[10px] font-medium text-[var(--ink-secondary)]">
                     Mặc định 1 tập. Nhập 0 để khóa toàn bộ, hoặc 2+ để mở thêm tập nghe thử.
                   </span>
                 </div>
@@ -346,8 +386,10 @@ export const AdminAudiosPage: React.FC = () => {
                   min="0"
                   max="1000"
                   value={editFreeEpisodesCount}
-                  onChange={(e) => setEditFreeEpisodesCount(Math.max(0, parseInt(e.target.value) || 0))}
-                  className="input-comic text-xs py-1 px-2 w-20 text-center font-black bg-white"
+                  onChange={(e) =>
+                    setEditFreeEpisodesCount(Math.max(0, parseInt(e.target.value, 10) || 0))
+                  }
+                  className="input-comic text-xs py-1 px-2 w-20 text-center font-black"
                 />
               </div>
             )}
@@ -363,15 +405,15 @@ export const AdminAudiosPage: React.FC = () => {
         isDanger
         confirmText="Xóa Vĩnh Viễn"
         onConfirm={handleDeleteAudio}
+        size="sm"
       >
-        <div className="flex flex-col gap-1.5 text-xs font-semibold text-gray-800">
+        <div className="flex flex-col gap-1.5 text-xs font-semibold text-[var(--ink-secondary)]">
           <p>Bạn có chắc chắn muốn xóa bộ audio này khỏi cơ sở dữ liệu?</p>
-          <p className="text-red-600 font-bold">
-            ⚠️ Toàn bộ các tập logic và tiến trình nghe liên quan cũng sẽ bị xóa!
+          <p className="text-[#E63946] font-bold">
+            Toàn bộ các tập logic và tiến trình nghe liên quan cũng sẽ bị xóa!
           </p>
         </div>
       </Modal>
     </div>
   );
 };
-

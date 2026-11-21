@@ -2,10 +2,42 @@
 
 import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import {
+  ChevronLeft,
+  Headphones,
+  Share2,
+  Heart,
+  Disc3,
+  Crown,
+  Info,
+  ChevronUp,
+  ChevronDown,
+  Eye,
+  Youtube,
+  History,
+  RefreshCw,
+  Play,
+  Pause,
+  Lock,
+  Unlock,
+  Gauge,
+  SkipBack,
+  SkipForward,
+  RotateCcw,
+  RotateCw,
+  Moon,
+  Search,
+  XCircle,
+  Check,
+  Save,
+  ListMusic,
+  ArrowLeft,
+  Tag,
+} from 'lucide-react';
 import { useAudio, useToggleFavorite } from '@/hooks/useAudio';
+import { useDelayedFallback } from '@/hooks/useDelayedFallback';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useAuthStore } from '@/stores/authStore';
-import { LoadingState } from '@/components/common/LoadingState';
 import { PlayerSkeleton } from '@/components/common/Skeletons';
 import { Modal } from '@/components/ui/Modal';
 import { Slider } from '@/components/ui/Slider';
@@ -18,15 +50,19 @@ import { api } from '@/services/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { ShareStoryModal } from '@/components/community/ShareStoryModal';
 import { resumeAudioContextOnGesture } from '@/lib/backgroundAudioKeeper';
+import { AudioItem } from '@/types';
 
+export interface PlayerPageProps {
+  initialAudio?: AudioItem | null;
+}
 
-export const PlayerPage: React.FC = () => {
+export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
 
-  const { data: audio, isLoading } = useAudio(id);
+  const { data: audio, isLoading } = useAudio(id, initialAudio);
   const toggleFavoriteMutation = useToggleFavorite();
 
   const {
@@ -65,7 +101,7 @@ export const PlayerPage: React.FC = () => {
   });
 
   const [activeTab, setActiveTab] = useState<'player' | 'episodes'>('player');
-  const [isDescriptionOpen, setIsDescriptionOpen] = useState(false);
+  const [isDescriptionOpen, setIsDescriptionOpen] = useState(true);
   const [episodeSearch, setEpisodeSearch] = useState('');
 
   const touchStartXRef = React.useRef<number | null>(null);
@@ -84,18 +120,18 @@ export const PlayerPage: React.FC = () => {
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (touchStartXRef.current === null || touchStartYRef.current === null) return;
-    const endX = touchCurrentXRef.current !== null ? touchCurrentXRef.current : (e.changedTouches[0]?.clientX ?? touchStartXRef.current);
+    const endX =
+      touchCurrentXRef.current !== null
+        ? touchCurrentXRef.current
+        : (e.changedTouches[0]?.clientX ?? touchStartXRef.current);
     const endY = e.changedTouches[0]?.clientY ?? touchStartYRef.current;
     const deltaX = endX - touchStartXRef.current;
     const deltaY = endY - touchStartYRef.current;
 
-    // Only trigger if horizontal swipe is significantly larger than vertical movement
     if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50) {
       if (deltaX > 50) {
-        // Lướt sang phải (swipe right, deltaX > 50): switch to View 2 (Danh sách tập)
         setActiveTab('episodes');
       } else if (deltaX < -50) {
-        // Lướt sang trái (swipe left, deltaX < -50): switch to View 1 (Chi tiết player)
         setActiveTab('player');
       }
     }
@@ -118,14 +154,15 @@ export const PlayerPage: React.FC = () => {
     }
   };
 
-  const isTargetAudioPlaying = Boolean(audio && currentAudio && String(currentAudio.id) === String(audio.id));
+  const isTargetAudioPlaying = Boolean(
+    audio && currentAudio && String(currentAudio.id) === String(audio.id)
+  );
 
   const currentTimeRef = React.useRef(currentTime);
   currentTimeRef.current = currentTime;
   const currentEpisodeRef = React.useRef(currentEpisode);
   currentEpisodeRef.current = currentEpisode;
 
-  // Memoize episodes and pagination BEFORE any conditional returns (prevents React Hook order error)
   const episodesList = React.useMemo(() => audio?.episodes || [], [audio?.episodes]);
   const filteredEpisodes = React.useMemo(() => {
     if (!episodeSearch.trim()) return episodesList;
@@ -144,12 +181,31 @@ export const PlayerPage: React.FC = () => {
     currentEpisodePage * DEFAULT_PAGE_SIZE
   );
 
-  // Đồng bộ trạng thái yêu thích từ query khi dữ liệu audio cập nhật
+  const normalizedTags = React.useMemo(() => {
+    const rawTags = Array.isArray(audio?.tags) ? audio.tags : [];
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const item of rawTags) {
+      const text =
+        typeof item === 'string'
+          ? item
+          : item && typeof item === 'object' && 'name' in item
+            ? String((item as { name?: unknown }).name ?? '')
+            : '';
+      const cleaned = text.replace(/^#/, '').trim();
+      if (!cleaned) continue;
+      const key = cleaned.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push(cleaned);
+    }
+    return list;
+  }, [audio?.tags]);
+
   React.useEffect(() => {
     setOptimisticFavorite(null);
   }, [audio?.id, audio?.isFavorite]);
 
-  // 1. Tự động đồng bộ mốc nghe gần nhất và đếm ngược SYNC 60S (từ 60 về 0) khi đang phát audio này
   React.useEffect(() => {
     if (!isTargetAudioPlaying || !isPlaying) {
       setSyncCountdown(60);
@@ -179,8 +235,11 @@ export const PlayerPage: React.FC = () => {
     return () => clearInterval(timer);
   }, [isTargetAudioPlaying, isPlaying, audio?.id, queryClient]);
 
+  const showSkeletonFallback = useDelayedFallback(isLoading && !audio, 180);
+
   const handleManualSyncRecent = () => {
-    const cTime = currentTimeRef.current > 0 ? currentTimeRef.current : (audio?.lastPositionSeconds || 0);
+    const cTime =
+      currentTimeRef.current > 0 ? currentTimeRef.current : (audio?.lastPositionSeconds || 0);
     const epNum = currentEpisodeRef.current?.episodeNumber || audio?.currentEpisodeNumber || 1;
     setSyncedRecentInfo({
       position: formatTime(cTime),
@@ -193,25 +252,37 @@ export const PlayerPage: React.FC = () => {
     toast.success('Đã đồng bộ mốc nghe gần nhất!');
   };
 
-  if (isLoading) {
+  if (showSkeletonFallback) {
     return <PlayerSkeleton />;
+  }
+
+  if (isLoading && !audio) {
+    return <div className="w-full max-w-6xl mx-auto px-4 md:px-6 min-h-[60vh]" />;
   }
 
   if (!audio) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 text-center gap-3 fade-in-comic">
-        <div className="w-16 h-16 rounded-full border-2 border-black bg-[#FFE600] flex items-center justify-center shadow-comic">
-          <i className="ri-disc-line text-3xl text-black" />
+      <div className="w-full max-w-lg mx-auto flex flex-col items-center justify-center p-10 text-center gap-4 fade-in-comic">
+        <div className="w-16 h-16 rounded-2xl border-2 border-[#111113] bg-[#FFE600] text-[#111113] flex items-center justify-center shadow-comic">
+          <Disc3 className="w-8 h-8" strokeWidth={2.25} />
         </div>
-        <h3 className="font-extrabold text-lg text-black uppercase">Không tìm thấy bản ghi audio</h3>
-        <button onClick={() => navigate('/library')} className="btn-comic btn-comic-primary text-xs">
-          <i className="ri-arrow-left-line" /> Về Thư Viện
+        <h3 className="font-extrabold text-lg text-[var(--ink-primary)] uppercase">
+          Không tìm thấy bản ghi audio
+        </h3>
+        <button
+          type="button"
+          onClick={() => navigate('/library')}
+          className="btn-comic btn-comic-primary text-xs"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Về Thư Viện</span>
         </button>
       </div>
     );
   }
 
-  const isVipOrAdmin = user?.role === 'VIP' || user?.role === 'ADMIN' || user?.membership === 'VIP';
+  const isVipOrAdmin =
+    user?.role === 'VIP' || user?.role === 'ADMIN' || user?.membership === 'VIP';
   const isVipAudio = Boolean(audio.isVIPOnly || audio.isVipOnly);
   const isGuest = !user || user.isGuest || user.role === 'GUEST';
 
@@ -246,7 +317,10 @@ export const PlayerPage: React.FC = () => {
       toast.info(customMsg || 'Tập VIP chỉ dành cho thành viên. Vui lòng đăng nhập để nghe!');
       navigate('/login');
     } else {
-      toast.error(customMsg || 'Tập 2 trở đi chỉ dành riêng cho thành viên VIP. Vui lòng nâng cấp gói để tiếp tục nghe!');
+      toast.error(
+        customMsg ||
+          'Tập 2 trở đi chỉ dành riêng cho thành viên VIP. Vui lòng nâng cấp gói để tiếp tục nghe!'
+      );
       navigate('/membership');
     }
   };
@@ -268,13 +342,13 @@ export const PlayerPage: React.FC = () => {
           duration: 14400,
         };
 
-  const episodeDuration = activeEp.duration || activeEp.endSeconds - activeEp.startSeconds || 14400;
+  const episodeDuration =
+    activeEp.duration || activeEp.endSeconds - activeEp.startSeconds || 14400;
   const currentPosition = isTargetAudioPlaying ? currentTime : audio.lastPositionSeconds || 0;
   const rawPercent = Math.min(100, Math.round((currentPosition / episodeDuration) * 100));
   const currentPercent = scrubPercent !== null ? scrubPercent : rawPercent;
 
   const handleMasterPlay = () => {
-    // iOS Safari: AudioContext phải được resume trong user gesture event
     resumeAudioContextOnGesture();
     if (isEpLocked(activeEp)) {
       handleLockedEpisodeAction();
@@ -320,78 +394,96 @@ export const PlayerPage: React.FC = () => {
     }
   };
 
-
-
   return (
     <div
-      className="flex flex-col w-full pb-36 px-4 gap-4 fade-in-comic select-none sm:select-auto"
+      className="w-full max-w-6xl mx-auto px-4 md:px-6 flex flex-col pb-36 md:pb-28 gap-4 fade-in-comic select-none sm:select-auto"
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
       {/* 1. Top Sub-Bar Navigation */}
       <div className="flex items-center justify-between pt-2">
-        <button onClick={() => navigate(-1)} className="btn-comic text-xs py-1.5 px-3 bg-white" aria-label="Quay lại">
-          <i className="ri-arrow-left-s-line text-base font-bold" /> Quay lại
+        <button
+          type="button"
+          onClick={() => navigate(-1)}
+          className="btn-comic text-xs py-1.5 px-3"
+          aria-label="Quay lại"
+        >
+          <ChevronLeft className="w-4 h-4" strokeWidth={2.5} />
+          <span>Quay lại</span>
         </button>
 
         <div className="badge-comic badge-comic-yellow text-xs font-black">
-          <i className="ri-headphone-fill" /> WAVELINK PLAYER
+          <Headphones className="w-3.5 h-3.5" strokeWidth={2.5} />
+          <span>WAVELINK PLAYER</span>
         </div>
 
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={handleShare}
-            className="w-8 h-8 rounded-lg border-2 border-black bg-white flex items-center justify-center shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
+            className="w-9 h-9 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-card)] flex items-center justify-center text-[var(--ink-primary)] shadow-comic-sm hover:bg-[var(--surface-muted)] cursor-pointer"
             title="Chia sẻ"
           >
-            <i className="ri-share-forward-line font-bold" />
+            <Share2 className="w-4 h-4" strokeWidth={2.25} />
           </button>
           <button
+            type="button"
             onClick={handleToggleFavorite}
-            className="w-8 h-8 rounded-lg border-2 border-black bg-white flex items-center justify-center shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5 transition-transform"
-            title={isFavorite ? 'Bỏ yêu thích' : 'Yêu thích'}
+            className="w-9 h-9 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-card)] flex items-center justify-center shadow-comic-sm hover:bg-[var(--surface-muted)] cursor-pointer transition-transform"
+            title="Yêu thích"
+            aria-pressed={isFavorite}
           >
-            <i
-              className={`${
-                isFavorite ? 'ri-heart-3-fill text-[#E63946] scale-110' : 'ri-heart-3-line text-black'
-              } text-lg transition-transform`}
+            <Heart
+              className={`w-4 h-4 transition-transform ${
+                isFavorite
+                  ? 'text-[#E63946] fill-[#E63946] scale-110'
+                  : 'text-[var(--ink-primary)]'
+              }`}
+              strokeWidth={2.5}
             />
           </button>
         </div>
       </div>
 
-      {/* Tab Navigation Bar */}
-      <div className="flex items-center gap-2 w-full pt-1">
+      {/* Mobile Tab Navigation Bar (hidden on lg+ where both panels show side-by-side) */}
+      <div className="flex lg:hidden items-center gap-2 w-full">
         <button
           type="button"
           onClick={() => setActiveTab('player')}
-          className={`flex-1 py-2 px-3 rounded-xl border-2 border-black font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all shadow-comic-sm ${
+          className={`flex-1 py-2 px-3 rounded-xl border-2 font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
             activeTab === 'player'
-              ? 'bg-[#FFE600] text-black shadow-comic'
-              : 'bg-white text-gray-700 hover:bg-gray-100'
+              ? 'bg-[#FFE600] text-[#111113] border-[#111113] shadow-comic-sm'
+              : 'bg-[var(--surface-card)] border-[var(--border-ink)] text-[var(--ink-secondary)] hover:bg-[var(--surface-muted)]'
           }`}
         >
-          <span>🎧 Trình Phát</span>
+          <Headphones className="w-4 h-4" strokeWidth={2.25} />
+          <span>Trình Phát</span>
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('episodes')}
-          className={`flex-1 py-2 px-3 rounded-xl border-2 border-black font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all shadow-comic-sm ${
+          className={`flex-1 py-2 px-3 rounded-xl border-2 font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
             activeTab === 'episodes'
-              ? 'bg-[#FFE600] text-black shadow-comic'
-              : 'bg-white text-gray-700 hover:bg-gray-100'
+              ? 'bg-[#FFE600] text-[#111113] border-[#111113] shadow-comic-sm'
+              : 'bg-[var(--surface-card)] border-[var(--border-ink)] text-[var(--ink-secondary)] hover:bg-[var(--surface-muted)]'
           }`}
         >
-          <span>📑 Danh Sách Tập ({audio.episodes?.length || 0})</span>
+          <ListMusic className="w-4 h-4" strokeWidth={2.25} />
+          <span>Danh Sách Tập ({audio.episodes?.length || 0})</span>
         </button>
       </div>
 
-      {/* View 1: Chi tiết player */}
-      {activeTab === 'player' && (
-        <div className="flex flex-col gap-4 fade-in-comic">
-          {/* Manga Vinyl Cover Presentation Card */}
-          <div className="card-comic p-4 flex flex-col gap-3 relative bg-white">
+      {/* Adaptive 2-Column Workspace on Desktop */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* Left Column: Player Console */}
+        <div
+          className={`lg:col-span-7 flex-col gap-4 fade-in-comic ${
+            activeTab === 'player' ? 'flex' : 'hidden lg:flex'
+          }`}
+        >
+          {/* Vinyl Cover Presentation Card */}
+          <div className="card-comic p-4 md:p-5 flex flex-col gap-3.5 relative">
             <div className="sticker-comic">
               <span
                 className={`badge-comic ${
@@ -402,38 +494,43 @@ export const PlayerPage: React.FC = () => {
               </span>
             </div>
 
-            {/* Cover Art + Vinyl Disc Layout */}
-            <div className="relative w-full aspect-[16/10] max-h-56 rounded-xl border-2 border-black overflow-hidden bg-black flex items-center justify-center shadow-comic-sm">
-              <img className="w-full h-full object-cover" src={audio.thumbnailUrl} alt={audio.title} />
+            <div className="relative w-full aspect-[16/10] max-h-64 rounded-xl border-2 border-[var(--border-ink)] overflow-hidden bg-[#111113] flex items-center justify-center shadow-comic-sm">
+              <img
+                className="w-full h-full object-cover"
+                src={audio.thumbnailUrl || '/wavelink-icon.png'}
+                alt={audio.title}
+              />
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
 
-              {/* Spinning Manga Vinyl Disc Overlay when playing */}
+              {/* Spinning Vinyl Disc */}
               <div
-                className={`absolute -right-8 -bottom-8 w-36 h-36 rounded-full border-4 border-black bg-[#111111] shadow-comic flex items-center justify-center ${
+                className={`absolute -right-8 -bottom-8 w-36 h-36 rounded-full border-4 border-[#111113] bg-[#141418] shadow-comic flex items-center justify-center ${
                   isTargetAudioPlaying && isPlaying ? 'spin-disc' : 'spin-disc spin-disc-paused'
-                } pointer-events-none opacity-85`}
+                } pointer-events-none opacity-90`}
               >
-                <div className="w-24 h-24 rounded-full border border-gray-700 bg-[#1A1A1A] flex items-center justify-center">
-                  <div className="w-12 h-12 rounded-full border-2 border-black bg-[#FFE600] flex items-center justify-center">
-                    <i className="ri-disc-fill text-xl text-black" />
+                <div className="w-24 h-24 rounded-full border border-gray-700 bg-[#1F1F24] flex items-center justify-center">
+                  <div className="w-12 h-12 rounded-full border-2 border-[#111113] bg-[#FFE600] flex items-center justify-center text-[#111113]">
+                    <Disc3 className="w-6 h-6" strokeWidth={2.5} />
                   </div>
                 </div>
               </div>
 
               <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between text-white z-10">
-                <span className="badge-comic badge-comic-yellow text-[10px] text-black">
-                  TẬP {String(activeEp.episodeNumber || 1).padStart(2, '0')}:  {currentPercent}%
+                <span className="badge-comic badge-comic-yellow text-[10px] text-[#111113]">
+                  TẬP {String(activeEp.episodeNumber || 1).padStart(2, '0')}: {currentPercent}%
                 </span>
               </div>
             </div>
 
             {/* Title, Author & Tags */}
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="badge-comic badge-comic-blue text-[10px]">{audio.categoryName || 'Chung'}</span>
+                <span className="badge-comic badge-comic-blue text-[10px]">
+                  {audio.categoryName || 'Chung'}
+                </span>
                 {audio.isVIPOnly && (
                   <span className="badge-comic badge-comic-purple text-[10px]">
-                    <i className="ri-vip-crown-fill" /> VIP ONLY
+                    <Crown className="w-3 h-3" strokeWidth={2.5} /> VIP ONLY
                   </span>
                 )}
                 <span className="badge-comic badge-comic-white text-[10px]">
@@ -443,37 +540,45 @@ export const PlayerPage: React.FC = () => {
                   {audio.formattedDuration || '24h 00m'}
                 </span>
               </div>
-              <h2 className="font-extrabold text-lg text-black leading-tight mt-1">{audio.title}</h2>
-              <p className="text-xs font-semibold text-gray-600 flex items-center gap-2">
+
+              <h1 className="font-extrabold text-lg md:text-xl text-[var(--ink-primary)] leading-snug mt-1">
+                {audio.title}
+              </h1>
+              <p className="text-xs font-semibold text-[var(--ink-secondary)] flex items-center gap-2">
                 <span>
-                  Tác giả: <strong className="text-black">{audio.author || 'Chưa rõ'}</strong>
+                  Tác giả: <strong className="text-[var(--ink-primary)]">{audio.author || 'Chưa rõ'}</strong>
                 </span>
               </p>
 
-              {/* Collapsible Dropdown / Accordion */}
+              {/* Description Accordion */}
               <button
                 type="button"
                 onClick={() => setIsDescriptionOpen((prev) => !prev)}
-                className="mt-2 text-xs font-bold text-gray-800 hover:text-black flex items-center justify-between py-1.5 px-3 rounded-lg border-2 border-black bg-gray-50 hover:bg-[#FEF9C3] transition-colors shadow-comic-sm cursor-pointer"
+                className="mt-2 text-xs font-bold text-[var(--ink-primary)] flex items-center justify-between py-2 px-3 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] hover:bg-[var(--surface-accent-soft)] transition-colors shadow-comic-sm cursor-pointer"
                 aria-expanded={isDescriptionOpen}
               >
                 <span className="flex items-center gap-1.5">
-                  <i className="ri-information-line text-blue-600 font-bold" />
+                  <Info className="w-4 h-4 text-[#3A86FF]" strokeWidth={2.5} />
                   <span>Thông tin chi tiết & Nguồn YouTube</span>
                 </span>
-                <i className={`${isDescriptionOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-base font-bold`} />
+                {isDescriptionOpen ? (
+                  <ChevronUp className="w-4 h-4" strokeWidth={2.5} />
+                ) : (
+                  <ChevronDown className="w-4 h-4" strokeWidth={2.5} />
+                )}
               </button>
 
               {isDescriptionOpen && (
-                <div className="mt-2 p-3 bg-gray-50 rounded-lg border-2 border-black flex flex-col gap-2.5 text-xs text-gray-800 shadow-comic-sm fade-in-comic">
-                  <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-gray-200">
+                <div className="mt-1 p-3.5 bg-[var(--surface-elevated)] rounded-xl border-2 border-[var(--border-ink)] flex flex-col gap-2.5 text-xs text-[var(--ink-secondary)] shadow-comic-sm fade-in-comic">
+                  <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-[var(--border-ink)]/25">
                     <div className="flex items-center gap-3 flex-wrap">
-                      <span className="font-semibold text-gray-700">
-                        Tác giả: <strong className="text-black">{audio.author || 'Chưa rõ'}</strong>
+                      <span className="font-semibold">
+                        Tác giả: <strong className="text-[var(--ink-primary)]">{audio.author || 'Chưa rõ'}</strong>
                       </span>
                       {audio.viewCount !== undefined && audio.viewCount !== null && (
                         <span className="badge-comic badge-comic-yellow text-[10px] font-mono">
-                          <i className="ri-eye-line" /> Lượt xem: {Number(audio.viewCount).toLocaleString('vi-VN')}
+                          <Eye className="w-3 h-3" strokeWidth={2.5} />
+                          Lượt xem: {Number(audio.viewCount).toLocaleString('vi-VN')}
                         </span>
                       )}
                     </div>
@@ -482,18 +587,52 @@ export const PlayerPage: React.FC = () => {
                         href={`https://www.youtube.com/watch?v=${audio.youtubeVideoId}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="btn-comic text-[11px] py-1 px-2.5 bg-[#FF0000] text-white hover:bg-red-700 flex items-center gap-1.5 font-bold shadow-[1px_1px_0_#000]"
+                        className="btn-comic text-[11px] py-1 px-2.5 bg-[#FF0000] border-[#111113] text-white hover:bg-red-700 font-bold"
                         title="Mở video gốc trên YouTube"
                       >
-                        <i className="ri-youtube-fill text-sm" /> YouTube
+                        <Youtube className="w-4 h-4" strokeWidth={2.25} />
+                        <span>YouTube</span>
                       </a>
                     )}
                   </div>
                   <div className="flex flex-col gap-1">
-                    <span className="text-[11px] font-extrabold text-gray-700 uppercase">Mô tả video:</span>
-                    <div className="max-h-40 overflow-y-auto whitespace-pre-wrap text-xs text-gray-700 bg-white p-2.5 rounded border border-gray-300 font-sans leading-relaxed">
-                      {audio.description ? audio.description : <span className="italic text-gray-400">Không có mô tả cho audio này.</span>}
+                    <span className="text-[11px] font-extrabold text-[var(--ink-primary)] uppercase">
+                      Mô tả video:
+                    </span>
+                    <div className="max-h-40 overflow-y-auto whitespace-pre-wrap text-xs text-[var(--ink-secondary)] bg-[var(--surface-card)] p-3 rounded-lg border border-[var(--border-ink)]/40 leading-relaxed">
+                      {audio.description ? (
+                        audio.description
+                      ) : (
+                        <span className="italic text-[var(--ink-muted)]">
+                          Không có mô tả cho audio này.
+                        </span>
+                      )}
                     </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 pt-1 border-t border-[var(--border-ink)]/15">
+                    <span className="text-[11px] font-extrabold text-[var(--ink-primary)] uppercase flex items-center gap-1">
+                      <Tag className="w-3.5 h-3.5 text-[#3A86FF]" strokeWidth={2.5} />
+                      <span>Thẻ gắn ({normalizedTags.length}):</span>
+                    </span>
+                    {normalizedTags.length > 0 ? (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {normalizedTags.map((tagName) => (
+                          <button
+                            key={tagName}
+                            type="button"
+                            onClick={() => navigate(`/library?search=${encodeURIComponent(tagName)}`)}
+                            className="badge-comic badge-comic-white hover:bg-[#FFE600] hover:text-[#111113] transition-colors text-[10px] py-0.5 px-2 cursor-pointer font-bold"
+                          >
+                            #{tagName}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-[11px] italic text-[var(--ink-muted)]">
+                        Chưa gắn thẻ cho audio này.
+                      </span>
+                    )}
                   </div>
                 </div>
               )}
@@ -501,56 +640,81 @@ export const PlayerPage: React.FC = () => {
           </div>
 
           {/* Resume Bar Shortcut */}
-          <div className="card-comic-sm p-3 bg-[#FEF9C3] flex items-center justify-between gap-2 border-2 border-black shadow-comic-sm">
+          <div className="card-comic-sm p-3 bg-[var(--surface-accent-soft)] flex items-center justify-between gap-2.5">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-lg border border-black bg-[#FFE600] flex items-center justify-center text-black shrink-0 shadow-comic-sm">
-                <i className="ri-history-line font-bold" />
+              <div className="w-9 h-9 rounded-lg border-2 border-[#111113] bg-[#FFE600] flex items-center justify-center text-[#111113] shrink-0 shadow-comic-sm">
+                <History className="w-4 h-4" strokeWidth={2.5} />
               </div>
               <div className="flex flex-col min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-extrabold uppercase text-gray-700">Mốc nghe gần nhất</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-extrabold uppercase text-[var(--ink-secondary)]">
+                    Mốc nghe gần nhất
+                  </span>
                   <button
                     type="button"
                     onClick={handleManualSyncRecent}
-                    className="badge-comic badge-comic-yellow text-[9px] font-mono shrink-0 flex items-center gap-1 cursor-pointer hover:bg-yellow-200 active:scale-95 transition-all shadow-[1px_1px_0_#000]"
+                    className="badge-comic badge-comic-yellow text-[9px] font-mono shrink-0 flex items-center gap-1 cursor-pointer hover:bg-yellow-300 active:scale-95 transition-all"
                     title="Đang đếm ngược để đồng bộ mốc nghe. Chạm để đồng bộ ngay!"
                   >
-                    <i className={`ri-refresh-line text-[9px] ${isTargetAudioPlaying && isPlaying ? 'animate-spin' : ''}`} />
+                    <RefreshCw
+                      className={`w-2.5 h-2.5 ${isTargetAudioPlaying && isPlaying ? 'animate-spin' : ''}`}
+                      strokeWidth={2.5}
+                    />
                     SYNC: {isTargetAudioPlaying && isPlaying ? `${syncCountdown}s` : '60s'}
                   </button>
                 </div>
-                <span className="text-xs font-bold text-black truncate flex items-center gap-1">
-                  Tiếp tục từ <strong>{syncedRecentInfo?.position || (isTargetAudioPlaying && currentTime > 0 ? formatTime(currentTime) : (audio.formattedPosition || '00:00:00'))}</strong>:(Tập {syncedRecentInfo?.epNumber || (isTargetAudioPlaying && currentEpisode ? currentEpisode.episodeNumber : (audio.currentEpisodeNumber || 1))})<span className="text-[10px] font-mono"> {currentPercent}% </span> 
+                <span className="text-xs font-bold text-[var(--ink-primary)] truncate flex items-center gap-1 mt-0.5">
+                  Tiếp tục từ{' '}
+                  <strong>
+                    {syncedRecentInfo?.position ||
+                      (isTargetAudioPlaying && currentTime > 0
+                        ? formatTime(currentTime)
+                        : audio.formattedPosition || '00:00:00')}
+                  </strong>
+                  : (Tập{' '}
+                  {syncedRecentInfo?.epNumber ||
+                    (isTargetAudioPlaying && currentEpisode
+                      ? currentEpisode.episodeNumber
+                      : audio.currentEpisodeNumber || 1)}
+                  )<span className="text-[10px] font-mono"> {currentPercent}%</span>
                 </span>
               </div>
             </div>
             <button
+              type="button"
               onClick={handleResumeShortcut}
-              className="btn-comic btn-comic-primary text-xs py-1 px-3 shrink-0"
+              className="btn-comic btn-comic-primary text-xs py-1.5 px-3 shrink-0"
             >
-              <i className="ri-play-fill font-bold" /> Nghe tiếp
+              <Play className="w-3.5 h-3.5 fill-current" strokeWidth={2.5} />
+              <span>Nghe tiếp</span>
             </button>
           </div>
 
           {/* Main Playback Console */}
-          <div className="card-comic p-4 flex flex-col gap-3 bg-white">
-            {/* Live Status & Waveform Header */}
-            <div className="flex items-center justify-between text-xs pb-1 border-b border-black">
+          <div className="card-comic p-4 md:p-5 flex flex-col gap-3.5">
+            <div className="flex items-center justify-between text-xs pb-2 border-b border-[var(--border-ink)]/30">
               <div className="flex items-center gap-2 min-w-0">
                 <Equalizer isPlaying={isTargetAudioPlaying && isPlaying} />
-                <span className="font-extrabold text-black truncate">{activeEp.title}</span>
+                <span className="font-extrabold text-[var(--ink-primary)] truncate">
+                  {activeEp.title}
+                </span>
               </div>
               <button
+                type="button"
                 onClick={handleManualSyncRecent}
-                className="badge-comic badge-comic-teal text-[9px] py-0.5 font-mono cursor-pointer hover:bg-teal-200 active:scale-95 transition-all flex items-center gap-1"
+                className="badge-comic badge-comic-teal text-[9px] py-0.5 font-mono cursor-pointer hover:opacity-90 active:scale-95 transition-all flex items-center gap-1"
                 title="Tự động đồng bộ mốc nghe mỗi 60s. Chạm để đồng bộ ngay!"
               >
-                <i className={`ri-refresh-line ${isTargetAudioPlaying && isPlaying ? 'animate-spin' : ''}`} /> SYNC: {syncCountdown}s
+                <RefreshCw
+                  className={`w-2.5 h-2.5 ${isTargetAudioPlaying && isPlaying ? 'animate-spin' : ''}`}
+                  strokeWidth={2.5}
+                />
+                <span>SYNC: {syncCountdown}s</span>
               </button>
             </div>
 
-            {/* Custom Comic Range Slider (Scrub Bar) with Accidental Seek Lock */}
-            <div className="flex flex-col gap-1.5 pt-1">
+            {/* Scrub Bar */}
+            <div className="flex flex-col gap-2 pt-1">
               <div className="flex items-center gap-2">
                 <div
                   className="flex-1"
@@ -583,146 +747,177 @@ export const PlayerPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={toggleSeekLock}
-                  className={`w-8 h-8 rounded-lg border-2 border-black flex items-center justify-center text-sm shrink-0 transition-all shadow-comic-sm ${
-                    isSeekLocked ? 'bg-[#E63946] text-white hover:bg-red-600' : 'bg-gray-100 text-gray-700 hover:bg-[#FFE600]'
+                  className={`w-9 h-9 rounded-lg border-2 border-[var(--border-ink)] flex items-center justify-center shrink-0 transition-all shadow-comic-sm cursor-pointer ${
+                    isSeekLocked
+                      ? 'bg-[#E63946] text-white border-[#111113]'
+                      : 'bg-[var(--surface-elevated)] text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113]'
                   }`}
-                  title={isSeekLocked ? 'Mở khóa thanh tua thời lượng' : 'Khóa thanh tua thời lượng chống chạm nhầm'}
+                  title={
+                    isSeekLocked
+                      ? 'Mở khóa thanh tua thời lượng'
+                      : 'Khóa thanh tua thời lượng chống chạm nhầm'
+                  }
                 >
-                  <i className={isSeekLocked ? 'ri-lock-2-fill' : 'ri-lock-unlock-line'} />
+                  {isSeekLocked ? (
+                    <Lock className="w-4 h-4" strokeWidth={2.5} />
+                  ) : (
+                    <Unlock className="w-4 h-4" strokeWidth={2.5} />
+                  )}
                 </button>
               </div>
-              <div className="flex items-center justify-between font-mono text-xs font-bold text-gray-700">
+              <div className="flex items-center justify-between font-mono text-xs font-bold text-[var(--ink-secondary)]">
                 <span>{formatTime(currentPosition)}</span>
-                <span className={`badge-comic ${isSeekLocked ? 'badge-comic-red' : 'badge-comic-yellow'} text-[9px] py-0 px-1 font-mono`}>
+                <span
+                  className={`badge-comic ${
+                    isSeekLocked ? 'badge-comic-red' : 'badge-comic-yellow'
+                  } text-[9px] py-0 px-1.5 font-mono`}
+                >
                   {isSeekLocked ? 'ĐÃ KHÓA TUA' : `Đã nghe ${currentPercent}%`}
                 </span>
                 <span>{formatTime(episodeDuration)}</span>
               </div>
             </div>
 
-            {/* Tactile Control Buttons Row */}
-            <div className="flex items-center justify-between pt-2">
-              {/* Speed Toggle */}
+            {/* Tactile Controls */}
+            <div className="flex items-center justify-between gap-1 pt-2">
               <button
+                type="button"
                 onClick={() => setIsSpeedModalOpen(true)}
-                className="btn-comic text-xs py-1 px-2.5 bg-[#FFE600] font-black border-2 border-black shadow-comic-sm hover:scale-105 active:translate-x-0.5 active:translate-y-0.5 transition-all flex items-center gap-1"
+                className="btn-comic btn-comic-yellow text-xs py-1.5 px-2.5 font-black"
                 title="Đổi tốc độ phát (x1, x1.5, x2...)"
               >
-                <i className="ri-speed-line text-sm" />
+                <Gauge className="w-3.5 h-3.5" strokeWidth={2.5} />
                 <span>{playbackRate}x</span>
               </button>
 
-              {/* Prev Episode */}
               <button
+                type="button"
                 onClick={prevEpisode}
-                className="w-10 h-10 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
+                className="w-10 h-10 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] flex items-center justify-center text-[var(--ink-primary)] shadow-comic-sm hover:bg-[var(--surface-muted)] cursor-pointer"
                 title="Tập trước"
               >
-                <i className="ri-skip-back-line text-lg font-bold" />
+                <SkipBack className="w-4 h-4" strokeWidth={2.5} />
               </button>
 
-              {/* Rewind 10s */}
               <button
+                type="button"
                 onClick={() => {
                   if (isTargetAudioPlaying) skipSeconds(-10);
                   else play(audio, activeEp, Math.max(0, currentPosition - 10));
                 }}
-                className="w-10 h-10 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
+                className="w-10 h-10 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] flex items-center justify-center text-[var(--ink-primary)] shadow-comic-sm hover:bg-[var(--surface-muted)] cursor-pointer"
                 title="Tua lùi 10s"
               >
-                <i className="ri-replay-10-line text-lg font-bold" />
+                <RotateCcw className="w-4 h-4" strokeWidth={2.5} />
               </button>
 
-              {/* Master Big Play / Pause */}
               <button
+                type="button"
                 onClick={handleMasterPlay}
-                className={`w-14 h-14 rounded-full border-3 border-black ${
-                  isTargetAudioPlaying && isPlaying ? 'bg-[#FFE600] text-black' : 'bg-[#3A86FF] text-white'
-                } flex items-center justify-center shadow-comic hover:scale-105 active:translate-x-1 active:translate-y-1 transition-all`}
+                className={`w-14 h-14 rounded-full border-2 border-[#111113] ${
+                  isTargetAudioPlaying && isPlaying
+                    ? 'bg-[#FFE600] text-[#111113]'
+                    : 'bg-[#3A86FF] text-white'
+                } flex items-center justify-center shadow-comic hover:scale-105 active:translate-y-0.5 transition-all cursor-pointer`}
                 title="Phát / Tạm dừng"
               >
-                <i className={`${isTargetAudioPlaying && isPlaying ? 'ri-pause-fill' : 'ri-play-fill'} text-3xl`} />
+                {isTargetAudioPlaying && isPlaying ? (
+                  <Pause className="w-7 h-7 fill-current" strokeWidth={2.5} />
+                ) : (
+                  <Play className="w-7 h-7 fill-current ml-0.5" strokeWidth={2.5} />
+                )}
               </button>
 
-              {/* Forward 10s */}
               <button
+                type="button"
                 onClick={() => {
                   if (isTargetAudioPlaying) skipSeconds(10);
                   else play(audio, activeEp, currentPosition + 10);
                 }}
-                className="w-10 h-10 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
+                className="w-10 h-10 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] flex items-center justify-center text-[var(--ink-primary)] shadow-comic-sm hover:bg-[var(--surface-muted)] cursor-pointer"
                 title="Tua tới 10s"
               >
-                <i className="ri-forward-10-line text-lg font-bold" />
+                <RotateCw className="w-4 h-4" strokeWidth={2.5} />
               </button>
 
-              {/* Next Episode */}
               <button
+                type="button"
                 onClick={() => {
                   const eps = audio.episodes || [];
                   const currIdx = eps.findIndex((e) => e.id === activeEp.id);
                   if (currIdx !== -1 && currIdx + 1 < eps.length) {
                     const nextEp = eps[currIdx + 1];
                     if (isEpLocked(nextEp)) {
-                      handleLockedEpisodeAction('Tập tiếp theo chỉ dành riêng cho thành viên VIP.');
+                      handleLockedEpisodeAction(
+                        'Tập tiếp theo chỉ dành riêng cho thành viên VIP.'
+                      );
                       return;
                     }
                   }
                   nextEpisode();
                 }}
-                className="w-10 h-10 rounded-lg border-2 border-black bg-white flex items-center justify-center text-black shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5"
+                className="w-10 h-10 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] flex items-center justify-center text-[var(--ink-primary)] shadow-comic-sm hover:bg-[var(--surface-muted)] cursor-pointer"
                 title="Tập tiếp theo"
               >
-                <i className="ri-skip-forward-line text-lg font-bold" />
+                <SkipForward className="w-4 h-4" strokeWidth={2.5} />
               </button>
 
-              {/* Sleep Timer */}
-              <button
-                onClick={() => setIsSleepModalOpen(true)}
-                className={`w-9 h-9 rounded-lg border-2 border-black ${
-                  sleepTimerMinutes ? 'bg-[#FFE600] text-black' : 'bg-white text-gray-700'
-                } flex items-center justify-center shadow-comic-sm hover:bg-gray-100 active:translate-x-0.5 active:translate-y-0.5`}
-                title="Hẹn giờ tắt"
-              >
-                <i className="ri-moon-line text-base font-bold" />
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsSleepModalOpen(true)}
+                  className={`w-9 h-9 rounded-lg border-2 ${
+                    sleepTimerMinutes
+                      ? 'bg-[#FFE600] text-[#111113] border-[#111113]'
+                      : 'bg-[var(--surface-elevated)] text-[var(--ink-primary)] border-[var(--border-ink)]'
+                  } flex items-center justify-center shadow-comic-sm hover:bg-[var(--surface-muted)] cursor-pointer`}
+                  title="Hẹn giờ tắt"
+                >
+                  <Moon className="w-4 h-4" strokeWidth={2.25} />
+                </button>
 
-              {/* Screen Lock (Giữ màn hình / Khóa màn hình chống chạm) */}
-              <button
-                onClick={() => setScreenLocked(true)}
-                className="w-9 h-9 rounded-lg border-2 border-black bg-white text-gray-700 flex items-center justify-center shadow-comic-sm hover:bg-[#FFE600] hover:text-black active:translate-x-0.5 active:translate-y-0.5"
-                title="Giữ màn hình / Khóa màn hình (Tránh chạm nhầm)"
-              >
-                <i className="ri-lock-2-line text-base font-bold" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setScreenLocked(true)}
+                  className="w-9 h-9 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] text-[var(--ink-primary)] flex items-center justify-center shadow-comic-sm hover:bg-[#FFE600] hover:text-[#111113] cursor-pointer"
+                  title="Giữ màn hình / Khóa màn hình (Tránh chạm nhầm)"
+                >
+                  <Lock className="w-4 h-4" strokeWidth={2.25} />
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      )}
 
-      {/* View 2: Danh sách tập */}
-      {activeTab === 'episodes' && (
-        <div className="card-comic p-4 flex flex-col gap-3 bg-white fade-in-comic">
-          <div className="flex items-center justify-between pb-2 border-b-2 border-black flex-wrap gap-2">
+        {/* Right Column: Episodes List (Always visible on Desktop, Tab 2 on Mobile) */}
+        <div
+          className={`lg:col-span-5 card-comic p-4 flex-col gap-3 fade-in-comic lg:sticky lg:top-20 ${
+            activeTab === 'episodes' ? 'flex' : 'hidden lg:flex'
+          }`}
+        >
+          <div className="flex items-center justify-between pb-2.5 border-b-2 border-[var(--border-ink)] flex-wrap gap-2">
             <div>
-              <h3 className="font-extrabold text-base uppercase text-black">Danh sách tập</h3>
-              <span className="text-xs font-semibold text-gray-600">
-                {audio.episodes?.length || 0} tập logic • Khối 4 giờ
+              <h3 className="font-extrabold text-base uppercase text-[var(--ink-primary)]">
+                Danh sách tập
+              </h3>
+              <span className="text-xs font-semibold text-[var(--ink-secondary)]">
+                {audio.episodes?.length || 0} tập logic · Khối 4 giờ
               </span>
             </div>
             <button
+              type="button"
               onClick={handleRefreshMetadata}
               disabled={isRefreshing}
-              className="btn-comic text-[11px] py-1 px-2.5 bg-gray-100"
+              className="btn-comic text-[11px] py-1 px-2.5"
               title="Đồng bộ lại thông tin từ YouTube"
             >
-              <i className={`ri-refresh-line ${isRefreshing ? 'animate-spin' : ''}`} /> Refresh
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
             </button>
           </div>
 
-          {/* Episode Search Bar */}
           <div className="relative w-full">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm" />
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ink-muted)]" />
             <input
               type="text"
               value={episodeSearch}
@@ -731,7 +926,7 @@ export const PlayerPage: React.FC = () => {
                 setEpisodePage(1);
               }}
               placeholder="Tìm kiếm tập (số tập hoặc tên tập)..."
-              className="w-full pl-9 pr-8 py-2 text-xs rounded-lg border-2 border-black bg-gray-50 focus:bg-white focus:outline-none shadow-comic-sm font-semibold"
+              className="input-comic pl-9 pr-8 py-2 text-xs"
             />
             {episodeSearch && (
               <button
@@ -740,21 +935,22 @@ export const PlayerPage: React.FC = () => {
                   setEpisodeSearch('');
                   setEpisodePage(1);
                 }}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-black text-sm"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--ink-muted)] hover:text-[var(--ink-primary)] cursor-pointer"
                 title="Xóa tìm kiếm"
               >
-                <i className="ri-close-circle-fill" />
+                <XCircle className="w-4 h-4" />
               </button>
             )}
           </div>
 
-          {/* Episode Items */}
           {pagedEpisodes.length === 0 ? (
-            <div className="p-6 text-center text-xs font-semibold text-gray-500 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-              {episodeSearch ? 'Không tìm thấy tập nào khớp với từ khóa tìm kiếm.' : 'Chưa có danh sách tập.'}
+            <div className="p-6 text-center text-xs font-semibold text-[var(--ink-muted)] bg-[var(--surface-elevated)] rounded-xl border border-dashed border-[var(--border-ink)]/40">
+              {episodeSearch
+                ? 'Không tìm thấy tập nào khớp với từ khóa tìm kiếm.'
+                : 'Chưa có danh sách tập.'}
             </div>
           ) : (
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 lg:max-h-[55vh] lg:overflow-y-auto pr-0.5">
               {pagedEpisodes.map((ep) => {
                 const isThisEpActive = isTargetAudioPlaying && currentEpisode?.id === ep.id;
                 const isCompleted = ep.completed || (ep.progressPercent || 0) >= 95;
@@ -773,70 +969,71 @@ export const PlayerPage: React.FC = () => {
                     }}
                     className={`card-comic-sm p-3 flex items-center justify-between gap-3 cursor-pointer transition-all ${
                       epLocked
-                        ? 'bg-purple-50/60 !border-purple-300 opacity-90 hover:bg-purple-50'
+                        ? 'bg-[#8338EC]/10 border-[#8338EC]/50 opacity-90 hover:bg-[#8338EC]/15'
                         : isThisEpActive
-                        ? 'bg-[#FEF9C3] !border-2 !border-black shadow-comic'
-                        : 'bg-white hover:bg-gray-50'
+                          ? 'bg-[var(--surface-accent-soft)] !border-2 !border-[#FFE600] shadow-comic-sm'
+                          : 'bg-[var(--surface-elevated)] hover:bg-[var(--surface-muted)]'
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <div
-                        className={`w-9 h-9 rounded-lg border-2 border-black flex items-center justify-center shrink-0 shadow-comic-sm ${
+                        className={`w-9 h-9 rounded-lg border-2 border-[#111113] flex items-center justify-center shrink-0 shadow-comic-sm ${
                           epLocked
                             ? 'bg-[#8338EC] text-white font-bold'
                             : isThisEpActive
-                            ? 'bg-[#FFE600] text-black font-black'
-                            : isCompleted
-                            ? 'bg-[#2A9D8F] text-white'
-                            : 'bg-gray-100 text-black font-bold'
+                              ? 'bg-[#FFE600] text-[#111113] font-black'
+                              : isCompleted
+                                ? 'bg-[#2A9D8F] text-white'
+                                : 'bg-[var(--surface-card)] text-[var(--ink-primary)] border-[var(--border-ink)] font-bold text-xs'
                         }`}
                       >
                         {epLocked ? (
-                          <i className="ri-lock-2-fill text-lg text-[#FFE600]" />
+                          <Lock className="w-4 h-4 text-[#FFE600]" strokeWidth={2.5} />
                         ) : isThisEpActive ? (
-                          <i className="ri-play-fill text-lg" />
+                          <Play className="w-4 h-4 fill-current" strokeWidth={2.5} />
                         ) : isCompleted ? (
-                          <i className="ri-check-line text-lg font-black" />
+                          <Check className="w-4 h-4" strokeWidth={3} />
                         ) : (
                           `T${ep.episodeNumber}`
                         )}
                       </div>
                       <div className="flex flex-col min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-extrabold text-xs text-black truncate leading-tight">
+                          <span className="font-extrabold text-xs text-[var(--ink-primary)] truncate leading-tight">
                             {ep.title}
                           </span>
                           {epIsVip && ep.episodeNumber === 1 && (
                             <span className="badge-comic badge-comic-teal text-[8px] py-0 px-1 font-black shrink-0">
-                              <i className="ri-eye-line" /> XEM TRƯỚC TẬP 1
+                              <Eye className="w-2.5 h-2.5" /> XEM TRƯỚC TẬP 1
                             </span>
                           )}
                           {epIsVip && ep.episodeNumber > 1 && (
                             <span className="badge-comic badge-comic-purple text-[8px] py-0 px-1 font-black shrink-0">
-                              <i className="ri-vip-crown-fill text-[#FFE600]" /> VIP
+                              <Crown className="w-2.5 h-2.5 text-[#FFE600]" /> VIP
                             </span>
                           )}
                         </div>
-                        <span className="font-mono text-[11px] text-gray-600 truncate mt-0.5">
-                          {formatTime(ep.startSeconds)} - {formatTime(ep.endSeconds)} • {ep.progressPercent || 0}%
+                        <span className="font-mono text-[11px] text-[var(--ink-secondary)] truncate mt-0.5">
+                          {formatTime(ep.startSeconds)} - {formatTime(ep.endSeconds)} ·{' '}
+                          {ep.progressPercent || 0}%
                         </span>
                       </div>
                     </div>
 
                     <span
-                      className={`badge-comic ${
+                      className={`badge-comic shrink-0 ${
                         epLocked
-                          ? 'badge-comic-purple !bg-[#8338EC] text-white'
+                          ? 'badge-comic-purple'
                           : isThisEpActive
-                          ? 'badge-comic-yellow'
-                          : isCompleted
-                          ? 'badge-comic-teal'
-                          : 'badge-comic-white'
+                            ? 'badge-comic-yellow'
+                            : isCompleted
+                              ? 'badge-comic-teal'
+                              : 'badge-comic-white'
                       } text-[9px]`}
                     >
                       {epLocked ? (
                         <span className="flex items-center gap-0.5">
-                          <i className="ri-lock-2-line" /> KHÓA VIP
+                          <Lock className="w-2.5 h-2.5" /> KHÓA VIP
                         </span>
                       ) : isThisEpActive ? (
                         'ĐANG PHÁT'
@@ -860,7 +1057,7 @@ export const PlayerPage: React.FC = () => {
             onPageChange={(p) => setEpisodePage(p)}
           />
         </div>
-      )}
+      </div>
 
       {/* Speed Selection Modal */}
       <Modal
@@ -868,9 +1065,10 @@ export const PlayerPage: React.FC = () => {
         onClose={() => setIsSpeedModalOpen(false)}
         title="TỐC ĐỘ PHÁT AUDIO"
         showFooter={false}
+        size="sm"
       >
         <div className="flex flex-col gap-3">
-          <p className="text-[11px] sm:text-xs text-gray-700 font-semibold">
+          <p className="text-[11px] sm:text-xs text-[var(--ink-secondary)] font-semibold">
             Tốc độ tiêu chuẩn (Tự động lưu lại cho tất cả audio):
           </p>
           <div className="grid grid-cols-3 gap-2">
@@ -879,45 +1077,49 @@ export const PlayerPage: React.FC = () => {
               return (
                 <button
                   key={s}
+                  type="button"
                   onClick={() => {
                     setPlaybackRate(s, user?.id);
                     setIsSpeedModalOpen(false);
                   }}
                   className={`btn-comic text-sm py-2.5 font-black flex items-center justify-center gap-1 ${
-                    isSelected ? 'btn-comic-yellow ring-2 ring-black' : 'bg-white hover:bg-gray-50'
+                    isSelected ? 'btn-comic-yellow' : ''
                   }`}
                 >
                   <span>{s}x</span>
-                  {isSelected && <i className="ri-check-line font-black text-black" />}
+                  {isSelected && <Check className="w-4 h-4" strokeWidth={3} />}
                 </button>
               );
             })}
           </div>
 
-          <p className="text-[11px] sm:text-xs text-gray-500 font-semibold mt-1">Các mức điều chỉnh khác:</p>
+          <p className="text-[11px] sm:text-xs text-[var(--ink-muted)] font-semibold mt-1">
+            Các mức điều chỉnh khác:
+          </p>
           <div className="grid grid-cols-4 gap-1.5">
             {[0.5, 0.75, 1.25, 1.75].map((s) => {
               const isSelected = Math.abs(playbackRate - s) < 0.05;
               return (
                 <button
                   key={s}
+                  type="button"
                   onClick={() => {
                     setPlaybackRate(s, user?.id);
                     setIsSpeedModalOpen(false);
                   }}
                   className={`btn-comic text-xs py-1.5 font-bold flex items-center justify-center gap-0.5 ${
-                    isSelected ? 'btn-comic-yellow ring-2 ring-black' : 'bg-white hover:bg-gray-50'
+                    isSelected ? 'btn-comic-yellow' : ''
                   }`}
                 >
                   <span>{s}x</span>
-                  {isSelected && <i className="ri-check-line font-bold" />}
+                  {isSelected && <Check className="w-3.5 h-3.5" strokeWidth={3} />}
                 </button>
               );
             })}
           </div>
 
-          <div className="card-comic-sm p-2 bg-[#FEF9C3] text-[11px] text-gray-700 font-bold flex items-center gap-2 border border-black">
-            <i className="ri-save-line text-base text-black shrink-0" />
+          <div className="card-comic-sm p-2.5 bg-[var(--surface-accent-soft)] text-[11px] text-[var(--ink-primary)] font-bold flex items-center gap-2">
+            <Save className="w-4 h-4 shrink-0" strokeWidth={2.25} />
             <span>
               Tốc độ đã chọn ({playbackRate}x) sẽ được giữ nguyên khi bạn nghe truyện khác hoặc đổi tập.
             </span>
@@ -931,19 +1133,25 @@ export const PlayerPage: React.FC = () => {
         onClose={() => setIsSleepModalOpen(false)}
         title="HẸN GIỜ TẮT NHẠC"
         showFooter={false}
+        size="sm"
       >
-        <div className="flex flex-col gap-2">
-          <p className="text-[11px] sm:text-xs text-gray-700 font-semibold">Tự động tạm dừng sau:</p>
-          <div className="grid grid-cols-2 gap-1.5">
+        <div className="flex flex-col gap-2.5">
+          <p className="text-[11px] sm:text-xs text-[var(--ink-secondary)] font-semibold">
+            Tự động tạm dừng sau:
+          </p>
+          <div className="grid grid-cols-2 gap-2">
             {[15, 30, 45, 60].map((mins) => (
               <button
                 key={mins}
+                type="button"
                 onClick={() => {
                   setSleepTimer(mins);
                   setIsSleepModalOpen(false);
                   toast.success(`Đã hẹn giờ tắt sau ${mins} phút`);
                 }}
-                className={`btn-comic text-xs py-1.5 ${sleepTimerMinutes === mins ? 'btn-comic-yellow' : 'bg-white'}`}
+                className={`btn-comic text-xs py-2 ${
+                  sleepTimerMinutes === mins ? 'btn-comic-yellow' : ''
+                }`}
               >
                 {mins} phút
               </button>
@@ -951,12 +1159,13 @@ export const PlayerPage: React.FC = () => {
           </div>
           {sleepTimerMinutes && (
             <button
+              type="button"
               onClick={() => {
                 setSleepTimer(null);
                 setIsSleepModalOpen(false);
                 toast.info('Đã hủy hẹn giờ tắt');
               }}
-              className="btn-comic btn-comic-red text-xs py-1.5 mt-0.5"
+              className="btn-comic btn-comic-red text-xs py-2 mt-0.5"
             >
               Hủy hẹn giờ ({sleepTimerMinutes}m)
             </button>
@@ -978,4 +1187,3 @@ export const PlayerPage: React.FC = () => {
     </div>
   );
 };
-

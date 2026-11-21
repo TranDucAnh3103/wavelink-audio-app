@@ -12,15 +12,18 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
   ({ className, containerClassName, error, label, id, startIcon, endIcon, ...props }, ref) => {
     return (
-      <div className={cn('flex flex-col gap-1 w-full', containerClassName)}>
+      <div className={cn('flex flex-col gap-1.5 w-full', containerClassName)}>
         {label && (
-          <label htmlFor={id} className="font-extrabold text-[11px] sm:text-xs uppercase text-black">
+          <label
+            htmlFor={id}
+            className="font-extrabold text-[11px] sm:text-xs uppercase tracking-wide text-[var(--ink-primary)]"
+          >
             {label}
           </label>
         )}
         <div className="relative flex items-center w-full">
           {startIcon && (
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-10 flex items-center justify-center text-gray-600">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-10 flex items-center justify-center text-[var(--ink-muted)]">
               {startIcon}
             </div>
           )}
@@ -30,7 +33,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
             className={cn(
               'input-comic',
               startIcon && 'pl-9',
-              endIcon && 'pr-9',
+              endIcon && 'pr-10',
               error && 'border-[#E63946] focus:border-[#E63946]',
               className
             )}
