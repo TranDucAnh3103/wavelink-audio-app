@@ -135,8 +135,8 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 				CreatedAt: time.Now().UTC(),
 			},
 		}
-		for _, n := range welcomeNotifs {
-			h.db.Create(&n)
+		for i := range welcomeNotifs {
+			h.db.Create(&welcomeNotifs[i])
 		}
 		list = welcomeNotifs
 

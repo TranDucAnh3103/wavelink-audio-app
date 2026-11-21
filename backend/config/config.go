@@ -28,6 +28,13 @@ type Config struct {
 	VietQRAccountName   string
 	VietQRNotePrefix    string
 
+	// Cấu hình cổng thanh toán payOS v2
+	PayOSClientID    string
+	PayOSAPIKey      string
+	PayOSChecksumKey string
+	PayOSReturnURL   string
+	PayOSCancelURL   string
+
 	// Cấu hình tài khoản Admin ban đầu khi khởi tạo dữ liệu
 	AdminUsername string
 	AdminEmail    string
@@ -43,6 +50,12 @@ type Config struct {
 
 func (c *Config) IsProduction() bool {
 	return strings.EqualFold(c.AppEnv, "production")
+}
+
+func (c *Config) HasPayOS() bool {
+	return strings.TrimSpace(c.PayOSClientID) != "" &&
+		strings.TrimSpace(c.PayOSAPIKey) != "" &&
+		strings.TrimSpace(c.PayOSChecksumKey) != ""
 }
 
 // loadDotEnv đọc file .env ở thư mục hiện tại hoặc thư mục backend nếu có
@@ -119,6 +132,11 @@ func Load() *Config {
 		VietQRAccountNumber: getEnv("VIETQR_ACCOUNT_NUMBER", "0987654321"),
 		VietQRAccountName:   getEnv("VIETQR_ACCOUNT_NAME", "COMIC AUDIO HUB"),
 		VietQRNotePrefix:    getEnv("VIETQR_NOTE_PREFIX", "VIP"),
+		PayOSClientID:       getEnv("PAYOS_CLIENT_ID", ""),
+		PayOSAPIKey:         getEnv("PAYOS_API_KEY", ""),
+		PayOSChecksumKey:    getEnv("PAYOS_CHECKSUM_KEY", ""),
+		PayOSReturnURL:      getEnv("PAYOS_RETURN_URL", "http://localhost:3000/membership?payment=success"),
+		PayOSCancelURL:      getEnv("PAYOS_CANCEL_URL", "http://localhost:3000/membership?payment=cancelled"),
 
 		// Cấu hình tài khoản Admin khi seeding
 		AdminUsername: getEnv("ADMIN_USERNAME", "admin123"),

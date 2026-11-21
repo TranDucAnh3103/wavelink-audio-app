@@ -1,7 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { QRCodeSVG } from 'qrcode.react';
 import {
   Crown,
   Lock,
@@ -12,7 +14,10 @@ import {
   Infinity as InfinityIcon,
   Zap,
   Timer,
-  Check,
+  Copy,
+  ExternalLink,
+  RefreshCw,
+  ShieldCheck,
   X,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
@@ -20,9 +25,10 @@ import {
   useMembershipPackages,
   useMyMembership,
   useCreateMembershipOrder,
-  useSimulatePayment,
+  useCancelMembershipOrder,
 } from '@/hooks/useMembership';
 import { useDelayedFallback } from '@/hooks/useDelayedFallback';
+import { api } from '@/services/api';
 import { MembershipOrder } from '@/types';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from '@/components/ui/Toast';
@@ -31,18 +37,86 @@ import { MembershipSkeleton } from '@/components/common/Skeletons';
 
 export const MembershipPage: React.FC = () => {
   const navigate = useNavigate();
-  const { user } = useAuthStore();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
+  const { user, refreshUser } = useAuthStore();
   const { data: packages = [], isLoading: pkgLoading } = useMembershipPackages();
   const { data: myMembership } = useMyMembership();
 
   const createOrderMutation = useCreateMembershipOrder();
-  const simulatePaymentMutation = useSimulatePayment();
+  const cancelOrderMutation = useCancelMembershipOrder();
 
   const isVip = myMembership?.isVip || user?.role === 'VIP' || user?.role === 'ADMIN';
 
   const [selectedPkgId, setSelectedPkgId] = useState<string>('VIP_3M');
   const [activeOrder, setActiveOrder] = useState<MembershipOrder | null>(null);
   const [countdownSec, setCountdownSec] = useState<number>(15 * 60);
+  const [isCheckingStatus, setIsCheckingStatus] = useState<boolean>(false);
+
+  const handlePaymentConfirmed = useCallback(
+    async (paidOrder: MembershipOrder) => {
+      if (paidOrder.token && typeof localStorage !== 'undefined') {
+        localStorage.setItem('auth_token', paidOrder.token);
+      }
+      if (paidOrder.user) {
+        useAuthStore.getState().updateUser({
+          role: paidOrder.user.role,
+          membership: paidOrder.user.membership as 'FREE' | 'VIP' | undefined,
+          vipExpiresAt: paidOrder.user.vipExpiresAt || undefined,
+        });
+      }
+      await refreshUser();
+      queryClient.invalidateQueries({ queryKey: ['my-membership'] });
+      queryClient.invalidateQueries({ queryKey: ['membership-packages'] });
+      queryClient.invalidateQueries({ queryKey: ['stats'] });
+      queryClient.invalidateQueries({ queryKey: ['import-quota'] });
+      queryClient.invalidateQueries({ queryKey: ['audios'] });
+      queryClient.invalidateQueries({ queryKey: ['audio'] });
+      setActiveOrder(null);
+      toast.success('Thanh toán payOS thành công! Quyền lợi VIP đã được kích hoạt tự động.');
+    },
+    [queryClient, refreshUser]
+  );
+
+  // Kiểm tra trạng thái đơn hàng khi quay về từ trang thanh toán payOS
+  useEffect(() => {
+    const paymentStatus = searchParams.get('payment');
+    const returnedOrderCode = searchParams.get('orderCode');
+    if (!paymentStatus && !returnedOrderCode) return;
+
+    const cleanParams = new URLSearchParams(searchParams);
+    cleanParams.delete('payment');
+    cleanParams.delete('orderCode');
+    cleanParams.delete('code');
+    cleanParams.delete('id');
+    cleanParams.delete('cancel');
+    cleanParams.delete('status');
+    setSearchParams(cleanParams, { replace: true });
+
+    if (paymentStatus === 'cancelled') {
+      toast.info('Bạn đã hủy giao dịch thanh toán payOS.');
+      if (returnedOrderCode) {
+        cancelOrderMutation.mutate(returnedOrderCode);
+      }
+      return;
+    }
+
+    if (returnedOrderCode) {
+      const { isLive } = useAuthStore.getState();
+      api.membership
+        .getOrder(returnedOrderCode, isLive)
+        .then((order) => {
+          if (order?.status === 'PAID') {
+            handlePaymentConfirmed(order);
+          } else if (order && order.status === 'PENDING') {
+            setActiveOrder(order);
+            toast.info('Đơn hàng đang chờ xác nhận thanh toán từ payOS.');
+          }
+        })
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (packages.length > 0) {
@@ -58,10 +132,16 @@ export const MembershipPage: React.FC = () => {
     }
   }, [packages, selectedPkgId]);
 
+  // Countdown timer synced to order expiresAt
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | null = null;
     if (activeOrder) {
-      setCountdownSec(15 * 60);
+      const calcRemaining = () => {
+        if (!activeOrder.expiresAt) return 15 * 60;
+        const diff = Math.floor((new Date(activeOrder.expiresAt).getTime() - Date.now()) / 1000);
+        return Math.max(0, diff);
+      };
+      setCountdownSec(calcRemaining());
       interval = setInterval(() => {
         setCountdownSec((prev) => {
           if (prev <= 1) {
@@ -77,43 +157,104 @@ export const MembershipPage: React.FC = () => {
     };
   }, [activeOrder]);
 
+  // Auto-poll PayOS payment confirmation every 3 seconds while modal is open
+  useEffect(() => {
+    if (!activeOrder || activeOrder.status !== 'PENDING') return;
+    let cancelled = false;
+
+    const pollOrder = async () => {
+      try {
+        const { isLive } = useAuthStore.getState();
+        const latest = await api.membership.getOrder(activeOrder.orderCode, isLive);
+        if (cancelled || !latest) return;
+
+        if (latest.status === 'PAID') {
+          await handlePaymentConfirmed(latest);
+        } else if (latest.status === 'CANCELLED' || latest.status === 'EXPIRED') {
+          setActiveOrder(null);
+          toast.error(
+            latest.status === 'EXPIRED'
+              ? 'Mã QR thanh toán đã hết hạn. Vui lòng tạo đơn mới.'
+              : 'Đơn hàng thanh toán đã bị hủy.'
+          );
+        }
+      } catch {
+        // Ignore transient network errors during polling
+      }
+    };
+
+    const timer = setInterval(pollOrder, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeOrder, handlePaymentConfirmed]);
+
   const getExpiryText = () => {
+    if (user?.role === 'ADMIN' && !myMembership?.vipExpiresAt) {
+      return 'Tài khoản Quản trị viên (Toàn quyền VIP không giới hạn)';
+    }
     if (!myMembership?.vipExpiresAt) return 'Chưa kích hoạt VIP';
     const d = new Date(myMembership.vipExpiresAt);
-    return `Hạn dùng đến: ${d.toLocaleDateString('vi-VN')} (${myMembership.daysRemaining || 0} ngày còn lại)`;
+    const daysLeft =
+      myMembership.daysRemaining !== undefined
+        ? myMembership.daysRemaining
+        : Math.max(0, Math.ceil((d.getTime() - Date.now()) / 86400000));
+    return `Hạn dùng đến: ${d.toLocaleDateString('vi-VN')} (${daysLeft} ngày còn lại)`;
   };
 
   const handleCreateOrder = async () => {
-    if (user?.isGuest) {
+    if (!user || user.isGuest || user.role === 'GUEST') {
       toast.error('Vui lòng đăng nhập hoặc tạo tài khoản để đăng ký gói VIP!');
       navigate('/login');
       return;
     }
     try {
-      toast.info('Đang tạo đơn hàng và mã VietQR thanh toán...');
+      toast.info('Đang khởi tạo mã QR thanh toán qua payOS...');
       const order = await createOrderMutation.mutateAsync(selectedPkgId);
       setActiveOrder(order);
     } catch (err: unknown) {
-      toast.error((err as Error).message || 'Lỗi khi tạo đơn hàng');
+      toast.error((err as Error).message || 'Lỗi khi tạo đơn hàng payOS');
     }
   };
 
-  const handleSimulatePayment = async (status: 'SUCCESS' | 'FAILED') => {
+  const handleManualCheckOrder = async () => {
     if (!activeOrder) return;
+    setIsCheckingStatus(true);
     try {
-      toast.info('Đang mô phỏng giao dịch qua Webhook...');
-      await simulatePaymentMutation.mutateAsync({
-        orderCode: activeOrder.orderCode,
-        status,
-      });
-      setActiveOrder(null);
-      if (status === 'SUCCESS') {
-        toast.success('Thanh toán thành công! Bạn đã được kích hoạt VIP!');
+      const { isLive } = useAuthStore.getState();
+      const latest = await api.membership.getOrder(activeOrder.orderCode, isLive);
+      if (latest?.status === 'PAID') {
+        await handlePaymentConfirmed(latest);
+      } else if (latest?.status === 'CANCELLED' || latest?.status === 'EXPIRED') {
+        setActiveOrder(null);
+        toast.error('Đơn hàng đã hết hạn hoặc bị hủy.');
       } else {
-        toast.error('Đơn hàng đã được đánh dấu thất bại');
+        toast.info('Chưa ghi nhận thanh toán từ ngân hàng. Hệ thống sẽ tự kiểm tra mỗi 3 giây.');
       }
     } catch (err: unknown) {
-      toast.error((err as Error).message || 'Lỗi mô phỏng thanh toán');
+      toast.error((err as Error).message || 'Không thể kiểm tra trạng thái đơn hàng');
+    } finally {
+      setIsCheckingStatus(false);
+    }
+  };
+
+  const handleCancelOrder = async () => {
+    if (!activeOrder) return;
+    try {
+      await cancelOrderMutation.mutateAsync(activeOrder.orderCode);
+      setActiveOrder(null);
+      toast.info('Đã hủy đơn hàng thanh toán.');
+    } catch {
+      setActiveOrder(null);
+    }
+  };
+
+  const handleCopy = (label: string, value: string) => {
+    if (!value) return;
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(value);
+      toast.success(`Đã sao chép ${label}`);
     }
   };
 
@@ -153,7 +294,7 @@ export const MembershipPage: React.FC = () => {
             <span>{isVip ? 'VIP ACTIVE' : 'VIP PASS'}</span>
           </span>
           <span className="text-xs font-bold text-white/90 font-mono">
-            {isVip ? 'ĐẶC QUYỀN CAO CẤP' : 'DÀNH CHO FAN CHÂN CHÍNH'}
+            {isVip ? 'ĐẶC QUYỀN CAO CẤP' : 'THANH TOÁN TỰ ĐỘNG QUA PAYOS'}
           </span>
         </div>
         <h1 className="font-comic font-extrabold text-xl md:text-2xl uppercase tracking-tight text-white mt-1">
@@ -162,7 +303,7 @@ export const MembershipPage: React.FC = () => {
         <p className="text-xs sm:text-sm font-semibold text-white/90 max-w-2xl leading-relaxed">
           {isVip
             ? getExpiryText()
-            : 'Mở khóa toàn bộ kho truyện giới hạn, không giới hạn lượt import YouTube và tốc độ đồng bộ tiến trình ưu tiên cao nhất!'}
+            : 'Mở khóa toàn bộ kho truyện giới hạn, không giới hạn lượt import YouTube và đồng bộ tiến trình đám mây ưu tiên cao nhất!'}
         </p>
       </div>
 
@@ -173,7 +314,7 @@ export const MembershipPage: React.FC = () => {
             Chọn Gói Hội Viên Phù Hợp
           </span>
           <span className="badge-comic badge-comic-yellow text-[9px] font-black">
-            ƯU ĐÃI NĂM 2026
+            VIETQR • PAYOS 24/7
           </span>
         </div>
 
@@ -284,9 +425,7 @@ export const MembershipPage: React.FC = () => {
                     {isLocked
                       ? 'ĐÃ KHÓA'
                       : isSelected
-                        ? canUpgrade
-                          ? 'ĐÃ CHỌN'
-                          : 'ĐÃ CHỌN'
+                        ? 'ĐÃ CHỌN'
                         : canUpgrade
                           ? 'NÂNG CẤP'
                           : 'CHỌN GÓI'}
@@ -310,7 +449,7 @@ export const MembershipPage: React.FC = () => {
           {createOrderMutation.isPending ? (
             <span className="flex items-center gap-2 justify-center">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Đang tạo đơn...</span>
+              <span>Đang khởi tạo mã QR payOS...</span>
             </span>
           ) : isSelectedLocked ? (
             <span className="flex items-center gap-2 justify-center">
@@ -322,8 +461,8 @@ export const MembershipPage: React.FC = () => {
               <QrCode className="w-4 h-4" strokeWidth={2.5} />
               <span>
                 {isUpgrade
-                  ? 'NÂNG CẤP GÓI & TẠO MÃ QR (CỘNG DỒN THỜI HẠN)'
-                  : 'TẠO MÃ QR THANH TOÁN (VIETQR)'}
+                  ? 'NÂNG CẤP GÓI & TẠO MÃ QR PAYOS'
+                  : 'TẠO MÃ QR THANH TOÁN (PAYOS)'}
               </span>
             </span>
           )}
@@ -360,7 +499,7 @@ export const MembershipPage: React.FC = () => {
                 Truy Cập Toàn Bộ Truyện VIP Only
               </span>
               <span className="text-[11px] font-medium text-[var(--ink-secondary)] mt-0.5 leading-snug">
-                Nghe trọn vẹn các bộ truyện đỉnh cao được tác giả gắn nhãn độc quyền VIP.
+                Nghe trọn vẹn các bộ truyện đỉnh cao được gắn nhãn độc quyền VIP.
               </span>
             </div>
           </div>
@@ -381,82 +520,132 @@ export const MembershipPage: React.FC = () => {
         </div>
       </div>
 
-      {/* VietQR Payment Modal */}
+      {/* PayOS QR Payment Modal */}
       <Modal
         isOpen={Boolean(activeOrder)}
         onClose={() => setActiveOrder(null)}
-        title="MÃ THANH TOÁN VIETQR VIP"
+        title="THANH TOÁN VIETQR • PAYOS"
         showFooter={false}
         size="md"
       >
         {activeOrder && (
           <div className="flex flex-col items-center text-center gap-3">
-            <div className="relative p-2 bg-white rounded-xl border-2 border-[var(--border-ink)] shadow-comic-sm w-40 h-40 flex items-center justify-center overflow-hidden shrink-0">
-              <img
-                src={activeOrder.qrCodeUrl}
-                alt="VietQR"
-                className="w-full h-full object-contain"
-              />
+            <div className="relative p-3 bg-white rounded-xl border-2 border-[var(--border-ink)] shadow-comic-sm flex items-center justify-center overflow-hidden shrink-0">
+              {activeOrder.qrCode ? (
+                <QRCodeSVG
+                  value={activeOrder.qrCode}
+                  size={184}
+                  level="M"
+                  includeMargin={false}
+                />
+              ) : (
+                <img
+                  src={activeOrder.qrCodeUrl}
+                  alt="Mã QR thanh toán payOS"
+                  className="w-44 h-44 object-contain"
+                />
+              )}
             </div>
 
-            <div className="badge-comic badge-comic-red text-[10px] font-mono font-black py-0.5 px-2.5">
-              <Timer className="w-3 h-3" strokeWidth={2.5} />
-              <span>Hết hạn: {formatTimer(countdownSec)}</span>
+            <div className="flex items-center gap-2 flex-wrap justify-center">
+              <span className="badge-comic badge-comic-red text-[10px] font-mono font-black py-0.5 px-2.5">
+                <Timer className="w-3 h-3" strokeWidth={2.5} />
+                <span>Hết hạn: {formatTimer(countdownSec)}</span>
+              </span>
+              <span className="badge-comic badge-comic-teal text-[10px] font-black py-0.5 px-2.5">
+                <ShieldCheck className="w-3 h-3" strokeWidth={2.5} />
+                <span>Đang tự động kiểm tra...</span>
+              </span>
             </div>
 
             <div className="card-comic-sm p-3 bg-[var(--surface-elevated)] w-full text-left flex flex-col gap-1.5 text-xs">
-              <div className="flex justify-between items-center py-0.5 border-b border-[var(--border-ink)]/20">
+              <div className="flex justify-between items-center py-0.5 border-b border-[var(--border-ink)]/20 gap-2">
                 <span className="text-[var(--ink-secondary)] font-semibold">Ngân hàng:</span>
-                <strong className="text-[var(--ink-primary)] font-bold">
-                  {activeOrder.bankName || 'MB Bank (Quân Đội)'}
+                <strong className="text-[var(--ink-primary)] font-bold text-right">
+                  {activeOrder.bankName || 'VietQR / payOS'}
                 </strong>
               </div>
-              <div className="flex justify-between items-center py-0.5 border-b border-[var(--border-ink)]/20">
-                <span className="text-[var(--ink-secondary)] font-semibold">Số tài khoản:</span>
-                <strong className="text-[var(--ink-primary)] font-mono font-bold">
-                  {activeOrder.accountNumber || '0987654321'}
-                </strong>
-              </div>
-              <div className="flex justify-between items-center py-0.5 border-b border-[var(--border-ink)]/20">
-                <span className="text-[var(--ink-secondary)] font-semibold">Chủ TK:</span>
-                <strong className="text-[var(--ink-primary)] font-bold">
-                  {activeOrder.accountName || 'COMIC AUDIO HUB'}
-                </strong>
-              </div>
-              <div className="flex justify-between items-center py-0.5 border-b border-[var(--border-ink)]/20">
+              {activeOrder.accountNumber && (
+                <div className="flex justify-between items-center py-0.5 border-b border-[var(--border-ink)]/20 gap-2">
+                  <span className="text-[var(--ink-secondary)] font-semibold">Số tài khoản:</span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy('số tài khoản', activeOrder.accountNumber)}
+                    className="inline-flex items-center gap-1 text-[var(--ink-primary)] font-mono font-bold hover:text-[#3A86FF] cursor-pointer"
+                    title="Chạm để sao chép"
+                  >
+                    <span>{activeOrder.accountNumber}</span>
+                    <Copy className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+              {activeOrder.accountName && (
+                <div className="flex justify-between items-center py-0.5 border-b border-[var(--border-ink)]/20 gap-2">
+                  <span className="text-[var(--ink-secondary)] font-semibold">Chủ TK:</span>
+                  <strong className="text-[var(--ink-primary)] font-bold text-right">
+                    {activeOrder.accountName}
+                  </strong>
+                </div>
+              )}
+              <div className="flex justify-between items-center py-0.5 border-b border-[var(--border-ink)]/20 gap-2">
                 <span className="text-[var(--ink-secondary)] font-semibold">Số tiền:</span>
                 <strong className="text-[#E63946] font-extrabold text-sm">
                   {formatVND(activeOrder.priceVND || activeOrder.amount || 0)}
                 </strong>
               </div>
-              <div className="flex justify-between items-center py-0.5">
+              <div className="flex justify-between items-center py-0.5 gap-2">
                 <span className="text-[var(--ink-secondary)] font-semibold">Nội dung CK:</span>
-                <strong className="text-[#111113] font-mono font-bold text-xs bg-[#FFE600] px-1.5 py-0.5 rounded border border-[#111113]">
-                  {activeOrder.transferContent || activeOrder.orderCode}
-                </strong>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleCopy('nội dung chuyển khoản', activeOrder.transferContent || activeOrder.orderCode)
+                  }
+                  className="inline-flex items-center gap-1 text-[#111113] font-mono font-bold text-xs bg-[#FFE600] px-1.5 py-0.5 rounded border border-[#111113] cursor-pointer"
+                  title="Chạm để sao chép"
+                >
+                  <span>{activeOrder.transferContent || activeOrder.orderCode}</span>
+                  <Copy className="w-3 h-3" />
+                </button>
               </div>
             </div>
 
-            <div className="card-comic-sm p-2 bg-[var(--surface-accent-soft)] text-[11px] font-semibold text-[var(--ink-primary)] text-left w-full leading-snug">
-              Quét tự động qua SePay/VietQR. Tài khoản sẽ nâng cấp tức thì khi chuyển khoản thành công!
+            <div className="card-comic-sm p-2.5 bg-[var(--surface-accent-soft)] text-[11px] font-semibold text-[var(--ink-primary)] text-left w-full leading-snug">
+              Mở ứng dụng ngân hàng bất kỳ và quét mã QR payOS phía trên. Giữ đúng <strong>số tiền</strong> &amp; <strong>nội dung chuyển khoản</strong> để hệ thống tự kích hoạt VIP ngay sau khi giao dịch thành công!
             </div>
+
+            {activeOrder.checkoutUrl && (
+              <a
+                href={activeOrder.checkoutUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-comic btn-comic-primary text-xs py-2.5 font-black w-full justify-center"
+              >
+                <ExternalLink className="w-4 h-4" strokeWidth={2.5} />
+                <span>MỞ TRANG THANH TOÁN PAYOS</span>
+              </a>
+            )}
 
             <div className="flex items-center gap-2 w-full pt-0.5">
               <button
                 type="button"
-                onClick={() => handleSimulatePayment('SUCCESS')}
+                onClick={handleManualCheckOrder}
+                disabled={isCheckingStatus}
                 className="btn-comic btn-comic-teal text-xs py-2 font-black flex-1"
               >
-                <Check className="w-4 h-4" strokeWidth={3} />
-                <span>Giả Lập Thành Công</span>
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${isCheckingStatus ? 'animate-spin' : ''}`}
+                  strokeWidth={2.5}
+                />
+                <span>{isCheckingStatus ? 'Đang kiểm tra...' : 'Kiểm Tra Giao Dịch'}</span>
               </button>
               <button
                 type="button"
-                onClick={() => handleSimulatePayment('FAILED')}
-                className="btn-comic btn-comic-red text-xs py-2 font-black flex-1"
+                onClick={handleCancelOrder}
+                disabled={cancelOrderMutation.isPending}
+                className="btn-comic btn-comic-red text-xs py-2 font-black"
               >
                 <X className="w-4 h-4" strokeWidth={3} />
-                <span>Giả Lập Thất Bại</span>
+                <span>Hủy Đơn</span>
               </button>
             </div>
           </div>

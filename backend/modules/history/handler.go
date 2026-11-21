@@ -103,7 +103,7 @@ func (h *Handler) GetRecentHistory(c *gin.Context) {
 		audioMap[a.ID] = a
 	}
 
-	var consolidated []domain.ConsolidatedHistoryItem
+	consolidated := make([]domain.ConsolidatedHistoryItem, 0, len(uniqueAudioIDs))
 	for _, aID := range uniqueAudioIDs {
 		audio, exists := audioMap[aID]
 		if !exists {
@@ -165,18 +165,22 @@ func (h *Handler) RecordHistory(c *gin.Context) {
 		return
 	}
 
-	// Chỉ lưu nhật ký nếu nghe >= 30 giây
+	// Chỉ lưu nhật ký nếu nghe >= 30 giây; chặn giá trị ảo vượt quá 4 giờ/lần gửi
 	if req.DurationListened < 30 {
 		response.OK(c, gin.H{"recorded": false, "reason": "duration < 30s"}, nil)
 		return
+	}
+	duration := req.DurationListened
+	if duration > 14400 {
+		duration = 14400
 	}
 
 	hist := domain.ListeningHistory{
 		UserID:           userID,
 		AudioID:          req.AudioID,
 		EpisodeID:        req.EpisodeID,
-		DurationListened: req.DurationListened,
-		StartedAt:        time.Now().UTC().Add(-time.Duration(req.DurationListened) * time.Second),
+		DurationListened: duration,
+		StartedAt:        time.Now().UTC().Add(-time.Duration(duration) * time.Second),
 		CreatedAt:        time.Now().UTC(),
 	}
 
@@ -207,12 +211,16 @@ func (h *Handler) BatchRecordHistory(c *gin.Context) {
 		if item.DurationListened < 10 {
 			continue
 		}
+		dur := item.DurationListened
+		if dur > 14400 {
+			dur = 14400
+		}
 		records = append(records, domain.ListeningHistory{
 			UserID:           userID,
 			AudioID:          item.AudioID,
 			EpisodeID:        item.EpisodeID,
-			DurationListened: item.DurationListened,
-			StartedAt:        now.Add(-time.Duration(item.DurationListened) * time.Second),
+			DurationListened: dur,
+			StartedAt:        now.Add(-time.Duration(dur) * time.Second),
 			CreatedAt:        now,
 		})
 	}

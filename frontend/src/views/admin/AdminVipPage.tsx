@@ -73,9 +73,17 @@ export const AdminVipPage: React.FC = () => {
   };
 
   const handlePackageChange = (index: number, field: keyof MembershipPackage, val: unknown) => {
-    const updated = [...packages];
-    updated[index] = { ...updated[index], [field]: val };
-    setPackages(updated);
+    setPackages((prev) =>
+      prev.map((pkg, idx) => (idx === index ? { ...pkg, [field]: val } : pkg))
+    );
+  };
+
+  const handlePriceChange = (index: number, val: number) => {
+    setPackages((prev) =>
+      prev.map((pkg, idx) =>
+        idx === index ? { ...pkg, priceVND: val, amount: val } : pkg
+      )
+    );
   };
 
   const handlePerkChange = (pkgIndex: number, perkIndex: number, val: string) => {
@@ -103,7 +111,8 @@ export const AdminVipPage: React.FC = () => {
   const handleSavePackages = async () => {
     try {
       toast.info('Đang lưu bảng giá và gói VIP...');
-      await updatePackagesMutation.mutateAsync(packages);
+      const sanitized = packages.map(({ isLocked: _l, isCurrent: _c, canUpgrade: _u, ...rest }) => rest);
+      await updatePackagesMutation.mutateAsync(sanitized);
       toast.success('Đã lưu cấu hình gói VIP thành công!');
     } catch (err: unknown) {
       toast.error((err as Error).message || 'Lỗi lưu gói VIP');
@@ -338,9 +347,8 @@ export const AdminVipPage: React.FC = () => {
                       type="number"
                       value={pkg.priceVND || pkg.amount || 0}
                       onChange={(e) => {
-                        const val = Number(e.target.value);
-                        handlePackageChange(pIdx, 'priceVND', val);
-                        handlePackageChange(pIdx, 'amount', val);
+                        const val = Math.max(0, Number(e.target.value) || 0);
+                        handlePriceChange(pIdx, val);
                       }}
                       className="input-comic text-xs font-mono font-bold"
                     />

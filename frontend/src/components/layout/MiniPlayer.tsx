@@ -5,11 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Play,
   Pause,
-  RotateCcw,
-  RotateCw,
   Lock,
-  X,
-  Maximize2,
 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -26,11 +22,9 @@ export const MiniPlayer: React.FC = () => {
     duration,
     playbackRate,
     togglePlay,
-    skipSeconds,
     seekTo,
     cycleSpeed,
     setScreenLocked,
-    close,
   } = usePlayerStore();
 
   if (!currentAudio) return null;
@@ -104,41 +98,8 @@ export const MiniPlayer: React.FC = () => {
           </div>
         </div>
 
-        {/* Desktop Center Zone: Transport + Seekbar */}
+        {/* Desktop Center Zone: Seekbar */}
         <div className="hidden md:flex flex-col items-center gap-1 flex-1 max-w-lg">
-          <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => skipSeconds(-10)}
-              className="w-8 h-8 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] hover:bg-[var(--surface-muted)] flex items-center justify-center text-[var(--ink-primary)] cursor-pointer transition-colors"
-              title="Tua lùi 10s"
-            >
-              <RotateCcw className="w-4 h-4" strokeWidth={2.25} />
-            </button>
-            <button
-              type="button"
-              onClick={() => togglePlay()}
-              className={`w-10 h-10 rounded-full border-2 border-[#111113] ${
-                isPlaying ? 'bg-[#FFE600] text-[#111113]' : 'bg-[#3A86FF] text-white'
-              } flex items-center justify-center shadow-comic-sm hover:scale-105 active:translate-y-0.5 cursor-pointer transition-all`}
-              title={isPlaying ? 'Tạm dừng' : 'Phát tiếp'}
-            >
-              {isPlaying ? (
-                <Pause className="w-5 h-5 fill-current" strokeWidth={2.5} />
-              ) : (
-                <Play className="w-5 h-5 fill-current ml-0.5" strokeWidth={2.5} />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => skipSeconds(10)}
-              className="w-8 h-8 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] hover:bg-[var(--surface-muted)] flex items-center justify-center text-[var(--ink-primary)] cursor-pointer transition-colors"
-              title="Tua tới 10s"
-            >
-              <RotateCw className="w-4 h-4" strokeWidth={2.25} />
-            </button>
-          </div>
-
           <div className="w-full flex items-center gap-2 text-[10px] font-mono font-bold text-[var(--ink-muted)]">
             <span className="w-11 text-right">{formatTime(currentTime)}</span>
             <input
@@ -154,45 +115,22 @@ export const MiniPlayer: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Zone: Speed, Screen Lock, Mobile Play/Skip, Open Detail, Close */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        {/* Right Zone: Chỉ hiển thị 3 nút: Tua tốc độ (x2), Play/Pause, Khóa màn hình */}
+        <div
+          data-testid="mini-player-controls"
+          className="flex items-center gap-2 shrink-0"
+        >
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               cycleSpeed(user?.id);
             }}
-            className="h-8 px-2 rounded-lg border-2 border-[#111113] bg-[#FFE600] font-black text-xs text-[#111113] shadow-comic-sm hover:scale-105 active:translate-y-0.5 flex items-center justify-center shrink-0 cursor-pointer"
+            className="h-9 px-2.5 rounded-lg border-2 border-[#111113] bg-[#FFE600] font-black text-xs text-[#111113] shadow-comic-sm hover:scale-105 active:translate-y-0.5 flex items-center justify-center shrink-0 cursor-pointer"
             title={`Tốc độ hiện tại: ${playbackRate}x (Nhấp để đổi)`}
+            aria-label="Tốc độ phát"
           >
             {playbackRate}x
-          </button>
-
-          {isPlaying && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setScreenLocked(true);
-              }}
-              className="w-8 h-8 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] flex items-center justify-center text-[var(--ink-primary)] shadow-comic-sm hover:bg-[#FFE600] hover:text-[#111113] active:translate-y-0.5 cursor-pointer"
-              title="Giữ màn hình / Khóa màn hình (Tránh chạm nhầm)"
-            >
-              <Lock className="w-4 h-4" strokeWidth={2.25} />
-            </button>
-          )}
-
-          {/* Mobile-only skip & play buttons */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              skipSeconds(10);
-            }}
-            className="md:hidden w-8 h-8 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] flex items-center justify-center text-[var(--ink-primary)] shadow-comic-sm hover:bg-[var(--surface-muted)] cursor-pointer"
-            title="Tua 10s"
-          >
-            <RotateCw className="w-4 h-4" strokeWidth={2.25} />
           </button>
 
           <button
@@ -201,10 +139,11 @@ export const MiniPlayer: React.FC = () => {
               e.stopPropagation();
               togglePlay();
             }}
-            className={`md:hidden w-9 h-9 rounded-lg border-2 border-[#111113] ${
+            className={`w-9 h-9 rounded-lg border-2 border-[#111113] ${
               isPlaying ? 'bg-[#FFE600] text-[#111113]' : 'bg-[#3A86FF] text-white'
-            } flex items-center justify-center shadow-comic-sm active:translate-y-0.5 transition-all cursor-pointer`}
+            } flex items-center justify-center shadow-comic-sm hover:scale-105 active:translate-y-0.5 transition-all cursor-pointer`}
             title={isPlaying ? 'Tạm dừng' : 'Phát tiếp'}
+            aria-label={isPlaying ? 'Tạm dừng' : 'Phát tiếp'}
           >
             {isPlaying ? (
               <Pause className="w-4 h-4 fill-current" strokeWidth={2.5} />
@@ -215,23 +154,15 @@ export const MiniPlayer: React.FC = () => {
 
           <button
             type="button"
-            onClick={handleOpenDetail}
-            className="hidden md:flex w-8 h-8 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] items-center justify-center text-[var(--ink-primary)] hover:bg-[var(--surface-muted)] cursor-pointer"
-            title="Mở trang trình phát đầy đủ"
-          >
-            <Maximize2 className="w-4 h-4" strokeWidth={2.25} />
-          </button>
-
-          <button
-            type="button"
             onClick={(e) => {
               e.stopPropagation();
-              close();
+              setScreenLocked(true);
             }}
-            className="w-8 h-8 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-muted)] flex items-center justify-center text-[var(--ink-secondary)] hover:text-[#E63946] hover:border-[#E63946] cursor-pointer transition-colors"
-            title="Đóng trình phát"
+            className="w-9 h-9 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] flex items-center justify-center text-[var(--ink-primary)] shadow-comic-sm hover:bg-[#FFE600] hover:text-[#111113] active:translate-y-0.5 cursor-pointer"
+            title="Giữ màn hình / Khóa màn hình (Tránh chạm nhầm)"
+            aria-label="Khóa màn hình"
           >
-            <X className="w-4 h-4" strokeWidth={2.5} />
+            <Lock className="w-4 h-4" strokeWidth={2.25} />
           </button>
         </div>
       </div>

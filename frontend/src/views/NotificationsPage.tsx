@@ -172,11 +172,13 @@ export const NotificationsPage: React.FC = () => {
   const handleNotificationClick = async (id: number | string, link?: string) => {
     await markReadMutation.mutateAsync(id);
     if (link) {
-      if (link.startsWith('#/')) {
-        navigate(link.substring(1));
-      } else {
-        navigate(link);
+      let target = link.startsWith('#/') ? link.substring(1) : link;
+      // Rewrite legacy hash/query player links (#/player?audioId=123 or /player?id=123) to /player/123
+      const legacyMatch = target.match(/^\/player\?(?:audioId|id)=(\d+)/i);
+      if (legacyMatch) {
+        target = `/player/${legacyMatch[1]}`;
       }
+      navigate(target);
     }
   };
 

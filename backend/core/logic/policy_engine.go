@@ -1,6 +1,8 @@
 package logic
 
 import (
+	"time"
+
 	"audio-app-backend/core/domain"
 )
 
@@ -8,9 +10,23 @@ const (
 	MaxFreeImportsPerDay = 5
 )
 
+// IsActiveVIPOrAdmin kiểm tra quyền Admin hoặc VIP đang còn hạn sử dụng
+func IsActiveVIPOrAdmin(user domain.User) bool {
+	if user.Role == domain.RoleAdmin {
+		return true
+	}
+	if user.Role == domain.RoleVIP || user.Membership == domain.MembershipVIP {
+		if user.VipExpiresAt != nil && time.Now().UTC().After(*user.VipExpiresAt) {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 // CanImportYouTube kiểm tra quyền nhập link YouTube theo cấp bậc người dùng
 func CanImportYouTube(user domain.User, todayImportCount int) (bool, string) {
-	if user.Role == domain.RoleAdmin || user.Role == domain.RoleVIP || user.Membership == domain.MembershipVIP {
+	if IsActiveVIPOrAdmin(user) {
 		return true, ""
 	}
 
@@ -37,7 +53,7 @@ func CanAccessEpisode(user domain.User, audio domain.Audio, episode domain.Episo
 		return true, ""
 	}
 
-	if user.Role == domain.RoleAdmin || user.Role == domain.RoleVIP || user.Membership == domain.MembershipVIP {
+	if IsActiveVIPOrAdmin(user) {
 		return true, ""
 	}
 

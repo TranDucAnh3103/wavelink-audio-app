@@ -18,6 +18,8 @@ export interface PaymentInfo {
   accountNumber: string;
   accountName: string;
   notePrefix?: string;
+  provider?: string;
+  payosConfigured?: boolean;
 }
 
 export interface MyMembership {
@@ -34,6 +36,12 @@ export interface MyMembership {
 export interface MembershipOrder {
   id?: number;
   orderCode: string;
+  payosOrderCode?: number;
+  paymentLinkId?: string;
+  checkoutUrl?: string;
+  qrCode?: string;
+  provider?: string;
+  bankBin?: string;
   userId?: number;
   packageId: string;
   packageName?: string;
@@ -47,5 +55,14 @@ export interface MembershipOrder {
   qrCodeUrl: string;
   status: string;
   expiresAt?: string;
+  paidAt?: string | null;
   createdAt?: string;
+  token?: string;
+  user?: {
+    id: number;
+    username: string;
+    role: 'ADMIN' | 'VIP' | 'USER' | 'GUEST';
+    membership?: string;
+    vipExpiresAt?: string | null;
+  };
 }

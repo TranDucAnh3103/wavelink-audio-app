@@ -635,18 +635,28 @@ func TestEndToEndAPI(t *testing.T) {
 			t.Fatalf("Order code or QR URL is missing: %+v", orderData)
 		}
 
-		// Simulate Payment SUCCESS
+		// Regular user must NOT be allowed to self-grant free VIP via /simulate (403 Forbidden)
 		simPayload := map[string]string{
 			"status": "SUCCESS",
 		}
 		simBody, _ := json.Marshal(simPayload)
+		userSimReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/membership/orders/%s/simulate", orderCode), bytes.NewReader(simBody))
+		userSimReq.Header.Set("Content-Type", "application/json")
+		userSimReq.Header.Set("Authorization", "Bearer "+user123Token)
+		userSimW := httptest.NewRecorder()
+		app.ServeHTTP(userSimW, userSimReq)
+		if userSimW.Code != http.StatusForbidden {
+			t.Fatalf("Expected 403 Forbidden when regular user calls /simulate, got %d: %s", userSimW.Code, userSimW.Body.String())
+		}
+
+		// Admin simulation in non-prod test environment succeeds and upgrades user123
 		simReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/membership/orders/%s/simulate", orderCode), bytes.NewReader(simBody))
 		simReq.Header.Set("Content-Type", "application/json")
-		simReq.Header.Set("Authorization", "Bearer "+user123Token)
+		simReq.Header.Set("Authorization", "Bearer "+adminToken)
 		simW := httptest.NewRecorder()
 		app.ServeHTTP(simW, simReq)
 		if simW.Code != http.StatusOK {
-			t.Fatalf("Expected 200 OK on payment simulation, got %d: %s", simW.Code, simW.Body.String())
+			t.Fatalf("Expected 200 OK on admin payment simulation in non-prod, got %d: %s", simW.Code, simW.Body.String())
 		}
 
 		// Verify user123 CAN NOW access the VIP audio!
@@ -763,15 +773,33 @@ func TestEndToEndAPI(t *testing.T) {
 		upOrderData := upRes.Data.(map[string]interface{})
 		upOrderCode := upOrderData["orderCode"].(string)
 
-		// Simulate payment SUCCESS for 3M upgrade
+		// Simulate payment SUCCESS for 3M upgrade (admin-only in non-prod)
 		simBody, _ := json.Marshal(map[string]string{"status": "SUCCESS"})
 		simReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/membership/orders/%s/simulate", upOrderCode), bytes.NewReader(simBody))
 		simReq.Header.Set("Content-Type", "application/json")
-		simReq.Header.Set("Authorization", "Bearer "+user123Token)
+		simReq.Header.Set("Authorization", "Bearer "+adminToken)
 		simW := httptest.NewRecorder()
 		app.ServeHTTP(simW, simReq)
 		if simW.Code != http.StatusOK {
 			t.Fatalf("Expected 200 OK on upgrade simulation, got %d", simW.Code)
+		}
+
+		// Verify /api/v1/audios/quota is properly routed (200 OK, not 404)
+		quotaReq := httptest.NewRequest(http.MethodGet, "/api/v1/audios/quota", nil)
+		quotaReq.Header.Set("Authorization", "Bearer "+user123Token)
+		quotaW := httptest.NewRecorder()
+		app.ServeHTTP(quotaW, quotaReq)
+		if quotaW.Code != http.StatusOK {
+			t.Fatalf("Expected 200 OK for GET /api/v1/audios/quota, got %d: %s", quotaW.Code, quotaW.Body.String())
+		}
+
+		// Verify unverified Google login account takeover is blocked (401 Unauthorized)
+		gReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/google", bytes.NewReader([]byte(`{"email":"admin@audioapp.com"}`)))
+		gReq.Header.Set("Content-Type", "application/json")
+		gW := httptest.NewRecorder()
+		app.ServeHTTP(gW, gReq)
+		if gW.Code != http.StatusUnauthorized {
+			t.Fatalf("Expected 401 Unauthorized for unverified Google login payload, got %d: %s", gW.Code, gW.Body.String())
 		}
 
 		// Verify User123's packages endpoint now marks VIP_1M and VIP_3M as locked, and VIP_1Y as canUpgrade

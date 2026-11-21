@@ -92,11 +92,23 @@ export const LibraryPage: React.FC = () => {
   const pageSize = DEFAULT_PAGE_SIZE;
 
   useEffect(() => {
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo(0, 0);
+    }
+  }, []);
+
+  useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, activeCategory, activeStatus]);
 
   const totalPages = Math.max(1, Math.ceil(uniqueAudios.length / pageSize));
   const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+    }
+  }, [safeCurrentPage, activeCategory, activeStatus, searchQuery, urlSearch, urlUserId]);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -387,7 +399,7 @@ export const LibraryPage: React.FC = () => {
                           <span className="badge-comic badge-comic-blue text-[9px] py-0 px-1.5 font-bold truncate">
                             {a.categoryName || 'Chung'}
                           </span>
-                          {a.isVIPOnly && (
+                          {(a.isVIPOnly || a.isVipOnly) && (
                             <span className="badge-comic badge-comic-purple text-[8px] py-0 px-1 font-black">
                               VIP
                             </span>

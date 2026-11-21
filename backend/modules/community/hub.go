@@ -35,12 +35,14 @@ type WSMessage struct {
 
 // Client đại diện cho 1 kết nối WebSocket của người dùng
 type Client struct {
-	hub      *Hub
-	conn     *websocket.Conn
-	send     chan []byte
-	userID   uint
-	username string
-	isVIP    bool
+	hub       *Hub
+	conn      *websocket.Conn
+	send      chan []byte
+	userID    uint
+	username  string
+	avatarURL string
+	role      string
+	isVIP     bool
 }
 
 // Hub quản lý tập trung toàn bộ kết nối WebSocket và broadcast tin nhắn
@@ -63,6 +65,28 @@ func NewHub() *Hub {
 	return h
 }
 
+func (h *Hub) fanOutLocked(message []byte) {
+	for client := range h.clients {
+		select {
+		case client.send <- message:
+		default:
+			close(client.send)
+			delete(h.clients, client)
+		}
+	}
+}
+
+func (h *Hub) fanOutOnlineCountLocked() {
+	bytes, err := json.Marshal(WSMessage{
+		Type:  "online_count",
+		Count: len(h.clients),
+	})
+	if err != nil {
+		return
+	}
+	h.fanOutLocked(bytes)
+}
+
 func (h *Hub) run() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -73,10 +97,10 @@ func (h *Hub) run() {
 			h.mu.Lock()
 			h.clients[client] = true
 			count := len(h.clients)
+			h.fanOutOnlineCountLocked()
 			h.mu.Unlock()
 
 			slog.Info("Người dùng đã kết nối Community WebSocket", "user", client.username, "online", count)
-			h.BroadcastOnlineCount(count)
 
 		case client := <-h.unregister:
 			h.mu.Lock()
@@ -85,40 +109,36 @@ func (h *Hub) run() {
 				close(client.send)
 			}
 			count := len(h.clients)
+			h.fanOutOnlineCountLocked()
 			h.mu.Unlock()
 
 			slog.Info("Người dùng ngắt kết nối Community WebSocket", "user", client.username, "online", count)
-			h.BroadcastOnlineCount(count)
 
 		case message := <-h.broadcast:
-			h.mu.RLock()
-			for client := range h.clients {
-				select {
-				case client.send <- message:
-				default:
-					close(client.send)
-					delete(h.clients, client)
-				}
-			}
-			h.mu.RUnlock()
+			h.mu.Lock()
+			h.fanOutLocked(message)
+			h.mu.Unlock()
 
 		case <-ticker.C:
-			h.mu.RLock()
-			count := len(h.clients)
-			h.mu.RUnlock()
-			h.BroadcastOnlineCount(count)
+			h.mu.Lock()
+			h.fanOutOnlineCountLocked()
+			h.mu.Unlock()
 		}
 	}
 }
 
-// Broadcast gửi dữ liệu đến toàn bộ client đang online
+// Broadcast gửi dữ liệu đến toàn bộ client đang online (non-blocking tránh deadlock khi kênh đầy)
 func (h *Hub) Broadcast(msg WSMessage) {
 	bytes, err := json.Marshal(msg)
 	if err != nil {
 		slog.Error("Lỗi serialize WSMessage", "error", err)
 		return
 	}
-	h.broadcast <- bytes
+	select {
+	case h.broadcast <- bytes:
+	default:
+		slog.Warn("Kênh broadcast Community WebSocket đang đầy, bỏ qua gói tin")
+	}
 }
 
 // BroadcastOnlineCount phát số lượng độc giả đang trực tuyến thực tế

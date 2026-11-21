@@ -1,10 +1,10 @@
 package auth
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -192,29 +192,6 @@ func (h *Handler) Logout(c *gin.Context) {
 	response.OK(c, gin.H{"message": "Đăng xuất thành công"}, nil)
 }
 
-func parseJWTClaims(tokenString string) (map[string]interface{}, error) {
-	parts := strings.Split(tokenString, ".")
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("invalid jwt format")
-	}
-	payloadSegment := parts[1]
-	if l := len(payloadSegment) % 4; l > 0 {
-		payloadSegment += strings.Repeat("=", 4-l)
-	}
-	decoded, err := base64.URLEncoding.DecodeString(payloadSegment)
-	if err != nil {
-		decoded, err = base64.StdEncoding.DecodeString(payloadSegment)
-		if err != nil {
-			return nil, err
-		}
-	}
-	var claims map[string]interface{}
-	if err := json.Unmarshal(decoded, &claims); err != nil {
-		return nil, err
-	}
-	return claims, nil
-}
-
 func (h *Handler) GoogleLogin(c *gin.Context) {
 	var req GoogleLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -222,80 +199,57 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 		return
 	}
 
-	var email, name, picture, googleID string
-	email = strings.TrimSpace(req.Email)
-	name = strings.TrimSpace(req.Name)
-	picture = strings.TrimSpace(req.Picture)
-	googleID = strings.TrimSpace(req.GoogleID)
+	req.Credential = strings.TrimSpace(req.Credential)
+	req.AccessToken = strings.TrimSpace(req.AccessToken)
+	if req.Credential == "" && req.AccessToken == "" {
+		response.Unauthorized(c, "Thiếu mã xác thực Google (credential hoặc accessToken)")
+		return
+	}
 
-	// 1. Nếu có Credential (ID Token của Google), phân tích và xác thực
+	var email, name, picture, googleID string
+	verified := false
+
+	// 1. Xác thực ID Token (Credential) trực tiếp với Google TokenInfo API (không fallback tự decode JWT chưa xác minh)
 	if req.Credential != "" {
-		// Thử gọi TokenInfo API chính thức của Google
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Get("https://oauth2.googleapis.com/tokeninfo?id_token=" + req.Credential)
+		client := &http.Client{Timeout: 6 * time.Second}
+		resp, err := client.Get("https://oauth2.googleapis.com/tokeninfo?id_token=" + url.QueryEscape(req.Credential))
 		if err == nil && resp.StatusCode == http.StatusOK {
 			defer resp.Body.Close()
 			var info GoogleTokenInfo
-			if err := json.NewDecoder(resp.Body).Decode(&info); err == nil {
-				if info.Email != "" {
-					email = info.Email
-				}
-				if info.Name != "" {
-					name = info.Name
-				}
-				if info.Picture != "" {
-					picture = info.Picture
-				}
-				if info.Sub != "" {
-					googleID = info.Sub
-				}
+			if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && (info.Sub != "" || info.Email != "") {
+				email = strings.TrimSpace(info.Email)
+				name = strings.TrimSpace(info.Name)
+				picture = strings.TrimSpace(info.Picture)
+				googleID = strings.TrimSpace(info.Sub)
+				verified = true
 			}
-		} else {
-			// Fallback decode an toàn claims từ JWT nếu không thể kết nối tới Google
-			if claims, err := parseJWTClaims(req.Credential); err == nil {
-				if em, ok := claims["email"].(string); ok && em != "" {
-					email = em
-				}
-				if nm, ok := claims["name"].(string); ok && nm != "" {
-					name = nm
-				}
-				if pic, ok := claims["picture"].(string); ok && pic != "" {
-					picture = pic
-				}
-				if sub, ok := claims["sub"].(string); ok && sub != "" {
-					googleID = sub
-				}
-			}
+		} else if resp != nil {
+			resp.Body.Close()
 		}
 	}
 
-	// 2. Nếu có AccessToken và chưa đủ thông tin, thử lấy từ Google UserInfo
-	if (email == "" || name == "" || picture == "") && req.AccessToken != "" {
-		client := &http.Client{Timeout: 5 * time.Second}
+	// 2. Xác thực qua Google AccessToken (UserInfo API)
+	if !verified && req.AccessToken != "" {
+		client := &http.Client{Timeout: 6 * time.Second}
 		uReq, _ := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v3/userinfo", nil)
 		uReq.Header.Set("Authorization", "Bearer "+req.AccessToken)
 		if resp, err := client.Do(uReq); err == nil && resp.StatusCode == http.StatusOK {
 			defer resp.Body.Close()
 			var info GoogleTokenInfo
-			if err := json.NewDecoder(resp.Body).Decode(&info); err == nil {
-				if email == "" {
-					email = info.Email
-				}
-				if name == "" {
-					name = info.Name
-				}
-				if picture == "" {
-					picture = info.Picture
-				}
-				if googleID == "" {
-					googleID = info.Sub
-				}
+			if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && (info.Sub != "" || info.Email != "") {
+				email = strings.TrimSpace(info.Email)
+				name = strings.TrimSpace(info.Name)
+				picture = strings.TrimSpace(info.Picture)
+				googleID = strings.TrimSpace(info.Sub)
+				verified = true
 			}
+		} else if resp != nil {
+			resp.Body.Close()
 		}
 	}
 
-	if email == "" && googleID == "" {
-		response.BadRequest(c, "Không tìm thấy thông tin tài khoản Google hợp lệ")
+	if !verified || (email == "" && googleID == "") {
+		response.Unauthorized(c, "Xác thực tài khoản Google thất bại hoặc token đã hết hạn")
 		return
 	}
 

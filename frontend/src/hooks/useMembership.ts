@@ -91,12 +91,14 @@ export function useResetPackages() {
 
 export function useMyMembership() {
   const { user } = useAuthStore();
+  const isAuthenticatedMember = Boolean(user && !user.isGuest && user.role !== 'GUEST');
   return useQuery({
     queryKey: ['my-membership', user?.id],
     queryFn: () => {
       const { isLive } = useAuthStore.getState();
       return api.membership.getMyMembership(isLive);
     },
+    enabled: isAuthenticatedMember,
   });
 }
 
@@ -105,6 +107,15 @@ export function useCreateMembershipOrder() {
     mutationFn: (packageId: string) => {
       const { isLive } = useAuthStore.getState();
       return api.membership.createOrder(packageId, isLive);
+    },
+  });
+}
+
+export function useCancelMembershipOrder() {
+  return useMutation({
+    mutationFn: (orderCode: string) => {
+      const { isLive } = useAuthStore.getState();
+      return api.membership.cancelOrder(orderCode, isLive);
     },
   });
 }
@@ -124,6 +135,8 @@ export function useSimulatePayment() {
       queryClient.invalidateQueries({ queryKey: ['membership-packages'] });
       queryClient.invalidateQueries({ queryKey: ['stats'] });
       queryClient.invalidateQueries({ queryKey: ['import-quota'] });
+      queryClient.invalidateQueries({ queryKey: ['audios'] });
+      queryClient.invalidateQueries({ queryKey: ['audio'] });
     },
   });
 }

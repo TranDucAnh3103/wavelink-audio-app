@@ -20,9 +20,9 @@ export default {
         'comic-purple': '#8338EC',
       },
       fontFamily: {
-        sans: ['var(--font-sans)', 'Plus Jakarta Sans', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
-        comic: ['var(--font-comic)', 'Space Grotesk', 'sans-serif'],
-        mono: ['var(--font-mono)', 'JetBrains Mono', 'monospace'],
+        sans: ['var(--font-sans)', '"Nunito"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        comic: ['var(--font-comic)', '"Baloo 2"', '"Nunito"', 'sans-serif'],
+        mono: ['var(--font-mono)', '"JetBrains Mono"', 'monospace'],
       },
     },
   },

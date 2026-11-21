@@ -103,7 +103,10 @@ func (h *Handler) ListAudios(c *gin.Context) {
 
 	if search != "" {
 		likePattern := "%" + search + "%"
-		query = query.Where("youtube_videos.title LIKE ? OR youtube_videos.author_name LIKE ? OR youtube_videos.youtube_video_id LIKE ?", likePattern, likePattern, likePattern)
+		query = query.Where(
+			"youtube_videos.title LIKE ? OR youtube_videos.author_name LIKE ? OR youtube_videos.youtube_video_id LIKE ? OR EXISTS (SELECT 1 FROM audio_tags JOIN tags ON tags.id = audio_tags.tag_id WHERE audio_tags.audio_id = youtube_videos.id AND (tags.name LIKE ? OR tags.slug LIKE ?))",
+			likePattern, likePattern, likePattern, likePattern, likePattern,
+		)
 	}
 
 	if catIDStr != "" {
@@ -320,21 +323,24 @@ func (h *Handler) GetAudioByID(c *gin.Context) {
 		return p.EpisodeID
 	})
 
-	// Gắn progress và trạng thái VIP/Khóa vào từng episode
-	isVipOrAdmin := currentUser.Role == domain.RoleAdmin || currentUser.Role == domain.RoleVIP || currentUser.Membership == domain.MembershipVIP
+	// Gắn progress và trạng thái VIP/Khóa vào từng episode (tôn trọng FreeEpisodesCount & kiểm tra hạn VIP)
+	isVipOrAdmin := logic.IsActiveVIPOrAdmin(currentUser)
+	freeLimit := 1
+	if audio.FreeEpisodesCount != nil {
+		freeLimit = *audio.FreeEpisodesCount
+	}
 	for i := range episodes {
 		if p, found := progressByEp[episodes[i].ID]; found {
 			episodes[i].Completed = p.Completed
 			episodes[i].ProgressPercent = p.ProgressPercent
 			episodes[i].PositionSeconds = p.PositionSeconds
 		}
-		if audio.IsVIPOnly {
+		if audio.IsVIPOnly && (freeLimit == 0 || episodes[i].EpisodeNumber > freeLimit) {
 			episodes[i].IsVIP = true
 		}
-		// Khóa logic: tập 1 luôn mở cho tất cả mọi người; nếu là truyện VIP/tập VIP thì khóa từ tập 2 trở đi đối với người dùng không phải VIP/Admin
 		if audio.IsVIPOnly || episodes[i].IsVIP {
 			if !isVipOrAdmin {
-				if episodes[i].EpisodeNumber > 1 {
+				if freeLimit == 0 || episodes[i].EpisodeNumber > freeLimit {
 					episodes[i].IsLocked = true
 				} else {
 					episodes[i].IsLocked = false
@@ -400,7 +406,7 @@ func (h *Handler) GetImportQuota(c *gin.Context) {
 		return
 	}
 
-	isVipOrAdmin := currentUser.Role == domain.RoleAdmin || currentUser.Role == domain.RoleVIP || currentUser.Membership == domain.MembershipVIP
+	isVipOrAdmin := logic.IsActiveVIPOrAdmin(currentUser)
 
 	now := time.Now()
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
@@ -507,6 +513,9 @@ func (h *Handler) ImportYouTube(c *gin.Context) {
 			}
 		}
 
+		// Chỉ Admin mới được phép gắn cờ nội dung độc quyền VIP
+		isVIPOnly := req.IsVIPOnly && currentUser.Role == domain.RoleAdmin
+
 		newAudio = domain.Audio{
 			YoutubeVideoID:       videoID,
 			YoutubeURL:           fmt.Sprintf("https://www.youtube.com/watch?v=%s", videoID),
@@ -517,7 +526,7 @@ func (h *Handler) ImportYouTube(c *gin.Context) {
 			TotalDurationSeconds: duration,
 			CategoryID:           req.CategoryID,
 			Status:               domain.StatusActive,
-			IsVIPOnly:            req.IsVIPOnly,
+			IsVIPOnly:            isVIPOnly,
 			FreeEpisodesCount:    &freeCount,
 			CreatedBy:            currentUser.ID, // Ghi nhận ID người nhập
 		}
@@ -533,7 +542,7 @@ func (h *Handler) ImportYouTube(c *gin.Context) {
 		}
 		epDrafts := logic.ComputeLogicalEpisodes(newAudio.ID, duration, blockSize)
 		for _, draft := range epDrafts {
-			isVIP := req.IsVIPOnly && (draft.EpisodeNumber > freeCount || freeCount == 0)
+			isVIP := isVIPOnly && (draft.EpisodeNumber > freeCount || freeCount == 0)
 			ep := domain.Episode{
 				AudioID:         newAudio.ID,
 				EpisodeNumber:   draft.EpisodeNumber,
@@ -599,7 +608,7 @@ func (h *Handler) ImportYouTube(c *gin.Context) {
 		Title:     "Audio mới sẵn sàng: " + newAudio.Title,
 		Message:   fmt.Sprintf("Audio '%s' (%s, %d tập) đã được xử lý và thêm vào danh mục.", newAudio.Title, newAudio.FormattedDuration, newAudio.TotalEpisodes),
 		Type:      "NEW_EPISODE",
-		Link:      fmt.Sprintf("#/player?audioId=%d", newAudio.ID),
+		Link:      fmt.Sprintf("/player/%d", newAudio.ID),
 		IsRead:    false,
 		CreatedAt: time.Now().UTC(),
 	}
@@ -782,9 +791,17 @@ func (h *Handler) DeleteAudio(c *gin.Context) {
 
 func (h *Handler) RefreshAudio(c *gin.Context) {
 	id := c.Param("id")
+	userID := middleware.GetCurrentUserID(c)
+	userRole := middleware.GetCurrentUserRole(c)
+
 	var audio domain.Audio
 	if err := h.db.First(&audio, id).Error; err != nil {
 		response.NotFound(c, "Không tìm thấy Audio")
+		return
+	}
+
+	if userRole != domain.RoleAdmin && audio.CreatedBy != userID {
+		response.Forbidden(c, "Bạn chỉ có quyền làm mới thông tin audio do chính mình tải lên")
 		return
 	}
 

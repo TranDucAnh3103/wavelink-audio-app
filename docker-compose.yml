@@ -52,6 +52,11 @@ services:
       - VIETQR_ACCOUNT_NUMBER=${VIETQR_ACCOUNT_NUMBER:-0987654321}
       - VIETQR_ACCOUNT_NAME=${VIETQR_ACCOUNT_NAME:-COMIC AUDIO HUB}
       - VIETQR_NOTE_PREFIX=${VIETQR_NOTE_PREFIX:-VIP}
+      - PAYOS_CLIENT_ID=${PAYOS_CLIENT_ID:-}
+      - PAYOS_API_KEY=${PAYOS_API_KEY:-}
+      - PAYOS_CHECKSUM_KEY=${PAYOS_CHECKSUM_KEY:-}
+      - PAYOS_RETURN_URL=${PAYOS_RETURN_URL:-http://localhost:3000/membership?payment=success}
+      - PAYOS_CANCEL_URL=${PAYOS_CANCEL_URL:-http://localhost:3000/membership?payment=cancelled}
     networks:
       - wavelink-net
     healthcheck:
