@@ -1,15 +1,23 @@
 package membership
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
+	"math"
 	"math/big"
+	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"audio-app-backend/config"
 	"audio-app-backend/core/domain"
+	"audio-app-backend/infra/external"
 	"audio-app-backend/modules/notification"
 	"audio-app-backend/server/middleware"
 	"audio-app-backend/server/response"
@@ -19,12 +27,17 @@ import (
 )
 
 type Handler struct {
-	db  *gorm.DB
-	cfg *config.Config
+	db    *gorm.DB
+	cfg   *config.Config
+	payos *external.PayOSClient
 }
 
 func NewHandler(db *gorm.DB, cfg *config.Config) *Handler {
-	return &Handler{db: db, cfg: cfg}
+	var payosClient *external.PayOSClient
+	if cfg != nil && cfg.HasPayOS() {
+		payosClient = external.NewPayOSClient(cfg.PayOSClientID, cfg.PayOSAPIKey, cfg.PayOSChecksumKey)
+	}
+	return &Handler{db: db, cfg: cfg, payos: payosClient}
 }
 
 type VIPPackage struct {
@@ -43,10 +56,12 @@ type VIPPackage struct {
 }
 
 type PaymentInfo struct {
-	BankName      string `json:"bankName"`
-	AccountNumber string `json:"accountNumber"`
-	AccountName   string `json:"accountName"`
-	NotePrefix    string `json:"notePrefix"`
+	BankName        string `json:"bankName"`
+	AccountNumber   string `json:"accountNumber"`
+	AccountName     string `json:"accountName"`
+	NotePrefix      string `json:"notePrefix"`
+	Provider        string `json:"provider,omitempty"`
+	PayOSConfigured bool   `json:"payosConfigured"`
 }
 
 func (h *Handler) GetSettingValue(key string) string {
@@ -58,11 +73,19 @@ func (h *Handler) GetSettingValue(key string) string {
 }
 
 func (h *Handler) GetPaymentSettings() PaymentInfo {
+	payosReady := h.payos != nil && h.payos.IsConfigured()
+	provider := "VIETQR_DEV"
+	if payosReady {
+		provider = "PAYOS"
+	}
+
 	info := PaymentInfo{
-		BankName:      "MB Bank (Quân Đội)",
-		AccountNumber: "0987654321",
-		AccountName:   "COMIC AUDIO HUB",
-		NotePrefix:    "VIP",
+		BankName:        "MB Bank (Quân Đội)",
+		AccountNumber:   "0987654321",
+		AccountName:     "COMIC AUDIO HUB",
+		NotePrefix:      "VIP",
+		Provider:        provider,
+		PayOSConfigured: payosReady,
 	}
 
 	if h.cfg != nil {
@@ -100,10 +123,17 @@ func (h *Handler) GetDynamicPackages() []VIPPackage {
 	if val := h.GetSettingValue("vip_packages"); val != "" {
 		var pkgs []VIPPackage
 		if err := json.Unmarshal([]byte(val), &pkgs); err == nil && len(pkgs) > 0 {
+			for i := range pkgs {
+				pkgs[i].IsLocked = false
+				pkgs[i].IsCurrent = false
+				pkgs[i].CanUpgrade = false
+			}
 			return pkgs
 		}
 	}
-	return AvailablePackages
+	out := make([]VIPPackage, len(AvailablePackages))
+	copy(out, AvailablePackages)
+	return out
 }
 
 var AvailablePackages = []VIPPackage{
@@ -131,7 +161,7 @@ var AvailablePackages = []VIPPackage{
 		DurationDays: 90,
 		OriginalCost: 177000,
 		Discount:     "Tiết kiệm 27% (Khuyên dùng)",
-		Description:  "Tiết kiệm 15% - Đồng bộ tốc độ cao",
+		Description:  "Tiết kiệm 27% - Đồng bộ tốc độ cao",
 		Perks: []string{
 			"Mọi đặc quyền của gói VIP 1 Tháng",
 			"Thời lượng kéo dài 90 ngày liên tục",
@@ -147,7 +177,7 @@ var AvailablePackages = []VIPPackage{
 		DurationDays: 365,
 		OriginalCost: 708000,
 		Discount:     "Tiết kiệm 44% (Siêu rẻ)",
-		Description:  "Tiết kiệm 35% - Đặc quyền tối cao",
+		Description:  "Tiết kiệm 44% - Đặc quyền tối cao",
 		Perks: []string{
 			"Toàn bộ đặc quyền cao cấp nhất của hệ thống",
 			"365 ngày VIP không lo gia hạn",
@@ -186,9 +216,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	{
 		mem.GET("/packages", h.GetPackages)
 		mem.GET("/payment-info", h.GetPaymentInfo)
+		mem.POST("/payos/webhook", h.PayOSWebhook)
 		mem.GET("/me", middleware.RequireAuth(), h.GetMyMembership)
 		mem.POST("/orders", middleware.RequireAuth(), h.CreateOrder)
 		mem.GET("/orders/:orderCode", middleware.RequireAuth(), h.GetOrder)
+		mem.POST("/orders/:orderCode/cancel", middleware.RequireAuth(), h.CancelOrder)
 		mem.POST("/orders/:orderCode/simulate", middleware.RequireAuth(), h.SimulatePayment)
 		mem.POST("/cancel-vip", middleware.RequireAuth(), h.CancelVIP)
 		mem.POST("/refund", middleware.RequireAuth(), h.RequestRefund)
@@ -212,7 +244,8 @@ func (h *Handler) GetPackages(c *gin.Context) {
 	if userID > 0 {
 		var u domain.User
 		if err := h.db.First(&u, userID).Error; err == nil {
-			isVip := u.Role == domain.RoleVIP || u.Membership == domain.MembershipVIP || (u.VipExpiresAt != nil && u.VipExpiresAt.After(time.Now().UTC()))
+			isVip := (u.Role == domain.RoleVIP || u.Membership == domain.MembershipVIP) &&
+				(u.VipExpiresAt == nil || u.VipExpiresAt.After(time.Now().UTC()))
 			if isVip {
 				var latestPaid domain.MembershipOrder
 				h.db.Where("user_id = ? AND status = 'PAID'", userID).Order("paid_at DESC, created_at DESC").First(&latestPaid)
@@ -272,7 +305,7 @@ func (h *Handler) AdminUpdatePaymentInfo(c *gin.Context) {
 		}
 	}
 
-	response.OK(c, req, nil)
+	response.OK(c, h.GetPaymentSettings(), nil)
 }
 
 func (h *Handler) AdminUpdatePackages(c *gin.Context) {
@@ -284,8 +317,23 @@ func (h *Handler) AdminUpdatePackages(c *gin.Context) {
 		return
 	}
 
+	// Sanitize runtime user-specific flags before saving into system_settings
+	cleaned := make([]VIPPackage, len(req.Packages))
+	for i, p := range req.Packages {
+		if p.Amount <= 0 && p.PriceVND > 0 {
+			p.Amount = p.PriceVND
+		}
+		if p.PriceVND <= 0 && p.Amount > 0 {
+			p.PriceVND = p.Amount
+		}
+		p.IsLocked = false
+		p.IsCurrent = false
+		p.CanUpgrade = false
+		cleaned[i] = p
+	}
+
 	now := time.Now().UTC()
-	bytes, err := json.Marshal(req.Packages)
+	bytes, err := json.Marshal(cleaned)
 	if err != nil {
 		response.BadRequest(c, "Không thể mã hóa dữ liệu: "+err.Error())
 		return
@@ -298,7 +346,7 @@ func (h *Handler) AdminUpdatePackages(c *gin.Context) {
 		h.db.Create(&domain.SystemSetting{Key: "vip_packages", Value: string(bytes), UpdatedAt: now})
 	}
 
-	response.OK(c, req.Packages, nil)
+	response.OK(c, cleaned, nil)
 }
 
 func (h *Handler) AdminResetPackages(c *gin.Context) {
@@ -315,8 +363,9 @@ func (h *Handler) GetMyMembership(c *gin.Context) {
 		return
 	}
 
+	now := time.Now().UTC()
 	isVip := u.Role == domain.RoleAdmin || u.Role == domain.RoleVIP || u.Membership == domain.MembershipVIP
-	if u.VipExpiresAt != nil && time.Now().UTC().After(*u.VipExpiresAt) && u.Role != domain.RoleAdmin {
+	if u.VipExpiresAt != nil && now.After(*u.VipExpiresAt) && u.Role != domain.RoleAdmin {
 		isVip = false
 		// Tự động chuyển về FREE nếu hết hạn
 		h.db.Model(&u).Updates(map[string]interface{}{
@@ -327,19 +376,80 @@ func (h *Handler) GetMyMembership(c *gin.Context) {
 		u.Role = domain.RoleUser
 	}
 
+	daysRemaining := 0
+	if u.VipExpiresAt != nil && u.VipExpiresAt.After(now) {
+		daysRemaining = int(math.Ceil(u.VipExpiresAt.Sub(now).Hours() / 24.0))
+	}
+
 	// Lấy đơn hàng gần nhất
 	var latestOrder domain.MembershipOrder
-	h.db.Where("user_id = ?", userID).Order("created_at DESC").First(&latestOrder)
+	var latestOrderPtr *domain.MembershipOrder
+	if err := h.db.Where("user_id = ?", userID).Order("created_at DESC").First(&latestOrder).Error; err == nil {
+		latestOrderPtr = &latestOrder
+	}
 
 	response.OK(c, gin.H{
-		"userId":       u.ID,
-		"username":     u.Username,
-		"role":         u.Role,
-		"membership":   u.Membership,
-		"isVip":        isVip,
-		"vipExpiresAt": u.VipExpiresAt,
-		"latestOrder":  latestOrder,
+		"userId":        u.ID,
+		"username":      u.Username,
+		"role":          u.Role,
+		"membership":    u.Membership,
+		"isVip":         isVip,
+		"vipExpiresAt":  u.VipExpiresAt,
+		"daysRemaining": daysRemaining,
+		"latestOrder":   latestOrderPtr,
 	}, nil)
+}
+
+func generateNumericOrderCode() int64 {
+	// 11-12 digit safe positive integer: unix seconds (10 digits) * 100 + 2 random digits
+	n, _ := rand.Int(rand.Reader, big.NewInt(90))
+	suffix := n.Int64() + 10
+	return time.Now().UTC().Unix()*100 + suffix
+}
+
+func (h *Handler) buildOrderResponse(order domain.MembershipOrder, payInfo PaymentInfo) gin.H {
+	bankName := payInfo.BankName
+	if order.BankBIN != "" {
+		bankName = external.ResolveBankNameByBIN(order.BankBIN, payInfo.BankName)
+	}
+	accountNumber := order.AccountNumber
+	if accountNumber == "" {
+		accountNumber = payInfo.AccountNumber
+	}
+	accountName := order.AccountName
+	if accountName == "" {
+		accountName = payInfo.AccountName
+	}
+	transferContent := order.TransferContent
+	if transferContent == "" {
+		transferContent = order.OrderCode
+	}
+
+	return gin.H{
+		"id":              order.ID,
+		"orderCode":       order.OrderCode,
+		"payosOrderCode":  order.PayOSOrderCode,
+		"paymentLinkId":   order.PaymentLinkID,
+		"checkoutUrl":     order.CheckoutURL,
+		"qrCode":          order.QRCodeData,
+		"qrCodeUrl":       order.QRCodeURL,
+		"provider":        order.Provider,
+		"userId":          order.UserID,
+		"packageId":       order.PackageID,
+		"packageName":     order.PackageName,
+		"amount":          order.Amount,
+		"priceVND":        order.Amount,
+		"durationDays":    order.DurationDays,
+		"status":          order.Status,
+		"bankBin":         order.BankBIN,
+		"bankName":        bankName,
+		"accountNumber":   accountNumber,
+		"accountName":     accountName,
+		"transferContent": transferContent,
+		"expiresAt":       order.ExpiresAt,
+		"paidAt":          order.PaidAt,
+		"createdAt":       order.CreatedAt,
+	}
 }
 
 func (h *Handler) CreateOrder(c *gin.Context) {
@@ -368,7 +478,15 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		return
 	}
 
-	// Giới hạn gói/user: Nếu user đã đăng ký gói và VIP vẫn còn hạn, khóa gói hiện tại và các gói thấp hơn
+	amount := pkg.Amount
+	if amount <= 0 {
+		amount = pkg.PriceVND
+	}
+	if amount < 2000 {
+		response.BadRequest(c, "Số tiền thanh toán tối thiểu là 2.000đ")
+		return
+	}
+
 	var u domain.User
 	if err := h.db.First(&u, userID).Error; err == nil {
 		isVip := (u.Role == domain.RoleVIP || u.Membership == domain.MembershipVIP) && u.VipExpiresAt != nil && u.VipExpiresAt.After(time.Now().UTC())
@@ -387,31 +505,108 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	}
 
 	payInfo := h.GetPaymentSettings()
+	numericCode := generateNumericOrderCode()
+	orderCode := strconv.FormatInt(numericCode, 10)
+	expiresAt := time.Now().UTC().Add(15 * time.Minute)
 
-	// Sinh mã đơn hàng ngẫu nhiên an toàn: VIP-UID-RANDOM
-	n, _ := rand.Int(rand.Reader, big.NewInt(900000))
-	randCode := n.Int64() + 100000
-	notePrefix := payInfo.NotePrefix
-	if notePrefix == "" {
-		notePrefix = "VIP"
-	}
-	orderCode := fmt.Sprintf("%s-%d-%d", notePrefix, userID, randCode)
-
-	// Tạo URL QR Code mô phỏng thanh toán VietQR
-	qrDescription := url.QueryEscape(fmt.Sprintf("Thanh toan don %s", orderCode))
-	qrURL := fmt.Sprintf("https://img.vietqr.io/image/970422-%s-compact2.png?amount=%d&addInfo=%s&accountName=%s", payInfo.AccountNumber, pkg.Amount, qrDescription, url.QueryEscape(payInfo.AccountName))
+	shortPkg := strings.ReplaceAll(pkg.ID, "_", "")
+	description := external.SanitizePayOSDescription(fmt.Sprintf("WL %s U%d", shortPkg, userID))
 
 	order := domain.MembershipOrder{
-		OrderCode:    orderCode,
-		UserID:       userID,
-		PackageID:    pkg.ID,
-		PackageName:  pkg.Name,
-		Amount:       pkg.Amount,
-		DurationDays: pkg.DurationDays,
-		Status:       "PENDING",
-		QRCodeURL:    qrURL,
-		ExpiresAt:    time.Now().UTC().Add(15 * time.Minute),
-		CreatedAt:    time.Now().UTC(),
+		OrderCode:       orderCode,
+		PayOSOrderCode:  numericCode,
+		UserID:          userID,
+		PackageID:       pkg.ID,
+		PackageName:     pkg.Name,
+		Amount:          amount,
+		DurationDays:    pkg.DurationDays,
+		Status:          "PENDING",
+		Provider:        "PAYOS",
+		TransferContent: description,
+		ExpiresAt:       expiresAt,
+		CreatedAt:       time.Now().UTC(),
+	}
+
+	if h.payos != nil && h.payos.IsConfigured() {
+		returnURL := h.cfg.PayOSReturnURL
+		cancelURL := h.cfg.PayOSCancelURL
+		if origin := strings.TrimRight(c.GetHeader("Origin"), "/"); origin != "" &&
+			(strings.Contains(returnURL, "localhost") || returnURL == "") {
+			returnURL = origin + "/membership?payment=success&orderCode=" + orderCode
+			cancelURL = origin + "/membership?payment=cancelled&orderCode=" + orderCode
+		} else {
+			sep := "?"
+			if strings.Contains(returnURL, "?") {
+				sep = "&"
+			}
+			returnURL = returnURL + sep + "orderCode=" + orderCode
+			cSep := "?"
+			if strings.Contains(cancelURL, "?") {
+				cSep = "&"
+			}
+			cancelURL = cancelURL + cSep + "orderCode=" + orderCode
+		}
+
+		payData, err := h.payos.CreatePaymentLink(external.PayOSCreatePaymentRequest{
+			OrderCode:   numericCode,
+			Amount:      amount,
+			Description: description,
+			BuyerName:   u.Username,
+			BuyerEmail:  u.Email,
+			Items: []external.PayOSItem{
+				{
+					Name:     pkg.Name,
+					Quantity: 1,
+					Price:    amount,
+				},
+			},
+			ReturnURL: returnURL,
+			CancelURL: cancelURL,
+			ExpiredAt: expiresAt.Unix(),
+		})
+		if err != nil {
+			slog.Error("payOS CreatePaymentLink failed", "error", err, "orderCode", orderCode, "userId", userID)
+			response.Error(c, http.StatusBadGateway, "PAYOS_ERROR", "Không thể khởi tạo cổng thanh toán payOS: "+err.Error())
+			return
+		}
+
+		order.PaymentLinkID = payData.PaymentLinkID
+		order.CheckoutURL = payData.CheckoutURL
+		order.QRCodeData = payData.QRCode
+		order.BankBIN = payData.BIN
+		order.AccountNumber = payData.AccountNumber
+		order.AccountName = payData.AccountName
+		if payData.Description != "" {
+			order.TransferContent = payData.Description
+		}
+		if payData.BIN != "" && payData.AccountNumber != "" {
+			order.QRCodeURL = fmt.Sprintf(
+				"https://img.vietqr.io/image/%s-%s-compact2.png?amount=%d&addInfo=%s&accountName=%s",
+				payData.BIN,
+				payData.AccountNumber,
+				payData.Amount,
+				url.QueryEscape(order.TransferContent),
+				url.QueryEscape(payData.AccountName),
+			)
+		}
+	} else {
+		if h.cfg != nil && h.cfg.IsProduction() {
+			response.Error(c, http.StatusServiceUnavailable, "PAYOS_NOT_CONFIGURED", "Cổng thanh toán payOS chưa được cấu hình. Vui lòng liên hệ quản trị viên.")
+			return
+		}
+		// Non-production fallback for offline/unit test environments without PayOS credentials
+		order.Provider = "VIETQR_DEV"
+		order.BankBIN = "970422"
+		order.AccountNumber = payInfo.AccountNumber
+		order.AccountName = payInfo.AccountName
+		order.TransferContent = description
+		order.QRCodeURL = fmt.Sprintf(
+			"https://img.vietqr.io/image/970422-%s-compact2.png?amount=%d&addInfo=%s&accountName=%s",
+			payInfo.AccountNumber,
+			amount,
+			url.QueryEscape(description),
+			url.QueryEscape(payInfo.AccountName),
+		)
 	}
 
 	if err := h.db.Create(&order).Error; err != nil {
@@ -419,36 +614,123 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		return
 	}
 
-	orderData := gin.H{
-		"id":              order.ID,
-		"orderCode":       order.OrderCode,
-		"userId":          order.UserID,
-		"packageId":       order.PackageID,
-		"packageName":     order.PackageName,
-		"amount":          order.Amount,
-		"priceVND":        order.Amount,
-		"durationDays":    order.DurationDays,
-		"status":          order.Status,
-		"qrCodeUrl":       order.QRCodeURL,
-		"bankName":        payInfo.BankName,
-		"accountNumber":   payInfo.AccountNumber,
-		"accountName":     payInfo.AccountName,
-		"transferContent": order.OrderCode,
-		"expiresAt":       order.ExpiresAt,
-		"createdAt":       order.CreatedAt,
+	response.Created(c, h.buildOrderResponse(order, payInfo))
+}
+
+// completeOrderAndUpgradeVIP atomically marks a PENDING order PAID and upgrades the user's VIP expiry.
+// Safe against duplicate concurrent webhook + polling calls.
+func (h *Handler) completeOrderAndUpgradeVIP(order *domain.MembershipOrder) (*domain.User, bool, error) {
+	now := time.Now().UTC()
+	upgraded := false
+	var updatedUser domain.User
+
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&domain.MembershipOrder{}).
+			Where("id = ? AND status = ?", order.ID, "PENDING").
+			Updates(map[string]interface{}{
+				"status":  "PAID",
+				"paid_at": &now,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			// Already processed by another webhook/polling request
+			return nil
+		}
+
+		upgraded = true
+
+		var u domain.User
+		if err := tx.First(&u, order.UserID).Error; err != nil {
+			return err
+		}
+
+		var newExpiry time.Time
+		if u.VipExpiresAt != nil && u.VipExpiresAt.After(now) {
+			newExpiry = u.VipExpiresAt.Add(time.Duration(order.DurationDays) * 24 * time.Hour)
+		} else {
+			newExpiry = now.Add(time.Duration(order.DurationDays) * 24 * time.Hour)
+		}
+
+		newRole := domain.RoleVIP
+		if u.Role == domain.RoleAdmin {
+			newRole = domain.RoleAdmin
+		}
+
+		if err := tx.Model(&u).Updates(map[string]interface{}{
+			"role":           newRole,
+			"membership":     domain.MembershipVIP,
+			"vip_expires_at": &newExpiry,
+		}).Error; err != nil {
+			return err
+		}
+
+		notif := domain.Notification{
+			UserID:    order.UserID,
+			Title:     "Chúc mừng bạn đã nâng cấp VIP thành công!",
+			Message:   fmt.Sprintf("Đơn hàng #%s (%s) đã được xác nhận qua payOS. Thời hạn VIP tới %s.", order.OrderCode, order.PackageName, newExpiry.Format("02/01/2006")),
+			Type:      "VIP",
+			Link:      "/profile",
+			IsRead:    false,
+			CreatedAt: now,
+		}
+		if err := tx.Create(&notif).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, false, err
 	}
 
-	response.Created(c, orderData)
+	_ = h.db.First(order, order.ID)
+	if err := h.db.First(&updatedUser, order.UserID).Error; err == nil {
+		return &updatedUser, upgraded, nil
+	}
+	return nil, upgraded, nil
 }
 
 func (h *Handler) GetOrder(c *gin.Context) {
 	userID := middleware.GetCurrentUserID(c)
-	orderCode := c.Param("orderCode")
+	orderCode := strings.TrimSpace(c.Param("orderCode"))
 
 	var order domain.MembershipOrder
-	if err := h.db.Where("order_code = ? AND user_id = ?", orderCode, userID).First(&order).Error; err != nil {
+	query := h.db.Where("user_id = ? AND order_code = ?", userID, orderCode)
+	if numCode, err := strconv.ParseInt(orderCode, 10, 64); err == nil {
+		query = h.db.Where("user_id = ? AND (order_code = ? OR payos_order_code = ?)", userID, orderCode, numCode)
+	}
+	if err := query.First(&order).Error; err != nil {
 		response.NotFound(c, "Không tìm thấy đơn hàng")
 		return
+	}
+
+	var updatedUser *domain.User
+	var refreshedToken string
+
+	// Live sync with PayOS API while PENDING (handles instant confirmation even without public webhook URL)
+	if order.Status == "PENDING" && order.Provider == "PAYOS" && h.payos != nil && h.payos.IsConfigured() && order.PayOSOrderCode > 0 {
+		if info, err := h.payos.GetPaymentLinkInfo(order.PayOSOrderCode); err == nil && info != nil {
+			switch strings.ToUpper(info.Status) {
+			case "PAID":
+				if u, _, upErr := h.completeOrderAndUpgradeVIP(&order); upErr == nil && u != nil {
+					updatedUser = u
+					if h.cfg != nil && h.cfg.JWTSecret != "" {
+						if tok, tokErr := middleware.GenerateToken(*u, h.cfg.JWTSecret); tokErr == nil {
+							refreshedToken = tok
+						}
+					}
+				}
+			case "CANCELLED":
+				h.db.Model(&order).Update("status", "CANCELLED")
+				order.Status = "CANCELLED"
+			case "EXPIRED":
+				h.db.Model(&order).Update("status", "EXPIRED")
+				order.Status = "EXPIRED"
+			}
+		}
 	}
 
 	// Kiểm tra nếu quá 15 phút chưa thanh toán thì đánh dấu EXPIRED
@@ -458,30 +740,157 @@ func (h *Handler) GetOrder(c *gin.Context) {
 	}
 
 	payInfo := h.GetPaymentSettings()
-	orderData := gin.H{
-		"id":              order.ID,
-		"orderCode":       order.OrderCode,
-		"userId":          order.UserID,
-		"packageId":       order.PackageID,
-		"packageName":     order.PackageName,
-		"amount":          order.Amount,
-		"priceVND":        order.Amount,
-		"durationDays":    order.DurationDays,
-		"status":          order.Status,
-		"qrCodeUrl":       order.QRCodeURL,
-		"bankName":        payInfo.BankName,
-		"accountNumber":   payInfo.AccountNumber,
-		"accountName":     payInfo.AccountName,
-		"transferContent": order.OrderCode,
-		"expiresAt":       order.ExpiresAt,
-		"createdAt":       order.CreatedAt,
+	orderData := h.buildOrderResponse(order, payInfo)
+	if updatedUser != nil {
+		orderData["user"] = gin.H{
+			"id":           updatedUser.ID,
+			"username":     updatedUser.Username,
+			"role":         updatedUser.Role,
+			"membership":   updatedUser.Membership,
+			"vipExpiresAt": updatedUser.VipExpiresAt,
+		}
+		if refreshedToken != "" {
+			orderData["token"] = refreshedToken
+		}
 	}
 
 	response.OK(c, orderData, nil)
 }
 
-func (h *Handler) SimulatePayment(c *gin.Context) {
+func (h *Handler) CancelOrder(c *gin.Context) {
 	userID := middleware.GetCurrentUserID(c)
+	orderCode := strings.TrimSpace(c.Param("orderCode"))
+
+	var order domain.MembershipOrder
+	if err := h.db.Where("user_id = ? AND order_code = ?", userID, orderCode).First(&order).Error; err != nil {
+		response.NotFound(c, "Không tìm thấy đơn hàng")
+		return
+	}
+
+	if order.Status == "PAID" {
+		response.BadRequest(c, "Đơn hàng đã thanh toán thành công, không thể hủy")
+		return
+	}
+
+	if order.Provider == "PAYOS" && h.payos != nil && h.payos.IsConfigured() && order.PayOSOrderCode > 0 {
+		_ = h.payos.CancelPaymentLink(order.PayOSOrderCode, "Người dùng hủy đơn hàng")
+	}
+
+	h.db.Model(&order).Update("status", "CANCELLED")
+	order.Status = "CANCELLED"
+
+	response.OK(c, gin.H{
+		"message":   "Đã hủy đơn hàng thanh toán",
+		"orderCode": order.OrderCode,
+		"status":    order.Status,
+	}, nil)
+}
+
+// PayOSWebhook handles real-time payment confirmation webhooks from PayOS v2.
+func (h *Handler) PayOSWebhook(c *gin.Context) {
+	rawBody, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))
+	if err != nil {
+		response.BadRequest(c, "Không thể đọc dữ liệu webhook")
+		return
+	}
+
+	var payload struct {
+		Code      string                 `json:"code"`
+		Desc      string                 `json:"desc"`
+		Success   bool                   `json:"success"`
+		Data      map[string]interface{} `json:"data"`
+		Signature string                 `json:"signature"`
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(rawBody))
+	dec.UseNumber()
+	if err := dec.Decode(&payload); err != nil {
+		response.BadRequest(c, "Payload webhook payOS không hợp lệ")
+		return
+	}
+
+	// PayOS dashboard sends a verification test ping (empty or orderCode=123) when registering webhook URL
+	if len(payload.Data) == 0 {
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "webhook verified"})
+		return
+	}
+
+	var payosOrderCode int64
+	if rawOC, ok := payload.Data["orderCode"]; ok {
+		switch v := rawOC.(type) {
+		case json.Number:
+			payosOrderCode, _ = v.Int64()
+		case float64:
+			payosOrderCode = int64(v)
+		case string:
+			payosOrderCode, _ = strconv.ParseInt(v, 10, 64)
+		}
+	}
+
+	if payosOrderCode == 123 {
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "payOS test webhook acknowledged"})
+		return
+	}
+
+	if h.payos == nil || !h.payos.IsConfigured() {
+		response.Error(c, http.StatusServiceUnavailable, "PAYOS_NOT_CONFIGURED", "payOS chưa được cấu hình")
+		return
+	}
+
+	if !h.payos.VerifyWebhookSignature(payload.Data, payload.Signature) {
+		slog.Warn("payOS webhook signature verification failed", "orderCode", payosOrderCode)
+		response.BadRequest(c, "Chữ ký webhook payOS không hợp lệ")
+		return
+	}
+
+	if payload.Code != "00" || !payload.Success {
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "ignored non-success webhook"})
+		return
+	}
+
+	var order domain.MembershipOrder
+	if err := h.db.Where("payos_order_code = ? OR order_code = ?", payosOrderCode, strconv.FormatInt(payosOrderCode, 10)).First(&order).Error; err != nil {
+		slog.Warn("payOS webhook order not found", "payosOrderCode", payosOrderCode)
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "order not found"})
+		return
+	}
+
+	// Verify paid amount matches order amount
+	var paidAmount int64
+	if rawAmt, ok := payload.Data["amount"]; ok {
+		switch v := rawAmt.(type) {
+		case json.Number:
+			paidAmount, _ = v.Int64()
+		case float64:
+			paidAmount = int64(v)
+		}
+	}
+	if paidAmount > 0 && int(paidAmount) < order.Amount {
+		slog.Warn("payOS webhook underpayment detected", "orderCode", order.OrderCode, "expected", order.Amount, "paid", paidAmount)
+		response.BadRequest(c, "Số tiền thanh toán không đủ")
+		return
+	}
+
+	if _, _, err := h.completeOrderAndUpgradeVIP(&order); err != nil {
+		slog.Error("payOS webhook failed to upgrade VIP", "orderCode", order.OrderCode, "error", err)
+		response.Internal(c, "Lỗi cập nhật VIP từ webhook")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "orderCode": order.OrderCode})
+}
+
+func (h *Handler) SimulatePayment(c *gin.Context) {
+	// Strictly block simulated free VIP upgrades in production or for non-admin accounts
+	if h.cfg != nil && h.cfg.IsProduction() {
+		response.Forbidden(c, "Tính năng mô phỏng thanh toán đã bị vô hiệu hóa trên môi trường Production. Vui lòng thanh toán qua mã QR payOS.")
+		return
+	}
+	if middleware.GetCurrentUserRole(c) != domain.RoleAdmin {
+		response.Forbidden(c, "Chỉ quản trị viên trong môi trường phát triển mới được phép mô phỏng thanh toán")
+		return
+	}
+
 	orderCode := c.Param("orderCode")
 
 	var req SimulatePaymentRequest
@@ -491,7 +900,7 @@ func (h *Handler) SimulatePayment(c *gin.Context) {
 	}
 
 	var order domain.MembershipOrder
-	if err := h.db.Where("order_code = ? AND user_id = ?", orderCode, userID).First(&order).Error; err != nil {
+	if err := h.db.Where("order_code = ?", orderCode).First(&order).Error; err != nil {
 		response.NotFound(c, "Không tìm thấy đơn hàng")
 		return
 	}
@@ -503,8 +912,10 @@ func (h *Handler) SimulatePayment(c *gin.Context) {
 		}, nil)
 		return
 	}
-
-	now := time.Now().UTC()
+	if order.Status != "PENDING" {
+		response.BadRequest(c, "Chỉ có thể xử lý đơn hàng đang ở trạng thái chờ thanh toán (PENDING)")
+		return
+	}
 
 	if req.Status == "FAILED" {
 		h.db.Model(&order).Update("status", "FAILED")
@@ -522,90 +933,39 @@ func (h *Handler) SimulatePayment(c *gin.Context) {
 		return
 	}
 
-	// Xử lý thanh toán thành công trong Transaction
-	err := h.db.Transaction(func(tx *gorm.DB) error {
-		// 1. Cập nhật trạng thái đơn hàng
-		if err := tx.Model(&order).Updates(map[string]interface{}{
-			"status":  "PAID",
-			"paid_at": &now,
-		}).Error; err != nil {
-			return err
-		}
-
-		// 2. Tìm người dùng
-		var u domain.User
-		if err := tx.First(&u, userID).Error; err != nil {
-			return err
-		}
-
-		// 3. Tính toán thời hạn VIP (Cộng dồn nếu vẫn còn hạn)
-		var newExpiry time.Time
-		if u.VipExpiresAt != nil && u.VipExpiresAt.After(now) {
-			newExpiry = u.VipExpiresAt.Add(time.Duration(order.DurationDays) * 24 * time.Hour)
-		} else {
-			newExpiry = now.Add(time.Duration(order.DurationDays) * 24 * time.Hour)
-		}
-
-		// Giữ nguyên role ADMIN nếu đã là ADMIN, còn lại nâng thành VIP
-		newRole := domain.RoleUser
-		if u.Role == domain.RoleAdmin {
-			newRole = domain.RoleAdmin
-		} else {
-			newRole = domain.RoleVIP
-		}
-
-		if err := tx.Model(&u).Updates(map[string]interface{}{
-			"role":           newRole,
-			"membership":     domain.MembershipVIP,
-			"vip_expires_at": &newExpiry,
-		}).Error; err != nil {
-			return err
-		}
-
-		// 4. Tạo thông báo chúc mừng vào Notification Center
-		notif := domain.Notification{
-			UserID:    userID,
-			Title:     " Chúc mừng bạn đã nâng cấp VIP thành công!",
-			Message:   fmt.Sprintf("Bạn đã kích hoạt thành công %s (thời hạn tới %s). Hãy thưởng thức toàn bộ kho truyện không giới hạn ngay bây giờ!", order.PackageName, newExpiry.Format("02/01/2006")),
-			Type:      "VIP",
-			Link:      "#/profile",
-			IsRead:    false,
-			CreatedAt: now,
-		}
-		if err := tx.Create(&notif).Error; err != nil {
-			return err
-		}
-
-		return nil
-	})
-
+	updatedUser, _, err := h.completeOrderAndUpgradeVIP(&order)
 	if err != nil {
 		response.Internal(c, "Lỗi cập nhật quyền VIP: "+err.Error())
 		return
 	}
 
-	h.db.First(&order, order.ID)
-	var updatedUser domain.User
-	h.db.First(&updatedUser, userID)
-
-	response.OK(c, gin.H{
+	respData := gin.H{
 		"success": true,
 		"message": "Nâng cấp VIP thành công! Toàn bộ quyền lợi đã được kích hoạt.",
 		"order":   order,
-		"user": gin.H{
+	}
+	if updatedUser != nil {
+		respData["user"] = gin.H{
 			"id":           updatedUser.ID,
 			"username":     updatedUser.Username,
 			"role":         updatedUser.Role,
 			"membership":   updatedUser.Membership,
 			"vipExpiresAt": updatedUser.VipExpiresAt,
-		},
-	}, nil)
+		}
+		if h.cfg != nil && h.cfg.JWTSecret != "" {
+			if tok, tokErr := middleware.GenerateToken(*updatedUser, h.cfg.JWTSecret); tokErr == nil {
+				respData["token"] = tok
+			}
+		}
+	}
+
+	response.OK(c, respData, nil)
 }
 
 func (h *Handler) CancelVIP(c *gin.Context) {
 	userID := middleware.GetCurrentUserID(c)
 	var req CancelVipRequest
-	c.ShouldBindJSON(&req)
+	_ = c.ShouldBindJSON(&req)
 
 	var u domain.User
 	if err := h.db.First(&u, userID).Error; err != nil {
@@ -613,13 +973,19 @@ func (h *Handler) CancelVIP(c *gin.Context) {
 		return
 	}
 
+	// Never demote an ADMIN account when canceling VIP subscription
+	nextRole := domain.RoleUser
+	if u.Role == domain.RoleAdmin {
+		nextRole = domain.RoleAdmin
+	}
+
 	now := time.Now().UTC()
-	u.Role = domain.RoleUser
+	u.Role = nextRole
 	u.Membership = domain.MembershipFree
 	u.VipExpiresAt = nil
 
 	if err := h.db.Model(&u).Updates(map[string]interface{}{
-		"role":           domain.RoleUser,
+		"role":           nextRole,
 		"membership":     domain.MembershipFree,
 		"vip_expires_at": nil,
 	}).Error; err != nil {
@@ -632,13 +998,32 @@ func (h *Handler) CancelVIP(c *gin.Context) {
 		Title:     "Hủy gói VIP WaveLink thành công",
 		Message:   "Bạn đã hủy gia hạn gói VIP. Quyền lợi VIP đã dừng. Cảm ơn bạn đã đồng hành cùng WaveLink!",
 		Type:      "SYSTEM",
-		Link:      "#/membership",
+		Link:      "/membership",
 		IsRead:    false,
 		CreatedAt: now,
 	}
 	notification.CreateSafeNotification(h.db, notif)
 
 	response.OK(c, gin.H{"message": "Đã hủy gói VIP thành công", "user": u}, nil)
+}
+
+func (h *Handler) notifyAdmins(title, message, link string) {
+	var admins []domain.User
+	if err := h.db.Where("role = ?", domain.RoleAdmin).Find(&admins).Error; err != nil {
+		return
+	}
+	now := time.Now().UTC()
+	for _, adm := range admins {
+		notification.CreateSafeNotification(h.db, domain.Notification{
+			UserID:    adm.ID,
+			Title:     title,
+			Message:   message,
+			Type:      "SYSTEM",
+			Link:      link,
+			IsRead:    false,
+			CreatedAt: now,
+		})
+	}
 }
 
 func (h *Handler) RequestRefund(c *gin.Context) {
@@ -649,20 +1034,30 @@ func (h *Handler) RequestRefund(c *gin.Context) {
 		return
 	}
 
+	var u domain.User
+	_ = h.db.First(&u, userID)
+
 	now := time.Now().UTC()
 	notif := domain.Notification{
 		UserID:    userID,
 		Title:     "Yêu cầu hoàn tiền đã được tiếp nhận",
-		Message:   fmt.Sprintf("Yêu cầu hoàn tiền cho đơn hàng '%s' (Lý do: %s) đã được ghi nhận. Bộ phận hỗ trợ sẽ xử lý trong 24h.", req.OrderCode, req.Reason),
+		Message:   fmt.Sprintf("Yêu cầu hoàn tiền cho đơn hàng '%s' (Lý do: %s) đã được gửi tới Ban quản trị.", req.OrderCode, req.Reason),
 		Type:      "SYSTEM",
-		Link:      "#/settings",
+		Link:      "/settings",
 		IsRead:    false,
 		CreatedAt: now,
 	}
 	notification.CreateSafeNotification(h.db, notif)
 
+	// Forward refund request details to all Admins so it is never silently dropped
+	h.notifyAdmins(
+		fmt.Sprintf("[Hoàn tiền] Yêu cầu từ %s (Đơn: %s)", u.Username, req.OrderCode),
+		fmt.Sprintf("Người dùng #%d (%s) yêu cầu hoàn tiền đơn '%s'. Lý do: %s. Thông tin nhận hoàn: %s", userID, u.Username, req.OrderCode, req.Reason, req.BankInfo),
+		"/admin/vip",
+	)
+
 	response.OK(c, gin.H{
-		"message":   "Yêu cầu hoàn tiền đã được ghi nhận thành công! Ban quản trị sẽ liên hệ và xử lý trong 24h.",
+		"message":   "Yêu cầu hoàn tiền đã được gửi tới Ban quản trị! Chúng tôi sẽ kiểm tra và liên hệ lại sớm nhất.",
 		"orderCode": req.OrderCode,
 	}, nil)
 }
@@ -680,20 +1075,30 @@ func (h *Handler) SubmitComplaint(c *gin.Context) {
 		category = "Chung"
 	}
 
+	var u domain.User
+	_ = h.db.First(&u, userID)
+
 	now := time.Now().UTC()
 	notif := domain.Notification{
 		UserID:    userID,
-		Title:     fmt.Sprintf("Đã tiếp nhận khiếu nại [%s]", category),
+		Title:     fmt.Sprintf("Đã tiếp nhận góp ý/khiếu nại [%s]", category),
 		Message:   fmt.Sprintf("Nội dung: '%s'. Ban quản trị WaveLink đã nhận được phản hồi của bạn và sẽ kiểm tra sớm nhất.", req.Subject),
 		Type:      "SYSTEM",
-		Link:      "#/notifications",
+		Link:      "/notifications",
 		IsRead:    false,
 		CreatedAt: now,
 	}
 	notification.CreateSafeNotification(h.db, notif)
 
+	// Forward complaint to all Admins so it actually reaches moderation
+	h.notifyAdmins(
+		fmt.Sprintf("[Khiếu nại - %s] %s", category, req.Subject),
+		fmt.Sprintf("Từ %s (#%d): %s", u.Username, userID, req.Content),
+		"/admin/community",
+	)
+
 	response.OK(c, gin.H{
-		"message":  "Khiếu nại/Góp ý của bạn đã được gửi thành công! Cảm ơn bạn đã đóng góp cho WaveLink.",
+		"message":  "Khiếu nại/Góp ý của bạn đã được gửi tới Ban quản trị! Cảm ơn bạn đã đóng góp cho WaveLink.",
 		"category": category,
 		"subject":  req.Subject,
 	}, nil)

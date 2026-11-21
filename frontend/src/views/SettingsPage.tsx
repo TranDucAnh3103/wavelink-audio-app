@@ -718,7 +718,7 @@ export const SettingsPage: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[var(--border-ink)]/20">
-                {isVip && (
+                {isVip && user?.role !== 'ADMIN' && (
                   <button
                     type="button"
                     onClick={() => setIsCancelVipOpen(true)}
@@ -734,7 +734,7 @@ export const SettingsPage: React.FC = () => {
                     setRefundOrderCode(myMembership?.latestOrder?.orderCode || '');
                     setIsRefundOpen(true);
                   }}
-                  className={`btn-comic text-xs py-2 px-3 ${!isVip ? 'col-span-2' : ''}`}
+                  className={`btn-comic text-xs py-2 px-3 ${!isVip || user?.role === 'ADMIN' ? 'col-span-2' : ''}`}
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span>Yêu Cầu Hoàn Tiền</span>

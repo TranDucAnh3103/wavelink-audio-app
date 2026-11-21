@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense } from 'react';
+import React, { Suspense, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname } from 'next/navigation';
 import { Header } from '@/components/layout/Header';
@@ -20,6 +20,12 @@ function ShellBody({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
   const isAuthPage = pathname === '/login' || pathname === '/register';
   const { isScreenLocked, setScreenLocked, currentAudio } = usePlayerStore();
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo(0, 0);
+    }
+  }, [pathname]);
 
   return (
     <div className="app-shell">

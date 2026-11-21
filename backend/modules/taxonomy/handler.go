@@ -133,6 +133,7 @@ func (h *Handler) UpdateCategory(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
 		Name        string `json:"name"`
+		Slug        string `json:"slug"`
 		Description string `json:"description"`
 		Color       string `json:"color"`
 	}
@@ -144,6 +145,9 @@ func (h *Handler) UpdateCategory(c *gin.Context) {
 	updates := map[string]interface{}{}
 	if req.Name != "" {
 		updates["name"] = req.Name
+	}
+	if req.Slug != "" {
+		updates["slug"] = req.Slug
 	}
 	if req.Description != "" {
 		updates["description"] = req.Description

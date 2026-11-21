@@ -664,7 +664,8 @@ export const UploadPage: React.FC = () => {
               </div>
             </div>
 
-            {/* VIP Only Option */}
+            {/* VIP Only Option (Admin only) */}
+            {user?.role === 'ADMIN' && (
             <div className="flex flex-col gap-2 pt-2.5 border-t border-[var(--border-ink)]/25">
               <div className="flex items-center gap-2">
                 <input
@@ -711,6 +712,7 @@ export const UploadPage: React.FC = () => {
                 </div>
               )}
             </div>
+            )}
           </div>
         </div>
 

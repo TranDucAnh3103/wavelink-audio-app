@@ -314,6 +314,7 @@ export const audioService = {
           durationSeconds: duration,
           blockSizeSeconds: blockSize,
           isVipOnly: payload.isVipOnly,
+          freeEpisodesCount: payload.freeEpisodesCount,
         });
 
         if (res.data.success) {

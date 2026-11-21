@@ -238,13 +238,17 @@ export const communityService = {
         };
 
         socket.onmessage = (event) => {
-          try {
-            const data: WSCommunityMessage = JSON.parse(event.data);
-            if (data.type !== 'pong') {
-              onMessage(data);
+          const raw = typeof event.data === 'string' ? event.data : String(event.data || '');
+          const chunks = raw.split('\n').filter((line) => line.trim().length > 0);
+          for (const chunk of chunks) {
+            try {
+              const data: WSCommunityMessage = JSON.parse(chunk);
+              if (data.type !== 'pong') {
+                onMessage(data);
+              }
+            } catch (e) {
+              console.error('Lỗi parse WSCommunityMessage', e);
             }
-          } catch (e) {
-            console.error('Lỗi parse WSCommunityMessage', e);
           }
         };
 

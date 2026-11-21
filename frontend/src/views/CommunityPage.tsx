@@ -51,6 +51,7 @@ export const CommunityPage: React.FC = () => {
   const [onlineCount, setOnlineCount] = useState<number>(1);
   const [vipCount, setVipCount] = useState<number>(0);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
+  const chatListRef = useRef<HTMLDivElement | null>(null);
 
   const [topListeners, setTopListeners] = useState<TopListener[]>([]);
   const [loadingTop, setLoadingTop] = useState<boolean>(false);
@@ -59,6 +60,22 @@ export const CommunityPage: React.FC = () => {
   const [loadingVip, setLoadingVip] = useState<boolean>(false);
   const isMountedRef = useRef(true);
 
+  const scrollPageToTop = () => {
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+    }
+  };
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo(0, 0);
+    }
+  }, []);
+
+  useEffect(() => {
+    scrollPageToTop();
+  }, [activeTab]);
+
   const handleTabChange = (tab: TabKey) => {
     setActiveTab(tab);
     setSearchParams((prev) => {
@@ -66,6 +83,7 @@ export const CommunityPage: React.FC = () => {
       next.set('tab', tab);
       return next;
     });
+    scrollPageToTop();
   };
 
   useEffect(() => {
@@ -119,8 +137,8 @@ export const CommunityPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'chat' && typeof chatBottomRef.current?.scrollIntoView === 'function') {
-      chatBottomRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (activeTab === 'chat' && chatListRef.current) {
+      chatListRef.current.scrollTop = chatListRef.current.scrollHeight;
     }
   }, [messages, activeTab]);
 
@@ -367,7 +385,10 @@ export const CommunityPage: React.FC = () => {
                 </div>
               )}
 
-              <div className="flex flex-col gap-3 flex-1 max-h-[380px] lg:max-h-[420px] overflow-y-auto no-scrollbar pr-1 pt-1">
+              <div
+                ref={chatListRef}
+                className="flex flex-col gap-3 flex-1 max-h-[380px] lg:max-h-[420px] overflow-y-auto no-scrollbar pr-1 pt-1"
+              >
                 {messages.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-48 text-[var(--ink-muted)] gap-2">
                     <MessageCircle className="w-10 h-10 opacity-50" strokeWidth={1.75} />

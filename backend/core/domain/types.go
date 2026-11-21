@@ -172,20 +172,29 @@ type NotificationPreference struct {
 	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
-// MembershipOrder Entity (Fake QR payment for Dev/Demo)
+// MembershipOrder Entity (PayOS v2 QR payment)
 type MembershipOrder struct {
-	ID           uint       `json:"id" gorm:"primaryKey"`
-	OrderCode    string     `json:"orderCode" gorm:"column:order_code;size:50;uniqueIndex;not null"`
-	UserID       uint       `json:"userId" gorm:"column:user_id;index;not null"`
-	PackageID    string     `json:"packageId" gorm:"column:package_id;size:30;not null"`
-	PackageName  string     `json:"packageName" gorm:"column:package_name;size:100;not null"`
-	Amount       int        `json:"amount" gorm:"column:amount;not null"`
-	DurationDays int        `json:"durationDays" gorm:"column:duration_days;not null"`
-	Status       string     `json:"status" gorm:"size:30;default:'PENDING';index"` // PENDING, PAID, CANCELLED, EXPIRED
-	QRCodeURL    string     `json:"qrCodeUrl" gorm:"column:qr_code_url;size:500"`
-	ExpiresAt    time.Time  `json:"expiresAt" gorm:"column:expires_at;not null"`
-	PaidAt       *time.Time `json:"paidAt" gorm:"column:paid_at"`
-	CreatedAt    time.Time  `json:"createdAt"`
+	ID              uint       `json:"id" gorm:"primaryKey"`
+	OrderCode       string     `json:"orderCode" gorm:"column:order_code;size:50;uniqueIndex;not null"`
+	PayOSOrderCode  int64      `json:"payosOrderCode,omitempty" gorm:"column:payos_order_code;index"`
+	PaymentLinkID   string     `json:"paymentLinkId,omitempty" gorm:"column:payment_link_id;size:120"`
+	CheckoutURL     string     `json:"checkoutUrl,omitempty" gorm:"column:checkout_url;size:500"`
+	QRCodeData      string     `json:"qrCode,omitempty" gorm:"column:qr_code_data;type:text"`
+	Provider        string     `json:"provider" gorm:"column:provider;size:30;default:'PAYOS'"`
+	BankBIN         string     `json:"bankBin,omitempty" gorm:"column:bank_bin;size:20"`
+	AccountNumber   string     `json:"accountNumber,omitempty" gorm:"column:account_number;size:50"`
+	AccountName     string     `json:"accountName,omitempty" gorm:"column:account_name;size:120"`
+	TransferContent string     `json:"transferContent,omitempty" gorm:"column:transfer_content;size:100"`
+	UserID          uint       `json:"userId" gorm:"column:user_id;index;not null"`
+	PackageID       string     `json:"packageId" gorm:"column:package_id;size:30;not null"`
+	PackageName     string     `json:"packageName" gorm:"column:package_name;size:100;not null"`
+	Amount          int        `json:"amount" gorm:"column:amount;not null"`
+	DurationDays    int        `json:"durationDays" gorm:"column:duration_days;not null"`
+	Status          string     `json:"status" gorm:"size:30;default:'PENDING';index"` // PENDING, PAID, CANCELLED, EXPIRED
+	QRCodeURL       string     `json:"qrCodeUrl" gorm:"column:qr_code_url;size:500"`
+	ExpiresAt       time.Time  `json:"expiresAt" gorm:"column:expires_at;not null"`
+	PaidAt          *time.Time `json:"paidAt" gorm:"column:paid_at"`
+	CreatedAt       time.Time  `json:"createdAt"`
 }
 
 // SystemSetting Entity for persistent runtime settings (Bank info, dynamic VIP packages)

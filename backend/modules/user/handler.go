@@ -23,10 +23,10 @@ func NewHandler(db *gorm.DB) *Handler {
 }
 
 type UpdateProfileRequest struct {
-	Username  string `json:"username"`
-	Email     string `json:"email"`
-	AvatarURL string `json:"avatarUrl"`
-	CoverURL  string `json:"coverUrl"`
+	Username  string  `json:"username"`
+	Email     string  `json:"email"`
+	AvatarURL string  `json:"avatarUrl"`
+	CoverURL  *string `json:"coverUrl"`
 }
 
 type LinkGoogleRequest struct {
@@ -96,16 +96,15 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 	vipBadge := "Độc Giả Thân Thiết"
 	if u.Role == domain.RoleAdmin {
 		vipBadge = "ADMIN Sáng Lập"
-	} else if u.Role == domain.RoleVIP || u.Membership == domain.MembershipVIP {
-		vipBadge = "VIP Hoàng Kim"
+	} else if (u.Role == domain.RoleVIP || u.Membership == domain.MembershipVIP) &&
+		(u.VipExpiresAt == nil || u.VipExpiresAt.After(time.Now().UTC())) {
+		vipBadge = "VIP 1 Tháng"
 		if u.VipExpiresAt != nil {
 			daysLeft := int(time.Until(*u.VipExpiresAt).Hours() / 24)
-			if daysLeft >= 180 {
-				vipBadge = "VIP Kim Cương"
-			} else if daysLeft >= 60 {
+			if daysLeft >= 300 {
 				vipBadge = "VIP 1 Năm"
-			} else if daysLeft >= 25 {
-				vipBadge = "VIP 6 Tháng"
+			} else if daysLeft >= 75 {
+				vipBadge = "VIP 3 Tháng"
 			}
 		}
 	}
@@ -159,8 +158,8 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 	if req.AvatarURL != "" {
 		updates["avatar_url"] = req.AvatarURL
 	}
-	if req.CoverURL != "" {
-		updates["cover_url"] = req.CoverURL
+	if req.CoverURL != nil {
+		updates["cover_url"] = *req.CoverURL
 	}
 
 	if len(updates) > 0 {
@@ -287,6 +286,11 @@ func (h *Handler) UpdateUserRole(c *gin.Context) {
 
 func (h *Handler) DeleteUser(c *gin.Context) {
 	id := c.Param("id")
+	currentUserID := middleware.GetCurrentUserID(c)
+	if parsedID, err := strconv.ParseUint(id, 10, 64); err == nil && uint(parsedID) == currentUserID {
+		response.BadRequest(c, "Không thể tự xóa tài khoản quản trị đang đăng nhập")
+		return
+	}
 	if err := h.db.Delete(&domain.User{}, id).Error; err != nil {
 		response.Internal(c, "Không thể xóa người dùng")
 		return

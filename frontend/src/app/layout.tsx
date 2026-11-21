@@ -1,22 +1,22 @@
 import React from 'react';
 import type { Metadata, Viewport } from 'next';
 import Script from 'next/script';
-import { Plus_Jakarta_Sans, Space_Grotesk, JetBrains_Mono } from 'next/font/google';
+import { Nunito, Baloo_2, JetBrains_Mono } from 'next/font/google';
 import '@/styles/globals.css';
 import { AppProviders } from './providers';
 import { ClientShell } from './client-shell';
 import { getSiteUrl } from '@/lib/siteConfig';
 
-const plusJakartaSans = Plus_Jakarta_Sans({
+const nunito = Nunito({
   subsets: ['latin', 'vietnamese'],
-  weight: ['400', '500', '600', '700', '800'],
+  weight: ['400', '500', '600', '700', '800', '900'],
   variable: '--font-sans',
   display: 'swap',
 });
 
-const spaceGrotesk = Space_Grotesk({
+const baloo2 = Baloo_2({
   subsets: ['latin', 'vietnamese'],
-  weight: ['500', '600', '700'],
+  weight: ['500', '600', '700', '800'],
   variable: '--font-comic',
   display: 'swap',
 });
@@ -119,7 +119,7 @@ export default function RootLayout({
     <html
       lang="vi"
       suppressHydrationWarning
-      className={`h-full ${plusJakartaSans.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}
+      className={`h-full ${nunito.variable} ${baloo2.variable} ${jetbrainsMono.variable}`}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />

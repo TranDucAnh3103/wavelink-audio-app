@@ -21,6 +21,14 @@ function getInitialKnownUnreadCount(): number | null {
 
 let prevUnreadCount: number | null = getInitialKnownUnreadCount();
 let isInitialFetch = true;
+let lastChimeAt = 0;
+
+function playChimeDeduped() {
+  const now = Date.now();
+  if (now - lastChimeAt < 1500) return;
+  lastChimeAt = now;
+  playNotificationSound();
+}
 
 export function triggerNotificationSync(playChime = true) {
   if (typeof window !== 'undefined') {
@@ -31,10 +39,12 @@ export function triggerNotificationSync(playChime = true) {
 export function useNotifications() {
   const { user } = useAuthStore();
   const hydrated = useIsHydrated();
+  const isMember = Boolean(user && !user.isGuest && user.role !== 'GUEST');
   const cacheKey = `notifications:${user?.id || 'guest'}`;
 
   return useQuery({
     queryKey: ['notifications', user?.id || 'guest'],
+    enabled: isMember,
     queryFn: async () => {
       const { isLive } = useAuthStore.getState();
       const data = await api.notification.getNotifications(isLive);
@@ -53,12 +63,14 @@ export function useNotifications() {
 
 export function useUnreadNotificationCount() {
   const queryClient = useQueryClient();
+  const { user } = useAuthStore();
+  const isMember = Boolean(user && !user.isGuest && user.role !== 'GUEST');
 
   useEffect(() => {
     const handleSync = (e: Event) => {
       const customEvent = e as CustomEvent<{ playChime?: boolean }>;
       if (customEvent.detail?.playChime) {
-        playNotificationSound();
+        playChimeDeduped();
       }
       queryClient.invalidateQueries({ queryKey: ['unread-notification-count'] });
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
@@ -69,12 +81,13 @@ export function useUnreadNotificationCount() {
   }, [queryClient]);
 
   return useQuery({
-    queryKey: ['unread-notification-count'],
+    queryKey: ['unread-notification-count', user?.id || 'guest'],
+    enabled: isMember,
     queryFn: async () => {
       const { isLive } = useAuthStore.getState();
       const count = await api.notification.getUnreadCount(isLive);
       if (!isInitialFetch && prevUnreadCount !== null && count > prevUnreadCount) {
-        playNotificationSound();
+        playChimeDeduped();
       }
       isInitialFetch = false;
       prevUnreadCount = count;
@@ -83,8 +96,8 @@ export function useUnreadNotificationCount() {
       } catch {}
       return count;
     },
-    refetchInterval: 8000,
-    refetchOnWindowFocus: true,
+    refetchInterval: isMember ? 8000 : false,
+    refetchOnWindowFocus: isMember,
   });
 }
 
@@ -149,8 +162,11 @@ export function useDeleteAllNotifications() {
 }
 
 export function useNotificationPreferences() {
+  const { user } = useAuthStore();
+  const isMember = Boolean(user && !user.isGuest && user.role !== 'GUEST');
   return useQuery({
-    queryKey: ['notification-preferences'],
+    queryKey: ['notification-preferences', user?.id || 'guest'],
+    enabled: isMember,
     queryFn: () => {
       const { isLive } = useAuthStore.getState();
       return api.notification.getPreferences(isLive);

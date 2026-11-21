@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Header } from './Header';
 import { Footer } from './Footer';
@@ -13,6 +13,12 @@ export const MainLayout: React.FC = () => {
   const location = useLocation();
   const isAuthPage = location.pathname === '/login' || location.pathname === '/register';
   const { isScreenLocked, setScreenLocked, currentAudio } = usePlayerStore();
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo(0, 0);
+    }
+  }, [location.pathname, location.search]);
 
   return (
     <div className="app-shell">

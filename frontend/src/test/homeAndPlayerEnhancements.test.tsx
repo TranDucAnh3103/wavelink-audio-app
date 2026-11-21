@@ -149,12 +149,15 @@ function createTestClient() {
 }
 
 describe('Series Grouping Utility', () => {
-  it('strips episode/part/full markers accurately and groups multi-part series only', () => {
+  it('strips episode/part/full/leading-chapter markers accurately and groups multi-part series only', () => {
     expect(extractSeriesBaseTitle('[Full] Đấu Phá Thương Khung - Phần 1')).toBe(
       'Đấu Phá Thương Khung'
     );
     expect(extractSeriesBaseTitle('Full 700 Tập | HÓA THÀNH THẦN THỤ')).toBe(
       'HÓA THÀNH THẦN THỤ'
+    );
+    expect(extractSeriesBaseTitle('Chương 01 - 730: Ta Tại Thế Giới Tiên Hiệp Cẩu Đạo')).toBe(
+      'Ta Tại Thế Giới Tiên Hiệp Cẩu Đạo'
     );
 
     const groups = groupAudiosIntoSeries(mockAudios);
@@ -177,6 +180,29 @@ describe('Series Grouping Utility', () => {
 describe('HomePage UX & Discovery Sections', () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it('allows dismissing greeting banner for the current session with X button', () => {
+    const qc = createTestClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/home']}>
+          <Routes>
+            <Route path="/home" element={<HomePage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(screen.getByText(/Hôm nay bạn muốn cày bộ truyện hay podcast nào\?/i)).toBeInTheDocument();
+    const closeBtn = screen.getByRole('button', { name: /Đóng lời chào/i });
+    fireEvent.click(closeBtn);
+
+    expect(
+      screen.queryByText(/Hôm nay bạn muốn cày bộ truyện hay podcast nào\?/i)
+    ).not.toBeInTheDocument();
+    expect(sessionStorage.getItem('wavelink_hide_greeting_banner')).toBe('true');
   });
 
   it('keeps category pills in a single scrollable horizontal row on mobile without wrapping', () => {
@@ -199,7 +225,7 @@ describe('HomePage UX & Discovery Sections', () => {
     expect(row?.className).not.toMatch(/(^|\s)flex-wrap(\s|$)/);
   });
 
-  it('renders auto-grouped Series, Marathon, Tags, and Top Authors sections and navigates filtered library URLs', () => {
+  it('renders auto-grouped Series, Marathon, Tags, Top Authors, and Recent History sections and navigates filtered library or profile URLs', () => {
     const qc = createTestClient();
     render(
       <QueryClientProvider client={qc}>
@@ -207,6 +233,7 @@ describe('HomePage UX & Discovery Sections', () => {
           <Routes>
             <Route path="/home" element={<HomePage />} />
             <Route path="/library" element={<LocationDisplay />} />
+            <Route path="/profile" element={<LocationDisplay />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -216,6 +243,7 @@ describe('HomePage UX & Discovery Sections', () => {
     expect(screen.getByText(/Cày Xuyên Đêm/i)).toBeInTheDocument();
     expect(screen.getByText(/Từ Khóa Nổi Bật/i)).toBeInTheDocument();
     expect(screen.getByText(/Kênh & Tác Giả Nổi Bật/i)).toBeInTheDocument();
+    expect(screen.getByText(/Vừa Cày Gần Đây/i)).toBeInTheDocument();
 
     const seriesHeading = screen.getByRole('heading', { name: 'Đấu Phá Thương Khung' });
     fireEvent.click(seriesHeading);
@@ -226,8 +254,8 @@ describe('HomePage UX & Discovery Sections', () => {
   });
 });
 
-describe('PlayerPage Auto-Open Details & Tags', () => {
-  it('opens video details accordion by default with tags displayed and keeps collapse toggle working', () => {
+describe('PlayerPage Always-Visible Details, Controls Split & Unlimited Swipe', () => {
+  it('always displays video details and tags directly below player header without accordion button, and separates 3 upper / 3 lower playback controls', () => {
     const qc = createTestClient();
     render(
       <QueryClientProvider client={qc}>
@@ -240,23 +268,18 @@ describe('PlayerPage Auto-Open Details & Tags', () => {
       </QueryClientProvider>
     );
 
-    const accordionBtn = screen.getByRole('button', {
-      name: /Thông tin chi tiết & Nguồn YouTube/i,
-    });
-    expect(accordionBtn).toHaveAttribute('aria-expanded', 'true');
+    expect(
+      screen.queryByRole('button', { name: /Thông tin chi tiết & Nguồn YouTube/i })
+    ).not.toBeInTheDocument();
     expect(screen.getByText('Mô tả siêu phẩm trọng sinh ma pháp cơ giới.')).toBeInTheDocument();
     expect(screen.getByText(/Thẻ gắn \(3\):/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '#Khoa Học' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '#Chế Tạo' })).toBeInTheDocument();
 
-    // User can still collapse and re-expand details
-    fireEvent.click(accordionBtn);
-    expect(accordionBtn).toHaveAttribute('aria-expanded', 'false');
-    expect(
-      screen.queryByText('Mô tả siêu phẩm trọng sinh ma pháp cơ giới.')
-    ).not.toBeInTheDocument();
+    const upperControls = screen.getByTestId('player-upper-controls');
+    expect(upperControls.querySelectorAll('button')).toHaveLength(3);
 
-    fireEvent.click(accordionBtn);
-    expect(accordionBtn).toHaveAttribute('aria-expanded', 'true');
+    const lowerControls = screen.getByTestId('player-lower-controls');
+    expect(lowerControls.querySelectorAll('button')).toHaveLength(3);
   });
 });

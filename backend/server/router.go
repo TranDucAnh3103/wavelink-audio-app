@@ -90,6 +90,7 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 		audioGroup := v1.Group("/audios")
 		{
 			audioGroup.GET("", audioHandler.ListAudios)
+			audioGroup.GET("/quota", audioHandler.GetImportQuota)
 			audioGroup.GET("/preview-youtube", audioHandler.PreviewYouTube)
 			audioGroup.POST("/preview-youtube", audioHandler.PreviewYouTube)
 			audioGroup.GET("/:id", audioHandler.GetAudioByID)

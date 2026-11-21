@@ -32,8 +32,8 @@ type CreateEpisodeRequest struct {
 
 type UpdateEpisodeRequest struct {
 	Title        string `json:"title"`
-	StartSeconds int    `json:"startSeconds"`
-	EndSeconds   int    `json:"endSeconds"`
+	StartSeconds *int   `json:"startSeconds"`
+	EndSeconds   *int   `json:"endSeconds"`
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -89,7 +89,7 @@ func (h *Handler) GetEpisodesByAudioID(c *gin.Context) {
 		freeLimit = *audio.FreeEpisodesCount
 	}
 
-	isVipOrAdmin := currentUser.Role == domain.RoleAdmin || currentUser.Role == domain.RoleVIP || currentUser.Membership == domain.MembershipVIP
+	isVipOrAdmin := logic.IsActiveVIPOrAdmin(currentUser)
 	for i := range episodes {
 		if audio.IsVIPOnly {
 			episodes[i].IsVIP = true
@@ -239,16 +239,28 @@ func (h *Handler) UpdateEpisode(c *gin.Context) {
 		return
 	}
 
+	var existing domain.Episode
+	if err := h.db.First(&existing, id).Error; err != nil {
+		response.NotFound(c, "Không tìm thấy tập")
+		return
+	}
+
 	updates := map[string]interface{}{}
 	if req.Title != "" {
 		updates["title"] = req.Title
 	}
-	if req.StartSeconds >= 0 {
-		updates["start_seconds"] = req.StartSeconds
+	nextStart := existing.StartSeconds
+	nextEnd := existing.EndSeconds
+	if req.StartSeconds != nil && *req.StartSeconds >= 0 {
+		nextStart = *req.StartSeconds
+		updates["start_seconds"] = nextStart
 	}
-	if req.EndSeconds > req.StartSeconds {
-		updates["end_seconds"] = req.EndSeconds
-		updates["duration_seconds"] = req.EndSeconds - req.StartSeconds
+	if req.EndSeconds != nil && *req.EndSeconds > nextStart {
+		nextEnd = *req.EndSeconds
+		updates["end_seconds"] = nextEnd
+	}
+	if (req.StartSeconds != nil || req.EndSeconds != nil) && nextEnd > nextStart {
+		updates["duration_seconds"] = nextEnd - nextStart
 	}
 
 	if err := h.db.Model(&domain.Episode{}).Where("id = ?", id).Updates(updates).Error; err != nil {

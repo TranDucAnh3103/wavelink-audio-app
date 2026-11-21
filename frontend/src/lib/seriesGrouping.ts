@@ -23,19 +23,19 @@ export interface AuthorHighlight {
 }
 
 const LEADING_PART_RE =
-  /^\s*(?:\[(?:full|trọn\s*bộ|bản\s*full|audio(?:\s*truyện)?|tập\s*[\d\s\-–~→đếnvà,./]+|phần\s*\d+|p\.?\s*\d+)\]|\((?:full|trọn\s*bộ|bản\s*full|tập\s*[\d\s\-–~→đếnvà,./]+|phần\s*\d+|p\.?\s*\d+)\)|(?:full(?:\s*\d+\s*(?:tập|chương|phần))?|trọn\s*bộ(?:\s*\d+\s*(?:tập|chương))?))\s*[-:|•–—]*\s*/iu;
+  /^\s*(?:\[(?:full|trọn\s*bộ|bản\s*full|audio(?:\s*truyện)?|(?:tập|chương|phần|quyển|hồi|ep(?:isode)?|part|vol(?:ume)?|p\.?)\s*[\d\s\-–~→đếnvà,./]+)\]|\((?:full|trọn\s*bộ|bản\s*full|(?:tập|chương|phần|quyển|hồi|ep(?:isode)?|part|vol(?:ume)?|p\.?)\s*[\d\s\-–~→đếnvà,./]+)\)|(?:full(?:\s*\d+\s*(?:tập|chương|phần|quyển|hồi))?|trọn\s*bộ(?:\s*\d+\s*(?:tập|chương|phần))?)|(?:(?:tập|chương|phần|quyển|hồi|part|ep(?:isode)?|vol(?:ume)?)\s*\.?\s*\d+(?:\s*[-–~→đếnvà,./]+\s*\d+)*(?:\s*(?:cuối|end|hết|full))?\s*[-:|•–—]+))\s*[-:|•–—]*\s*/iu;
 
 const BRACKETED_PART_RE =
-  /\s*[\[(]\s*(?:tập|phần|chương|hồi|part|ep(?:isode)?|vol(?:ume)?|p\.?|full|trọn\s*bộ|bản\s*full|#)\s*\.?\s*[\d\s\-–~→đếnvà,./]*(?:cuối|end|mới)?\s*[\])]\s*$/iu;
+  /\s*[\[(]\s*(?:tập|phần|chương|quyển|hồi|part|ep(?:isode)?|vol(?:ume)?|p\.?|full|trọn\s*bộ|bản\s*full|#)\s*\.?\s*[\d\s\-–~→đếnvà,./]*(?:cuối|end|hết|mới)?\s*[\])]\s*$/iu;
 
 const SEPARATOR_PART_RE =
-  /\s*[-|–—:/•]+\s*(?:(?:tập|phần|chương|hồi|part|ep(?:isode)?|vol(?:ume)?|p)\s*\.?\s*(?:\d+(?:\s*[-–~→đếnvà,./]+\s*\d+)*|cuối|end|mới)|full(?:\s*\d+\s*(?:tập|chương|phần))?|trọn\s*bộ(?:\s*\d+\s*tập)?|#\d+|\d+\s*\/\s*\d+)\s*$/iu;
+  /\s*[-|–—:/•]+\s*(?:(?:tập|phần|chương|quyển|hồi|part|ep(?:isode)?|vol(?:ume)?|p)\s*\.?\s*(?:\d+(?:\s*[-–~→đếnvà,./]+\s*\d+)*|cuối|end|hết|mới)|full(?:\s*\d+\s*(?:tập|chương|phần))?|trọn\s*bộ(?:\s*\d+\s*tập)?|#\d+|\d+\s*\/\s*\d+)\s*$/iu;
 
 const TRAILING_BARE_PART_RE =
-  /\s+(?:(?:tập|phần|chương|hồi|part|ep(?:isode)?|vol(?:ume)?)\s*\.?\s*(?:\d+(?:\s*[-–~→đếnvà,./]+\s*\d+)*|cuối|end)|p\.?\s*\d+|#\d+|\d+\s*\/\s*\d+)\s*$/iu;
+  /\s+(?:(?:tập|phần|chương|quyển|hồi|part|ep(?:isode)?|vol(?:ume)?)\s*\.?\s*(?:\d+(?:\s*[-–~→đếnvà,./]+\s*\d+)*|cuối|end|hết)|p\.?\s*\d+|#\d+|\d+\s*\/\s*\d+)\s*$/iu;
 
 const INLINE_SEGMENT_PART_RE =
-  /\s*[-|–—:/•]+\s*(?:tập|phần|chương|hồi|part|ep(?:isode)?|vol(?:ume)?)\s*\.?\s*\d+(?:\s*[-–~→đếnvà,./]+\s*\d+)*(?=\s*[|\-–—:/•(\[])/iu;
+  /\s*[-|–—:/•]+\s*(?:tập|phần|chương|quyển|hồi|part|ep(?:isode)?|vol(?:ume)?)\s*\.?\s*\d+(?:\s*[-–~→đếnvà,./]+\s*\d+)*(?=\s*[|\-–—:/•(\[])/iu;
 
 /**
  * Strips episode/part/full markers from a story title so separate uploads of the same series match.
@@ -123,7 +123,7 @@ function computeVerifiedSearchQuery(baseTitle: string, items: AudioItem[]): stri
 
 function sortItemsInSeriesOrder(items: AudioItem[]): AudioItem[] {
   const getPartHint = (title: string): number | null => {
-    const m = title.match(/(?:tập|phần|part|p\.?|ep(?:isode)?|#)\s*(\d+)/iu);
+    const m = title.match(/(?:tập|chương|phần|quyển|hồi|part|p\.?|ep(?:isode)?|#)\s*(\d+)/iu);
     return m ? Number(m[1]) : null;
   };
   return [...items].sort((a, b) => {
@@ -174,24 +174,36 @@ export function groupAudiosIntoSeries(audios: AudioItem[]): SeriesGroup[] {
     }
   }
 
-  // Pass 2: group remaining singletons sharing a distinctive >=4-word, >=20-char prefix
+  // Pass 2: group remaining singletons sharing a distinctive common base title prefix
+  // (relaxed threshold when uploaded by the same author/channel)
   if (singletons.length >= 2) {
     const used = new Set<number | string>();
     for (let i = 0; i < singletons.length; i++) {
       const a = singletons[i];
       if (used.has(a.id)) continue;
 
+      const baseA = extractSeriesBaseTitle(a.title);
+      const authorA = (a.author || '').trim().toLowerCase();
       const matched: AudioItem[] = [a];
-      let sharedPrefix = extractSeriesBaseTitle(a.title);
+      let sharedPrefix = baseA;
 
       for (let j = i + 1; j < singletons.length; j++) {
         const b = singletons[j];
         if (used.has(b.id)) continue;
-        const prefix = findLongestCommonWordPrefix([a.title, b.title]);
+        const baseB = extractSeriesBaseTitle(b.title);
+        const authorB = (b.author || '').trim().toLowerCase();
+        const sameAuthor = Boolean(authorA && authorB && authorA === authorB);
+
+        const prefix = findLongestCommonWordPrefix([baseA, baseB]);
         const prefixWords = prefix.split(/\s+/).filter(Boolean);
-        if (prefixWords.length >= 4 && prefix.length >= 20) {
+        const minWords = sameAuthor ? 3 : 4;
+        const minChars = sameAuthor ? 14 : 20;
+
+        if (prefixWords.length >= minWords && prefix.length >= minChars) {
           matched.push(b);
-          sharedPrefix = prefix;
+          if (prefix.length < sharedPrefix.length) {
+            sharedPrefix = prefix;
+          }
         }
       }
 

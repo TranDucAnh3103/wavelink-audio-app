@@ -263,30 +263,23 @@ export const membershipService = {
 
   async createOrder(packageId: string, isLive = true): Promise<MembershipOrder> {
     if (isLive) {
-      try {
-        const res = await axiosClient.post<{ success: boolean; data: MembershipOrder; error?: { message?: string } }>(
-          '/membership/orders',
-          { packageId }
-        );
-        if (res.data.success && res.data.data) {
-          const order = res.data.data;
-          return {
-            ...order,
-            priceVND: order.priceVND || order.amount,
-            amount: order.amount || order.priceVND || 0,
-            bankName: order.bankName || 'MB Bank (Quân Đội)',
-            accountNumber: order.accountNumber || '0987654321',
-            accountName: order.accountName || 'COMIC AUDIO HUB',
-            transferContent: order.transferContent || order.orderCode,
-          };
-        }
-      } catch (err: unknown) {
-        const msg = (err as Error).message;
-        if (msg && !msg.includes('Network Error') && !msg.includes('timeout')) {
-          throw err;
-        }
-        console.warn('createOrder live API failed, fallback to local mock:', err);
+      const res = await axiosClient.post<{ success: boolean; data: MembershipOrder; error?: { message?: string } }>(
+        '/membership/orders',
+        { packageId }
+      );
+      if (res.data.success && res.data.data) {
+        const order = res.data.data;
+        return {
+          ...order,
+          priceVND: order.priceVND || order.amount,
+          amount: order.amount || order.priceVND || 0,
+          bankName: order.bankName || 'VietQR / payOS',
+          accountNumber: order.accountNumber || '',
+          accountName: order.accountName || '',
+          transferContent: order.transferContent || order.orderCode,
+        };
       }
+      throw new Error(res.data.error?.message || 'Không thể khởi tạo đơn thanh toán payOS');
     }
 
     // Offline / Mock VietQR order generation
@@ -341,25 +334,22 @@ export const membershipService = {
 
   async getOrder(orderCode: string, isLive = true): Promise<MembershipOrder | null> {
     if (isLive) {
-      try {
-        const res = await axiosClient.get<{ success: boolean; data: MembershipOrder }>(
-          `/membership/orders/${orderCode}`
-        );
-        if (res.data.success && res.data.data) {
-          const order = res.data.data;
-          return {
-            ...order,
-            priceVND: order.priceVND || order.amount,
-            amount: order.amount || order.priceVND || 0,
-            bankName: order.bankName || 'MB Bank (Quân Đội)',
-            accountNumber: order.accountNumber || '0987654321',
-            accountName: order.accountName || 'COMIC AUDIO HUB',
-            transferContent: order.transferContent || order.orderCode,
-          };
-        }
-      } catch {
-        // Fallback
+      const res = await axiosClient.get<{ success: boolean; data: MembershipOrder }>(
+        `/membership/orders/${encodeURIComponent(orderCode)}`
+      );
+      if (res.data.success && res.data.data) {
+        const order = res.data.data;
+        return {
+          ...order,
+          priceVND: order.priceVND || order.amount,
+          amount: order.amount || order.priceVND || 0,
+          bankName: order.bankName || 'VietQR / payOS',
+          accountNumber: order.accountNumber || '',
+          accountName: order.accountName || '',
+          transferContent: order.transferContent || order.orderCode,
+        };
       }
+      return null;
     }
 
     if (typeof localStorage !== 'undefined') {
@@ -374,19 +364,29 @@ export const membershipService = {
     return null;
   },
 
+  async cancelOrder(orderCode: string, isLive = true): Promise<boolean> {
+    if (isLive) {
+      const res = await axiosClient.post<{ success: boolean }>(
+        `/membership/orders/${encodeURIComponent(orderCode)}/cancel`
+      );
+      return Boolean(res.data.success);
+    }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('active_membership_order');
+    }
+    return true;
+  },
+
   async simulatePayment(orderCode: string, status: 'SUCCESS' | 'FAILED' = 'SUCCESS', isLive = true): Promise<unknown> {
     if (isLive) {
-      try {
-        const res = await axiosClient.post<{ success: boolean; data: unknown; error?: { message?: string } }>(
-          `/membership/orders/${orderCode}/simulate`,
-          { status }
-        );
-        if (res.data.success) {
-          return res.data.data;
-        }
-      } catch (err) {
-        console.warn('simulatePayment live failed, falling back to local simulation:', err);
+      const res = await axiosClient.post<{ success: boolean; data: unknown; error?: { message?: string } }>(
+        `/membership/orders/${encodeURIComponent(orderCode)}/simulate`,
+        { status }
+      );
+      if (res.data.success) {
+        return res.data.data;
       }
+      throw new Error(res.data.error?.message || 'Không được phép mô phỏng thanh toán');
     }
 
     // Local simulation

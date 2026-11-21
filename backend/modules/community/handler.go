@@ -457,29 +457,34 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 	}
 
 	username := "Khách Nghe Thử"
+	avatarURL := ""
+	role := domain.RoleGuest
 	isVIP := false
 	var clientUserID uint
 
 	if user.ID > 0 && !user.IsGuest {
 		clientUserID = user.ID
 		username = user.Username
+		avatarURL = user.AvatarURL
+		role = user.Role
+		if role == "" {
+			role = domain.RoleUser
+		}
 		isVIP = user.Role == domain.RoleVIP || user.Role == domain.RoleAdmin || user.Membership == domain.MembershipVIP
 	}
 
 	client := &Client{
-		hub:      h.hub,
-		conn:     conn,
-		send:     make(chan []byte, 256),
-		userID:   clientUserID,
-		username: username,
-		isVIP:    isVIP,
+		hub:       h.hub,
+		conn:      conn,
+		send:      make(chan []byte, 256),
+		userID:    clientUserID,
+		username:  username,
+		avatarURL: avatarURL,
+		role:      role,
+		isVIP:     isVIP,
 	}
 
 	h.hub.register <- client
-
-	// Gửi ngay số người đang trực tuyến
-	onlineCount := h.hub.OnlineCount()
-	client.hub.BroadcastOnlineCount(onlineCount)
 
 	go client.writePump()
 	go client.readPump(func(cl *Client, data []byte) {
@@ -493,7 +498,14 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 		}
 
 		if incoming.Type == "ping" {
-			cl.send <- []byte(`{"type":"pong"}`)
+			h.hub.mu.RLock()
+			if h.hub.clients[cl] {
+				select {
+				case cl.send <- []byte(`{"type":"pong"}`):
+				default:
+				}
+			}
+			h.hub.mu.RUnlock()
 			return
 		}
 
@@ -511,16 +523,21 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 				}
 			}
 
-			msgRole := domain.RoleUser
-			if cl.userID == 0 {
-				msgRole = domain.RoleGuest
-			} else if cl.isVIP {
-				msgRole = domain.RoleVIP
+			msgRole := cl.role
+			if msgRole == "" {
+				if cl.userID == 0 {
+					msgRole = domain.RoleGuest
+				} else if cl.isVIP {
+					msgRole = domain.RoleVIP
+				} else {
+					msgRole = domain.RoleUser
+				}
 			}
 
 			msg := domain.CommunityMessage{
 				UserID:        cl.userID,
 				Username:      cl.username,
+				AvatarURL:     cl.avatarURL,
 				IsVIP:         cl.isVIP,
 				Role:          msgRole,
 				Message:       text,
