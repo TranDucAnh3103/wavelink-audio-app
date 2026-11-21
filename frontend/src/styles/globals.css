@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+:where(:root) {
+  --font-sans: 'Nunito', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-comic: 'Baloo 2', 'Nunito', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 :root {
   --surface-outer: #EAE8E0;
   --surface-bg: #F6F5F0;
@@ -74,7 +80,7 @@ body {
   background-image: radial-gradient(var(--dot-pattern) 1px, transparent 1px);
   background-size: 20px 20px;
   color: var(--ink-primary);
-  font-family: var(--font-sans), 'Nunito', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: var(--font-sans, 'Nunito'), 'Nunito', -apple-system, BlinkMacSystemFont, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   min-height: 100vh;
@@ -86,7 +92,7 @@ body {
   h1,
   h2,
   h3 {
-    font-family: var(--font-comic), 'Baloo 2', 'Nunito', sans-serif;
+    font-family: var(--font-comic, 'Baloo 2'), 'Baloo 2', 'Nunito', sans-serif;
   }
 }
 
@@ -133,7 +139,7 @@ body {
     align-items: center;
     justify-content: center;
     gap: 0.4rem;
-    font-family: var(--font-comic), 'Baloo 2', 'Nunito', sans-serif;
+    font-family: var(--font-comic, 'Baloo 2'), 'Baloo 2', 'Nunito', sans-serif;
     font-weight: 800;
     font-size: 0.8125rem;
     padding: 0.45rem 0.85rem;
@@ -248,7 +254,7 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    font-family: var(--font-comic), 'Baloo 2', 'Nunito', sans-serif;
+    font-family: var(--font-comic, 'Baloo 2'), 'Baloo 2', 'Nunito', sans-serif;
     font-size: 0.6875rem;
     font-weight: 800;
     text-transform: uppercase;
@@ -720,7 +726,7 @@ iframe[src*="accounts.google.com/gsi"],
   font-size: 0.7rem;
   color: rgba(255, 255, 255, 0.55);
   font-weight: 600;
-  font-family: monospace;
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace;
 }
 
 .screen-lock-controls {
