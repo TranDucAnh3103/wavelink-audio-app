@@ -87,6 +87,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
     duration,
     playbackRate,
     sleepTimerMinutes,
+    sleepTimerEndTimestamp,
     play,
     pause,
     togglePlay,
@@ -120,7 +121,12 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   const [episodeSearch, setEpisodeSearch] = useState('');
   const [isYtSyncModalOpen, setIsYtSyncModalOpen] = useState(false);
   const [ytSyncInput, setYtSyncInput] = useState('');
+  const [ytSyncHours, setYtSyncHours] = useState('');
+  const [ytSyncMinutes, setYtSyncMinutes] = useState('');
+  const [ytSyncSeconds, setYtSyncSeconds] = useState('');
   const [isApplyingYtSync, setIsApplyingYtSync] = useState(false);
+  const [sleepRemainingSec, setSleepRemainingSec] = useState<number>(0);
+  const [customSleepMinutes, setCustomSleepMinutes] = useState('');
   const appliedUrlTimestampKeyRef = React.useRef<string | null>(null);
 
   const touchStartXRef = React.useRef<number | null>(null);
@@ -224,6 +230,20 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   React.useEffect(() => {
     setIsDescriptionExpanded(false);
   }, [audio?.id]);
+
+  React.useEffect(() => {
+    if (!sleepTimerEndTimestamp) {
+      setSleepRemainingSec(0);
+      return;
+    }
+
+    const updateRemaining = () => {
+      setSleepRemainingSec(Math.max(0, Math.ceil((sleepTimerEndTimestamp - Date.now()) / 1000)));
+    };
+    updateRemaining();
+    const timer = setInterval(updateRemaining, 1000);
+    return () => clearInterval(timer);
+  }, [sleepTimerEndTimestamp]);
 
   React.useEffect(() => {
     const rawT = searchParams.get('t');
@@ -512,10 +532,54 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
     : '';
 
   const parsedYtInput = parseYouTubeTimeInput(ytSyncInput);
+  const hasManualHms =
+    ytSyncHours.trim() !== '' || ytSyncMinutes.trim() !== '' || ytSyncSeconds.trim() !== '';
+  const manualHmsTotalSeconds = hasManualHms
+    ? Math.max(
+        0,
+        (Math.max(0, parseInt(ytSyncHours, 10) || 0)) * 3600 +
+          (Math.max(0, parseInt(ytSyncMinutes, 10) || 0)) * 60 +
+          (Math.max(0, parseInt(ytSyncSeconds, 10) || 0))
+      )
+    : null;
+  const effectiveSyncSeconds =
+    parsedYtInput.seconds !== null ? parsedYtInput.seconds : manualHmsTotalSeconds;
+  const isMissingTimestampInUrl = Boolean(parsedYtInput.videoId && parsedYtInput.seconds === null);
+
   const previewYtMapped =
-    parsedYtInput.seconds !== null
-      ? mapAbsoluteSecondsToEpisode(audio, parsedYtInput.seconds)
+    effectiveSyncSeconds !== null
+      ? mapAbsoluteSecondsToEpisode(audio, effectiveSyncSeconds)
       : null;
+
+  const clearYtSyncFields = () => {
+    setYtSyncInput('');
+    setYtSyncHours('');
+    setYtSyncMinutes('');
+    setYtSyncSeconds('');
+  };
+
+  const handleYtSyncTextChange = (val: string) => {
+    setYtSyncInput(val);
+    const parsed = parseYouTubeTimeInput(val);
+    if (parsed.seconds !== null) {
+      setYtSyncHours(String(Math.floor(parsed.seconds / 3600)));
+      setYtSyncMinutes(String(Math.floor((parsed.seconds % 3600) / 60)));
+      setYtSyncSeconds(String(parsed.seconds % 60));
+    } else if (!val.trim()) {
+      setYtSyncHours('');
+      setYtSyncMinutes('');
+      setYtSyncSeconds('');
+    }
+  };
+
+  const handleHmsFieldChange = (field: 'h' | 'm' | 's', value: string) => {
+    if (parsedYtInput.seconds !== null) {
+      setYtSyncInput('');
+    }
+    if (field === 'h') setYtSyncHours(value);
+    else if (field === 'm') setYtSyncMinutes(value);
+    else setYtSyncSeconds(value);
+  };
 
   const handleOpenYouTubeSynced = () => {
     if (activeEp?.id) {
@@ -555,20 +619,20 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   const handlePasteYtSyncInput = async () => {
     try {
       const text = await navigator.clipboard.readText();
-      if (text) setYtSyncInput(text.trim());
+      if (text) handleYtSyncTextChange(text.trim());
     } catch {
       toast.error('Không đọc được clipboard, vui lòng dán thủ công');
     }
   };
 
   const handleApplyYouTubeSync = async () => {
-    if (parsedYtInput.seconds === null) {
-      toast.error('Vui lòng nhập mốc thời gian hoặc dán link YouTube hợp lệ');
+    if (effectiveSyncSeconds === null) {
+      toast.error('Vui lòng nhập mốc thời gian hoặc dán link YouTube có kèm thời gian');
       return;
     }
     setIsApplyingYtSync(true);
     try {
-      const mapped = await syncAudioToYouTubeTimestamp(audio, parsedYtInput.seconds, isLive);
+      const mapped = await syncAudioToYouTubeTimestamp(audio, effectiveSyncSeconds, isLive);
       if (!mapped) {
         toast.error('Không tìm thấy danh sách tập để đồng bộ thời gian');
         return;
@@ -594,7 +658,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
       }
 
       setIsYtSyncModalOpen(false);
-      setYtSyncInput('');
+      clearYtSyncFields();
       toast.success(
         `Đã đồng bộ về Tập ${mapped.episode.episodeNumber} (${mapped.formattedEpisodePos})`
       );
@@ -1067,15 +1131,27 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               <button
                 type="button"
                 onClick={() => setIsSleepModalOpen(true)}
-                className={`w-12 h-12 rounded-xl border-2 ${
+                className={`relative w-12 h-12 rounded-xl border-2 ${
                   sleepTimerMinutes
                     ? 'bg-[#FFE600] text-[#111113] border-[#111113]'
                     : 'bg-[var(--surface-elevated)] text-[var(--ink-primary)] border-[var(--border-ink)]'
                 } flex items-center justify-center shadow-comic-sm hover:bg-[var(--surface-muted)] cursor-pointer`}
-                title="Hẹn giờ tắt"
+                title={
+                  sleepRemainingSec > 0
+                    ? `Hẹn giờ tắt: còn ${formatTime(sleepRemainingSec, sleepRemainingSec >= 3600)}`
+                    : 'Hẹn giờ tắt'
+                }
                 aria-label="Chọn giờ ngủ"
               >
                 <Moon className="w-5 h-5" strokeWidth={2.5} />
+                {sleepRemainingSec > 0 && (
+                  <span
+                    data-testid="sleep-timer-countdown-badge"
+                    className="absolute -top-2 -right-2 px-1.5 py-0.5 rounded-full border border-[#111113] bg-[#E63946] text-white font-mono text-[9px] font-black leading-none shadow-comic-sm"
+                  >
+                    {formatTime(sleepRemainingSec, sleepRemainingSec >= 3600)}
+                  </span>
+                )}
               </button>
 
               <button
@@ -1358,7 +1434,19 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
         showFooter={false}
         size="sm"
       >
-        <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-3">
+          {sleepRemainingSec > 0 && (
+            <div
+              data-testid="sleep-modal-countdown"
+              className="card-comic-sm p-2.5 bg-[#FFFBEB] dark:bg-[#2F2614] border-2 border-[#111113] flex items-center justify-between text-xs font-bold text-[var(--ink-primary)]"
+            >
+              <span>Đang đếm ngược tắt nhạc:</span>
+              <strong className="font-mono text-sm text-[#E63946]">
+                {formatTime(sleepRemainingSec, sleepRemainingSec >= 3600)}
+              </strong>
+            </div>
+          )}
+
           <p className="text-[11px] sm:text-xs text-[var(--ink-secondary)] font-semibold">
             Tự động tạm dừng sau:
           </p>
@@ -1380,6 +1468,56 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               </button>
             ))}
           </div>
+
+          <button
+            type="button"
+            data-testid="sleep-end-of-episode-btn"
+            onClick={() => {
+              const remAudioSec = Math.max(30, episodeDuration - currentPosition);
+              const remWallSec = Math.max(15, Math.round(remAudioSec / Math.max(0.5, playbackRate || 1)));
+              const remMinutes = Math.max(1, Math.round(remWallSec / 60));
+              setSleepTimer(remMinutes);
+              setIsSleepModalOpen(false);
+              toast.success(
+                `Đã hẹn giờ tắt khi hết Tập ${activeEp.episodeNumber} (~${remMinutes} phút)`
+              );
+            }}
+            className="btn-comic text-xs py-2 bg-[var(--surface-accent-soft)] hover:bg-[#FFE600] hover:text-[#111113] font-bold justify-center"
+          >
+            Hết tập hiện tại (Tập {activeEp.episodeNumber})
+          </button>
+
+          <div className="flex items-center gap-2 pt-1 border-t border-[var(--border-ink)]/15">
+            <input
+              data-testid="custom-sleep-minutes-input"
+              type="number"
+              min={1}
+              max={480}
+              value={customSleepMinutes}
+              onChange={(e) => setCustomSleepMinutes(e.target.value)}
+              placeholder="Số phút tùy chỉnh (1-480)..."
+              className="input-comic text-xs font-mono flex-1 py-1.5 px-2.5"
+            />
+            <button
+              type="button"
+              data-testid="apply-custom-sleep-btn"
+              onClick={() => {
+                const mins = parseInt(customSleepMinutes, 10);
+                if (!Number.isFinite(mins) || mins < 1 || mins > 480) {
+                  toast.error('Vui lòng nhập số phút từ 1 đến 480');
+                  return;
+                }
+                setSleepTimer(mins);
+                setCustomSleepMinutes('');
+                setIsSleepModalOpen(false);
+                toast.success(`Đã hẹn giờ tắt sau ${mins} phút`);
+              }}
+              className="btn-comic btn-comic-yellow text-xs py-1.5 px-3 font-black shrink-0"
+            >
+              Đặt
+            </button>
+          </div>
+
           {sleepTimerMinutes && (
             <button
               type="button"
@@ -1390,7 +1528,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               }}
               className="btn-comic btn-comic-red text-xs py-2 mt-0.5"
             >
-              Hủy hẹn giờ ({sleepTimerMinutes}m)
+              Hủy hẹn giờ ({sleepRemainingSec > 0 ? formatTime(sleepRemainingSec) : `${sleepTimerMinutes}m`})
             </button>
           )}
         </div>
@@ -1411,7 +1549,10 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
       {/* YouTube Bidirectional Timestamp Sync Modal */}
       <Modal
         isOpen={isYtSyncModalOpen}
-        onClose={() => setIsYtSyncModalOpen(false)}
+        onClose={() => {
+          setIsYtSyncModalOpen(false);
+          clearYtSyncFields();
+        }}
         title="ĐỒNG BỘ THỜI GIAN YOUTUBE"
         showFooter={false}
         size="sm"
@@ -1442,7 +1583,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               htmlFor="yt-sync-input"
               className="text-[11px] font-extrabold uppercase text-[var(--ink-primary)]"
             >
-              Đồng bộ từ YouTube về App
+              Cách 1: Dán link YouTube có kèm ?t=...
             </label>
             <div className="flex items-center gap-2">
               <input
@@ -1450,8 +1591,8 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                 data-testid="yt-sync-input"
                 type="text"
                 value={ytSyncInput}
-                onChange={(e) => setYtSyncInput(e.target.value)}
-                placeholder="Dán link YouTube có ?t=... hoặc nhập giờ (vd: 09:23:45)"
+                onChange={(e) => handleYtSyncTextChange(e.target.value)}
+                placeholder="https://youtube.com/watch?v=...&t=02:31:12"
                 className="input-comic text-xs font-mono flex-1 py-2 px-3"
               />
               <button
@@ -1462,6 +1603,64 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               >
                 <ClipboardPaste className="w-3.5 h-3.5" strokeWidth={2.25} />
               </button>
+            </div>
+          </div>
+
+          {isMissingTimestampInUrl && (
+            <div
+              data-testid="yt-sync-missing-time-hint"
+              className="card-comic-sm p-2.5 bg-[#FFFBEB] dark:bg-[#2F2614] border-2 border-[#F59E0B] text-[11px] font-bold text-[#92400E] dark:text-[#FCD34D] leading-snug"
+            >
+              Link chia sẻ mặc định của YouTube (<code>?si=...</code>) không kèm mốc thời gian.
+              Hãy gõ thẳng <strong>Giờ / Phút / Giây</strong> đang xem bên dưới (hoặc trên máy tính:
+              chuột phải video → <em>Sao chép URL tại thời điểm hiện tại</em>).
+            </div>
+          )}
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-extrabold uppercase text-[var(--ink-primary)]">
+              Cách 2: Nhập nhanh Giờ / Phút / Giây từ YouTube
+            </span>
+            <div className="grid grid-cols-3 gap-2">
+              <label className="flex flex-col gap-0.5 text-[10px] font-bold text-[var(--ink-secondary)]">
+                <span>Giờ</span>
+                <input
+                  data-testid="yt-sync-hours"
+                  type="number"
+                  min={0}
+                  max={99}
+                  value={ytSyncHours}
+                  onChange={(e) => handleHmsFieldChange('h', e.target.value)}
+                  placeholder="0"
+                  className="input-comic text-xs font-mono text-center py-1.5 px-2"
+                />
+              </label>
+              <label className="flex flex-col gap-0.5 text-[10px] font-bold text-[var(--ink-secondary)]">
+                <span>Phút</span>
+                <input
+                  data-testid="yt-sync-minutes"
+                  type="number"
+                  min={0}
+                  max={59}
+                  value={ytSyncMinutes}
+                  onChange={(e) => handleHmsFieldChange('m', e.target.value)}
+                  placeholder="00"
+                  className="input-comic text-xs font-mono text-center py-1.5 px-2"
+                />
+              </label>
+              <label className="flex flex-col gap-0.5 text-[10px] font-bold text-[var(--ink-secondary)]">
+                <span>Giây</span>
+                <input
+                  data-testid="yt-sync-seconds"
+                  type="number"
+                  min={0}
+                  max={59}
+                  value={ytSyncSeconds}
+                  onChange={(e) => handleHmsFieldChange('s', e.target.value)}
+                  placeholder="00"
+                  className="input-comic text-xs font-mono text-center py-1.5 px-2"
+                />
+              </label>
             </div>
           </div>
 
@@ -1488,7 +1687,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
           <button
             type="button"
             data-testid="apply-yt-sync-btn"
-            disabled={parsedYtInput.seconds === null || isApplyingYtSync}
+            disabled={effectiveSyncSeconds === null || isApplyingYtSync}
             onClick={handleApplyYouTubeSync}
             className="btn-comic btn-comic-primary text-xs py-2.5 font-black w-full justify-center disabled:opacity-50"
           >

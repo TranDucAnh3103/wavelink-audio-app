@@ -118,4 +118,141 @@ describe('playerStore in Direct Audio Stream mode', () => {
 
     expect(usePlayerStore.getState().activeEngine).toBe('youtube');
   });
+
+  it('does NOT jump Audio B to Episode 2 when switching from Audio A with stale stream events', async () => {
+    const secondAudio: AudioItem = {
+      ...multiChapterAudio,
+      id: 600,
+      youtubeVideoId: 'audioBStream',
+      youtubeUrl: 'https://youtube.com/watch?v=audioBStream',
+      title: 'Truyện B - Cần Bắt Đầu Từ Tập 1',
+      episodes: [
+        {
+          id: 6001,
+          episodeNumber: 1,
+          title: 'Tập 1',
+          startSeconds: 0,
+          endSeconds: 3600,
+          duration: 3600,
+        },
+        {
+          id: 6002,
+          episodeNumber: 2,
+          title: 'Tập 2',
+          startSeconds: 3600,
+          endSeconds: 7200,
+          duration: 3600,
+        },
+      ],
+    };
+
+    let resolveSecondToken: ((v: any) => void) | null = null;
+    vi.spyOn(audioService, 'getStreamToken').mockImplementation((audioId) => {
+      if (Number(audioId) === 500) {
+        return Promise.resolve({
+          streamToken: 'tok_a',
+          videoId: 'streamChap12',
+          streamPath: '/stream/streamChap12?st=tok_a',
+          streamUrl: 'https://stream.example.com/stream/streamChap12?st=tok_a',
+          expiresAt: '2026-12-01T00:00:00Z',
+        });
+      }
+      return new Promise((resolve) => {
+        resolveSecondToken = resolve;
+      });
+    });
+
+    // 1. Play Audio A deeply past 3600s (so if leaked into Audio B Ep 1 it would trigger Ep 2)
+    usePlayerStore.getState().play(multiChapterAudio, multiChapterAudio.episodes![1], 1400);
+    await Promise.resolve();
+    audioEl.currentTime = 5000;
+    audioEl.dispatchEvent(new Event('loadedmetadata'));
+    expect(htmlAudioEngine.getLoadedVideoId()).toBe('streamChap12');
+
+    // 2. Switch to Audio B while Audio B token fetch is still pending & stale Audio A events fire
+    usePlayerStore.getState().play(secondAudio, secondAudio.episodes![0], 0);
+    audioEl.currentTime = 5000;
+    audioEl.dispatchEvent(new Event('timeupdate'));
+    audioEl.dispatchEvent(new Event('ended'));
+
+    let state = usePlayerStore.getState();
+    expect(state.currentAudio?.id).toBe(600);
+    expect(state.currentEpisode?.episodeNumber).toBe(1);
+    expect(state.currentEpisode?.id).toBe(6001);
+
+    // 3. Resolve Audio B stream token and dispatch loadedmetadata -> resets currentTime to 0, stays on Ep 1
+    resolveSecondToken!({
+      streamToken: 'tok_b',
+      videoId: 'audioBStream',
+      streamPath: '/stream/audioBStream?st=tok_b',
+      streamUrl: 'https://stream.example.com/stream/audioBStream?st=tok_b',
+      expiresAt: '2026-12-01T00:00:00Z',
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    audioEl.dispatchEvent(new Event('loadedmetadata'));
+
+    state = usePlayerStore.getState();
+    expect(state.currentAudio?.id).toBe(600);
+    expect(state.currentEpisode?.episodeNumber).toBe(1);
+    expect(state.currentEpisode?.id).toBe(6001);
+    expect(audioEl.currentTime).toBe(0);
+  });
+
+  it('does NOT jump Audio B to Episode 2 in YouTube mode when ytPlayerInstance still reports Audio A', () => {
+    vi.useFakeTimers();
+    try {
+      const audioB: AudioItem = {
+        ...multiChapterAudio,
+        id: 700,
+        youtubeVideoId: 'ytVideoBBBB',
+        title: 'Truyện B YouTube',
+        episodes: [
+          {
+            id: 7001,
+            episodeNumber: 1,
+            title: 'Tập 1',
+            startSeconds: 0,
+            endSeconds: 3600,
+            duration: 3600,
+          },
+          {
+            id: 7002,
+            episodeNumber: 2,
+            title: 'Tập 2',
+            startSeconds: 3600,
+            endSeconds: 7200,
+            duration: 3600,
+          },
+        ],
+      };
+
+      const fakeYtPlayer = {
+        loadVideoById: vi.fn(),
+        playVideo: vi.fn(),
+        pauseVideo: vi.fn(),
+        seekTo: vi.fn(),
+        getCurrentTime: vi.fn().mockReturnValue(5000),
+        getPlaybackRate: vi.fn().mockReturnValue(1),
+        getPlayerState: vi.fn().mockReturnValue(1),
+        getVideoData: vi.fn().mockReturnValue({ video_id: 'streamChap12' }),
+      };
+
+      usePlayerStore.getState().setAudioElement(null);
+      usePlayerStore.getState().setYtInstance(fakeYtPlayer);
+
+      usePlayerStore.getState().play(multiChapterAudio, multiChapterAudio.episodes![1], 1400);
+      usePlayerStore.getState().play(audioB, audioB.episodes![0], 0);
+
+      // Advance poll interval while fakeYtPlayer.getVideoData() still returns Audio A ('streamChap12')
+      vi.advanceTimersByTime(3200);
+
+      const state = usePlayerStore.getState();
+      expect(state.currentAudio?.id).toBe(700);
+      expect(state.currentEpisode?.episodeNumber).toBe(1);
+      expect(state.currentEpisode?.id).toBe(7001);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

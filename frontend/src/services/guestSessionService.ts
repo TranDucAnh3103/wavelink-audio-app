@@ -182,7 +182,7 @@ export const guestSessionService = {
       const filtered = history.filter((h) => h.audioId !== audioId);
       filtered.unshift(newItem);
 
-      sessionStorage.setItem(GUEST_HISTORY_KEY, JSON.stringify(filtered.slice(0, 50)));
+      sessionStorage.setItem(GUEST_HISTORY_KEY, JSON.stringify(filtered.slice(0, 500)));
     } catch (err) {
       console.warn('Failed to save guest history in sessionStorage:', err);
     }

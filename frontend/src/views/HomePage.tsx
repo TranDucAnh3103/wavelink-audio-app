@@ -64,6 +64,7 @@ export const HomePage: React.FC = () => {
     }
   });
   const [visibleSeriesCount, setVisibleSeriesCount] = useState<number>(SERIES_BATCH_SIZE);
+  const [showAllHistory, setShowAllHistory] = useState(false);
 
   const handleDismissGreeting = () => {
     setIsGreetingHidden(true);
@@ -895,28 +896,45 @@ export const HomePage: React.FC = () => {
         </section>
       )}
 
-      {/* 9. VỪA CÀY GẦN ĐÂY (Lịch sử nghe - chỉ hiển thị 3 cái gần nhất, Xem thêm vào trang Profile) */}
+      {/* 9. VỪA CÀY GẦN ĐÂY (Mặc định hiển thị 3 mục gần nhất, có nút Xem tất cả toàn bộ lịch sử) */}
       <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-1.5">
             <History className="w-4 h-4 text-[#3A86FF]" strokeWidth={2.5} />
             <h2 className="font-comic font-extrabold text-sm uppercase text-[var(--ink-primary)] tracking-tight">
               Vừa Cày Gần Đây
             </h2>
+            {history.length > 0 && (
+              <span className="badge-comic badge-comic-yellow text-[9px] font-black">
+                {history.length} bộ
+              </span>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={() => navigate('/profile')}
-            className="text-xs font-extrabold text-[#3A86FF] hover:underline flex items-center gap-0.5 cursor-pointer"
-          >
-            <span>Xem thêm</span>
-            <ChevronRight className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-3 shrink-0">
+            {history.length > 3 && (
+              <button
+                type="button"
+                data-testid="home-toggle-all-history-btn"
+                onClick={() => setShowAllHistory((prev) => !prev)}
+                className="text-xs font-extrabold text-[#8338EC] hover:underline flex items-center gap-0.5 cursor-pointer"
+              >
+                <span>{showAllHistory ? 'Thu gọn' : `Xem tất cả (${history.length})`}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => navigate('/profile')}
+              className="text-xs font-extrabold text-[#3A86FF] hover:underline flex items-center gap-0.5 cursor-pointer"
+            >
+              <span>{history.length > 3 ? 'Hồ sơ' : 'Xem thêm'}</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {history && history.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {history.slice(0, 3).map((item) => (
+            {(showAllHistory ? history : history.slice(0, 3)).map((item) => (
               <div
                 key={`${item.audioId}-${item.episodeId}`}
                 className="card-comic-sm p-3 flex items-center justify-between gap-2.5 hover:bg-[var(--surface-elevated)] transition-all cursor-pointer"
