@@ -13,6 +13,35 @@ import { userService } from './userService';
 import { guestSessionService } from './guestSessionService';
 import { communityService } from './communityService';
 
+function purgeLegacyLocalStorageDb(): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const legacyKeys = [
+      'audio_library_db',
+      'wavelink_community_messages',
+      'wavelink_local_notifications',
+      'vip_payment_info',
+      'vip_packages',
+      'active_membership_order',
+      'wavelink_admin_orders',
+    ];
+    legacyKeys.forEach((k) => localStorage.removeItem(k));
+
+    if (typeof localStorage.length === 'number' && typeof localStorage.key === 'function') {
+      const swrKeys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('wavelink_cache_swr:')) {
+          swrKeys.push(key);
+        }
+      }
+      swrKeys.forEach((k) => localStorage.removeItem(k));
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export const api = {
   localDb,
   auth: authService,
@@ -30,6 +59,7 @@ export const api = {
   community: communityService,
 
   async init(): Promise<boolean> {
+    purgeLegacyLocalStorageDb();
     await localDb.init();
     progressService.initOfflineSyncListener();
     const isLive = await authService.pingHealth();

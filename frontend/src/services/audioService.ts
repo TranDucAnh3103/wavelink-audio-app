@@ -1,5 +1,5 @@
 import { axiosClient } from '@/lib/axiosClient';
-import { AudioItem, AudioFilter, YouTubePreviewData, ImportYouTubePayload, ImportResult, ImportQuota, User } from '@/types';
+import { AudioItem, AudioFilter, YouTubePreviewData, ImportYouTubePayload, ImportResult, ImportQuota, User, StreamTokenResponse } from '@/types';
 import { localDb, isMockAudio } from './localDb';
 import { extractYouTubeId, formatTime, formatDuration } from '@/lib/utils';
 import { guestSessionService } from './guestSessionService';
@@ -12,6 +12,7 @@ export const audioService = {
     if (isLive) {
       try {
         const params = new URLSearchParams();
+        params.append('fields', 'lite');
         if (filter.search) params.append('search', filter.search);
         if (filter.categoryId) params.append('categoryId', String(filter.categoryId));
         if (filter.status) params.append('status', filter.status);
@@ -321,27 +322,22 @@ export const audioService = {
           const raw = res.data.data as Record<string, unknown>;
           const audio = (raw.audio || raw) as AudioItem;
           const duplicate = Boolean(raw.duplicate);
-
-          if (audio && audio.id) {
-            const db = localDb.get();
-            const exists = db.audios.find((a) => a.id === audio.id);
-            if (!exists) {
-              db.audios.unshift(audio);
-              localDb.save();
-            }
-          }
           return { duplicate, audio };
         } else {
           throw new Error(res.data.error?.message || 'Lỗi nhập URL YouTube');
         }
       } catch (err: unknown) {
-        const apiErr = err as { status?: number; message?: string };
+        const apiErr = err as { status?: number; message?: string; name?: string };
         if (apiErr.status === 400 || (apiErr.message && (apiErr.message.includes('không tồn tại') || apiErr.message.includes('không thể phát')))) {
           throw err;
         }
-        const msg = (err as Error).message;
+        const msg = (err as Error).message || '';
+        const isQuotaErr =
+          apiErr.name === 'QuotaExceededError' ||
+          msg.includes('QuotaExceededError') ||
+          msg.includes('exceeded the quota');
         console.warn('importYouTube live API error, fallback to local:', err);
-        if (msg && !msg.includes('Network Error') && !msg.includes('timeout')) throw err;
+        if (!isQuotaErr && msg && !msg.includes('Network Error') && !msg.includes('timeout')) throw err;
       }
     }
 
@@ -367,7 +363,11 @@ export const audioService = {
         throw new Error('Bạn đã dùng hết lượt nhập link miễn phí hôm nay (5 lượt/ngày). Vui lòng nâng cấp VIP để không giới hạn.');
       }
 
-      localStorage.setItem(quotaKey, JSON.stringify({ date: todayStr, count: count + 1 }));
+      try {
+        localStorage.setItem(quotaKey, JSON.stringify({ date: todayStr, count: count + 1 }));
+      } catch {
+        // Ignore storage quota error
+      }
     }
 
     const db = localDb.get();
@@ -506,5 +506,39 @@ export const audioService = {
       canImport: count < 5,
       reason: count >= 5 ? 'Bạn đã dùng hết lượt nhập link miễn phí hôm nay (5 lượt/ngày).' : undefined,
     };
+  },
+
+  async getStreamToken(audioId: number | string, episodeId?: number, episodeNumber?: number): Promise<StreamTokenResponse> {
+    const res = await axiosClient.post<{ success: boolean; data: StreamTokenResponse; error?: { message?: string } }>(
+      `/audios/${audioId}/stream-token`,
+      {
+        episodeId: episodeId || 0,
+        episodeNumber: episodeNumber || 0,
+      }
+    );
+    if (res.data.success && res.data.data) {
+      return res.data.data;
+    }
+    throw new Error(res.data.error?.message || 'Không thể lấy liên kết phát âm thanh');
+  },
+
+  async checkStream(audioId: number | string): Promise<{
+    audioId: number;
+    streamStatus: 'UNKNOWN' | 'OK' | 'FAILED';
+    audioMime?: string;
+    durationSeconds?: number;
+    error?: string;
+  }> {
+    const res = await axiosClient.post<{
+      success: boolean;
+      data: {
+        audioId: number;
+        streamStatus: 'UNKNOWN' | 'OK' | 'FAILED';
+        audioMime?: string;
+        durationSeconds?: number;
+        error?: string;
+      };
+    }>(`/audios/${audioId}/check-stream`);
+    return res.data.data;
   },
 };

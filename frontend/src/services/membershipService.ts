@@ -90,7 +90,7 @@ export const membershipService = {
         const res = await axiosClient.put<{ success: boolean; data: PaymentInfo }>('/membership/admin/payment-info', info);
         if (res.data.success && res.data.data) {
           if (typeof localStorage !== 'undefined') {
-            localStorage.setItem('vip_payment_info', JSON.stringify(res.data.data));
+            localStorage.removeItem('vip_payment_info');
           }
           return res.data.data;
         }
@@ -100,7 +100,9 @@ export const membershipService = {
     }
 
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('vip_payment_info', JSON.stringify(info));
+      try {
+        localStorage.setItem('vip_payment_info', JSON.stringify(info));
+      } catch {}
     }
     return info;
   },
@@ -113,7 +115,7 @@ export const membershipService = {
         });
         if (res.data.success && Array.isArray(res.data.data)) {
           if (typeof localStorage !== 'undefined') {
-            localStorage.setItem('vip_packages', JSON.stringify(res.data.data));
+            localStorage.removeItem('vip_packages');
           }
           return res.data.data;
         }
@@ -123,7 +125,9 @@ export const membershipService = {
     }
 
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('vip_packages', JSON.stringify(packages));
+      try {
+        localStorage.setItem('vip_packages', JSON.stringify(packages));
+      } catch {}
     }
     return packages;
   },

@@ -29,6 +29,8 @@ export interface AudioItem {
   formattedDuration?: string;
   totalEpisodes: number;
   status?: string; // 'ACTIVE' | 'PLAYING' | 'HIDDEN'
+  streamStatus?: 'UNKNOWN' | 'OK' | 'FAILED';
+  audioMime?: string;
   currentEpisodeId?: number;
   currentEpisodeNumber?: number;
   currentEpisodeTitle?: string;
@@ -91,4 +93,14 @@ export interface ImportQuota {
   remaining: number;
   canImport: boolean;
   reason?: string;
+}
+
+export interface StreamTokenResponse {
+  streamToken: string;
+  videoId: string;
+  streamPath: string;
+  streamUrl: string;
+  expiresAt: string;
+  streamStatus?: 'UNKNOWN' | 'OK' | 'FAILED';
+  audioMime?: string;
 }

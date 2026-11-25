@@ -7,7 +7,6 @@ import { queryClient } from '@/lib/queryClient';
 import { toast } from '@/components/ui/Toast';
 import { stopBackgroundAudio } from '@/lib/backgroundAudioKeeper';
 import { stopBackgroundSleepTimer } from '@/lib/sleepTimerWorker';
-import { clearSwrCache } from '@/lib/swrCache';
 
 interface AuthState {
   user: User | null;
@@ -283,7 +282,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       sessionStorage.clear();
     }
     guestSessionService.clearGuestSession();
-    clearSwrCache();
 
     // 5. Xóa toàn bộ cache dữ liệu của React Query (xóa sạch vết user cũ, không lưu lẫn lộn sang acc khác)
     queryClient.clear();

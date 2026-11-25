@@ -17,6 +17,10 @@ const (
 	StatusActive  = "ACTIVE"
 	StatusHidden  = "HIDDEN"
 	StatusDeleted = "DELETED"
+
+	StreamStatusUnknown = "UNKNOWN"
+	StreamStatusOK      = "OK"
+	StreamStatusFailed  = "FAILED"
 )
 
 // User Entity
@@ -70,6 +74,9 @@ type Audio struct {
 	CategoryID           uint           `json:"categoryId" gorm:"column:category_id;index"`
 	Category             *Category      `json:"category,omitempty" gorm:"foreignKey:CategoryID"`
 	Status               string         `json:"status" gorm:"size:20;default:'ACTIVE';index"`
+	StreamStatus         string         `json:"streamStatus" gorm:"column:stream_status;size:20;default:'UNKNOWN';index"`
+	StreamCheckedAt      *time.Time     `json:"streamCheckedAt,omitempty" gorm:"column:stream_checked_at"`
+	AudioMime            string         `json:"audioMime,omitempty" gorm:"column:audio_mime;size:100"`
 	IsVIPOnly            bool           `json:"isVipOnly" gorm:"column:is_vip_only;default:false"`
 	FreeEpisodesCount    *int           `json:"freeEpisodesCount" gorm:"column:free_episodes_count;default:1"`
 	CreatedBy            uint           `json:"createdBy" gorm:"column:created_by;index;default:0"`

@@ -1,0 +1,27 @@
+{
+  "name": "wavelink-mobile",
+  "version": "2.0.0",
+  "private": true,
+  "scripts": {
+    "android": "run-android.bat",
+    "ios": "react-native run-ios",
+    "start": "react-native start",
+    "build:apk": "build-apk.bat",
+    "clean": "cd android && gradlew.bat clean"
+  },
+  "dependencies": {
+    "react": "18.2.0",
+    "react-native": "0.74.5",
+    "react-native-webview": "^13.8.7"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@babel/preset-env": "^7.24.0",
+    "@babel/runtime": "^7.24.0",
+    "@react-native/babel-preset": "^0.74.87",
+    "@react-native/metro-config": "^0.74.87",
+    "@react-native/typescript-config": "^0.74.87",
+    "@types/react": "^18.2.79",
+    "typescript": "^5.0.4"
+  }
+}

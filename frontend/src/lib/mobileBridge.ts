@@ -74,7 +74,14 @@ export function initMobileBridge(): () => void {
         store.nextEpisode();
         break;
       case 'prev':
+      case 'previous':
         store.prevEpisode();
+        break;
+      case 'rewind':
+        store.skipSeconds(-(typeof payload === 'number' ? payload : 15));
+        break;
+      case 'forward':
+        store.skipSeconds(typeof payload === 'number' ? payload : 30);
         break;
       case 'seekTo':
         if (typeof payload === 'number') {
@@ -91,6 +98,7 @@ export function initMobileBridge(): () => void {
   let previousAudioId: number | string | null = null;
   let previousEpisodeId: number | string | null = null;
   let previousPlaying: boolean | null = null;
+  let lastProgressPostTs = 0;
 
   const unsubscribe = usePlayerStore.subscribe((state) => {
     if (!isMobileApp()) return;
@@ -101,12 +109,15 @@ export function initMobileBridge(): () => void {
 
     const audioId = currentAudio?.id ?? null;
     const episodeId = currentEpisode?.id ?? null;
+    const now = Date.now();
+    const shouldSyncProgress = isPlaying && now - lastProgressPostTs >= 10000;
 
-    // Chỉ gửi khi có sự thay đổi về bài hát hoặc trạng thái play/pause
-    if (audioId !== previousAudioId || episodeId !== previousEpisodeId || isPlaying !== previousPlaying) {
+    // Gửi khi có sự thay đổi bài hát/trạng thái hoặc định kỳ 10s để đồng bộ thanh seekbar Notification
+    if (audioId !== previousAudioId || episodeId !== previousEpisodeId || isPlaying !== previousPlaying || shouldSyncProgress) {
       previousAudioId = audioId;
       previousEpisodeId = episodeId;
       previousPlaying = isPlaying;
+      lastProgressPostTs = now;
 
       notifyMobilePlaybackState({
         isPlaying,

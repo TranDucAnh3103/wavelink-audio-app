@@ -89,24 +89,12 @@ func (h *Handler) GetEpisodesByAudioID(c *gin.Context) {
 		freeLimit = *audio.FreeEpisodesCount
 	}
 
-	isVipOrAdmin := logic.IsActiveVIPOrAdmin(currentUser)
 	for i := range episodes {
-		if audio.IsVIPOnly {
+		if audio.IsVIPOnly && (freeLimit == 0 || episodes[i].EpisodeNumber > freeLimit) {
 			episodes[i].IsVIP = true
 		}
-		if audio.IsVIPOnly || episodes[i].IsVIP {
-			if !isVipOrAdmin {
-				if episodes[i].EpisodeNumber > freeLimit || freeLimit == 0 {
-					episodes[i].IsLocked = true
-				} else {
-					episodes[i].IsLocked = false
-				}
-			} else {
-				episodes[i].IsLocked = false
-			}
-		} else {
-			episodes[i].IsLocked = false
-		}
+		canAccess, _ := logic.CanAccessEpisode(currentUser, audio, episodes[i])
+		episodes[i].IsLocked = !canAccess
 	}
 
 	response.OK(c, episodes, nil)

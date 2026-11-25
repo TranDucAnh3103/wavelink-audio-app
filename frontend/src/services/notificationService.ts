@@ -28,16 +28,17 @@ export const notificationService = {
   async getNotifications(isLive = true): Promise<NotificationItem[]> {
     if (isLive) {
       try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem(LOCAL_STORAGE_NOTIFS_KEY);
+        }
         const res = await axiosClient.get<{ success: boolean; data: NotificationItem[] }>('/notifications');
         if (res.data.success && Array.isArray(res.data.data)) {
-          try {
-            localStorage.setItem(LOCAL_STORAGE_NOTIFS_KEY, JSON.stringify(res.data.data));
-          } catch {}
           return res.data.data;
         }
       } catch (err) {
         console.warn('getNotifications failed:', err);
       }
+      return [];
     }
     try {
       const stored = localStorage.getItem(LOCAL_STORAGE_NOTIFS_KEY);

@@ -411,6 +411,8 @@ jobs:
           labels: ${{ steps.meta-frontend.outputs.labels }}
           build-args: |
             VITE_API_BASE_URL=${{ secrets.PROD_API_BASE_URL || secrets.VITE_API_BASE_URL || 'https://wavelink-audio-app-backend-latest.onrender.com/api/v1' }}
+            VITE_STREAM_BASE_URL=${{ secrets.PROD_STREAM_BASE_URL || '' }}
+            VITE_AUDIO_ENGINE=${{ secrets.PROD_AUDIO_ENGINE || 'stream' }}
             VITE_ITEMS_PER_PAGE=12
 
       - name: Trigger Production Backend Auto-Deploy Hook
@@ -441,6 +443,8 @@ jobs:
         env:
           PROD_API_URL: ${{ secrets.PROD_API_BASE_URL }}
           TUNNEL_API_URL: ${{ secrets.QUICK_TUNNEL_URL }}
+          PROD_STREAM_URL: ${{ secrets.PROD_STREAM_BASE_URL }}
+          PROD_AUDIO_ENGINE: ${{ secrets.PROD_AUDIO_ENGINE || 'stream' }}
         run: |
           echo ">>> Đang trích xuất static package từ Docker Image GHCR..."
           rm -rf ./frontend/dist-extracted
@@ -455,7 +459,7 @@ jobs:
           RESOLVED_TUNNEL="${PROD_API_URL:-$TUNNEL_API_URL}"
           if [ -n "$RESOLVED_TUNNEL" ]; then
             echo ">>> Ghi đè URL API từ GitHub Secret vào env-config.js: $RESOLVED_TUNNEL"
-            printf 'window.__ENV__ = {\n  VITE_API_BASE_URL: "%s",\n  APP_ENV: "production"\n};\n' "$RESOLVED_TUNNEL" > ./frontend/dist-extracted/env-config.js
+            printf 'window.__ENV__ = {\n  VITE_API_BASE_URL: "%s",\n  STREAM_BASE_URL: "%s",\n  AUDIO_ENGINE: "%s",\n  APP_ENV: "production"\n};\n' "$RESOLVED_TUNNEL" "$PROD_STREAM_URL" "$PROD_AUDIO_ENGINE" > ./frontend/dist-extracted/env-config.js
           fi
           echo ">>> Trích xuất thành công! Danh sách tệp tin trong package:"
           ls -la ./frontend/dist-extracted/

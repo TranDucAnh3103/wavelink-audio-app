@@ -2,6 +2,17 @@ import { axiosClient, API_BASE } from '@/lib/axiosClient';
 import { CommunityMessage, TopListener, VipRankingMember, WSCommunityMessage, CommunityAdminStats } from '@/types';
 
 const LOCAL_STORAGE_MESSAGES_KEY = 'wavelink_community_messages';
+let memoryMessages: CommunityMessage[] = [];
+
+function purgeLegacyCommunityStorage() {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.removeItem(LOCAL_STORAGE_MESSAGES_KEY);
+    } catch {
+      // Ignore
+    }
+  }
+}
 
 export const communityService = {
   async getTopListeners(): Promise<TopListener[]> {
@@ -45,30 +56,18 @@ export const communityService = {
   },
 
   async getMessages(): Promise<CommunityMessage[]> {
+    purgeLegacyCommunityStorage();
     try {
       const res = await axiosClient.get<{ success: boolean; data: CommunityMessage[] }>('/community/messages');
       if (res.data.success && Array.isArray(res.data.data)) {
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem(LOCAL_STORAGE_MESSAGES_KEY, JSON.stringify(res.data.data));
-        }
+        memoryMessages = res.data.data;
         return res.data.data;
       }
     } catch (err) {
       console.warn('getMessages API error', err);
     }
 
-    if (typeof localStorage !== 'undefined') {
-      const cached = localStorage.getItem(LOCAL_STORAGE_MESSAGES_KEY);
-      if (cached) {
-        try {
-          return JSON.parse(cached);
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    return [];
+    return [...memoryMessages];
   },
 
   async sendMessage(message: string, sharedAudioId?: number, senderName?: string): Promise<CommunityMessage> {
@@ -121,12 +120,8 @@ export const communityService = {
       createdAt: new Date().toISOString(),
     };
 
-    if (typeof localStorage !== 'undefined') {
-      const cached = localStorage.getItem(LOCAL_STORAGE_MESSAGES_KEY);
-      const list: CommunityMessage[] = cached ? JSON.parse(cached) : [];
-      list.push(fallbackMsg);
-      localStorage.setItem(LOCAL_STORAGE_MESSAGES_KEY, JSON.stringify(list));
-    }
+    purgeLegacyCommunityStorage();
+    memoryMessages.push(fallbackMsg);
 
     return fallbackMsg;
   },
@@ -139,16 +134,8 @@ export const communityService = {
       console.warn('deleteMessage API warning, ensuring local clean', err);
     }
 
-    if (typeof localStorage !== 'undefined') {
-      const cached = localStorage.getItem(LOCAL_STORAGE_MESSAGES_KEY);
-      if (cached) {
-        try {
-          const list: CommunityMessage[] = JSON.parse(cached);
-          const filtered = list.filter((m) => String(m.id) !== String(id));
-          localStorage.setItem(LOCAL_STORAGE_MESSAGES_KEY, JSON.stringify(filtered));
-        } catch {}
-      }
-    }
+    purgeLegacyCommunityStorage();
+    memoryMessages = memoryMessages.filter((m) => String(m.id) !== String(id));
     return true;
   },
 
@@ -159,10 +146,8 @@ export const communityService = {
       console.warn('clearAllMessages API warning, ensuring local clear', err);
     }
 
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(LOCAL_STORAGE_MESSAGES_KEY);
-      localStorage.setItem(LOCAL_STORAGE_MESSAGES_KEY, '[]');
-    }
+    purgeLegacyCommunityStorage();
+    memoryMessages = [];
     return true;
   },
 

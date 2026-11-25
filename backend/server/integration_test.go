@@ -827,4 +827,90 @@ func TestEndToEndAPI(t *testing.T) {
 			}
 		}
 	})
+
+	// 8. Direct Audio Stream Token Access Control (Free vs VIP Episode)
+	t.Run("Stream Token Authorization (VIP Gate)", func(t *testing.T) {
+		// Create a VIP audio with 2 episodes (episode 1 free, episode 2 VIP locked)
+		vipAudio := domain.Audio{
+			YoutubeVideoID:       "streamVip123",
+			YoutubeURL:           "https://youtube.com/watch?v=streamVip123",
+			Title:                "Truyện VIP Stream Test",
+			Author:               "Tác giả",
+			TotalDurationSeconds: 7200,
+			Status:               domain.StatusActive,
+			IsVIPOnly:            true,
+		}
+		freeOne := 1
+		vipAudio.FreeEpisodesCount = &freeOne
+		if err := db.Create(&vipAudio).Error; err != nil {
+			t.Fatalf("failed to create vipAudio: %v", err)
+		}
+		ep1 := domain.Episode{AudioID: vipAudio.ID, EpisodeNumber: 1, Title: "Tập 1", StartSeconds: 0, EndSeconds: 3600, DurationSeconds: 3600, IsVIP: false}
+		ep2 := domain.Episode{AudioID: vipAudio.ID, EpisodeNumber: 2, Title: "Tập 2", StartSeconds: 3600, EndSeconds: 7200, DurationSeconds: 3600, IsVIP: true}
+		_ = db.Create(&ep1).Error
+		_ = db.Create(&ep2).Error
+
+		// Register a fresh FREE user
+		freeBody, _ := json.Marshal(map[string]string{
+			"username": "free_stream_user",
+			"email":    "free_stream@audioapp.com",
+			"password": "password123",
+		})
+		regReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(freeBody))
+		regReq.Header.Set("Content-Type", "application/json")
+		regW := httptest.NewRecorder()
+		app.ServeHTTP(regW, regReq)
+		if regW.Code != http.StatusCreated && regW.Code != http.StatusOK {
+			t.Fatalf("register failed: %d %s", regW.Code, regW.Body.String())
+		}
+		var regRes response.Envelope
+		_ = json.Unmarshal(regW.Body.Bytes(), &regRes)
+		freeToken := regRes.Data.(map[string]interface{})["token"].(string)
+
+		// A. Guest or Free user requesting episode 1 (within free limit) -> 200 OK with streamToken
+		ep1Body, _ := json.Marshal(map[string]uint{"episodeId": ep1.ID})
+		r1 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/audios/%d/stream-token", vipAudio.ID), bytes.NewReader(ep1Body))
+		r1.Header.Set("Content-Type", "application/json")
+		w1 := httptest.NewRecorder()
+		app.ServeHTTP(w1, r1)
+		if w1.Code != http.StatusOK {
+			t.Fatalf("expected 200 for guest episode 1 stream-token, got %d: %s", w1.Code, w1.Body.String())
+		}
+		var res1 response.Envelope
+		_ = json.Unmarshal(w1.Body.Bytes(), &res1)
+		d1 := res1.Data.(map[string]interface{})
+		if d1["streamToken"] == "" || d1["videoId"] != "streamVip123" {
+			t.Fatalf("unexpected stream-token response: %+v", d1)
+		}
+
+		// B. Free user requesting VIP episode 2 -> 403 Forbidden
+		ep2Body, _ := json.Marshal(map[string]uint{"episodeId": ep2.ID})
+		r2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/audios/%d/stream-token", vipAudio.ID), bytes.NewReader(ep2Body))
+		r2.Header.Set("Content-Type", "application/json")
+		r2.Header.Set("Authorization", "Bearer "+freeToken)
+		w2 := httptest.NewRecorder()
+		app.ServeHTTP(w2, r2)
+		if w2.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 for free user on VIP episode 2, got %d: %s", w2.Code, w2.Body.String())
+		}
+
+		// C. Login as admin and request VIP episode 2 -> 200 OK
+		adminLoginBody, _ := json.Marshal(map[string]string{"username": "admin123", "password": "admin123"})
+		alReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(adminLoginBody))
+		alReq.Header.Set("Content-Type", "application/json")
+		alW := httptest.NewRecorder()
+		app.ServeHTTP(alW, alReq)
+		var alRes response.Envelope
+		_ = json.Unmarshal(alW.Body.Bytes(), &alRes)
+		adminTok := alRes.Data.(map[string]interface{})["token"].(string)
+
+		r3 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/audios/%d/stream-token", vipAudio.ID), bytes.NewReader(ep2Body))
+		r3.Header.Set("Content-Type", "application/json")
+		r3.Header.Set("Authorization", "Bearer "+adminTok)
+		w3 := httptest.NewRecorder()
+		app.ServeHTTP(w3, r3)
+		if w3.Code != http.StatusOK {
+			t.Fatalf("expected 200 for admin on VIP episode 2, got %d: %s", w3.Code, w3.Body.String())
+		}
+	})
 }

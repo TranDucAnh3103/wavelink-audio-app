@@ -51,6 +51,13 @@ frontend/*.txt
 *.txt
 !requirements.txt
 deploy/material.md
+.secrets/
+**/.secrets/
+*.age
+*.key
+client_secret*.json
+rclone.conf
+env.backup
 
 # Python caches
 __pycache__/
@@ -70,3 +77,10 @@ Thumbs.db
 frontend/.next/
 *.tsbuildinfo
 *.apk
+
+# Android / Gradle caches & local build artifacts
+.gradle/
+**/.gradle/
+mobile/android/local.properties
+mobile/android/app/build/
+mobile/android/build/

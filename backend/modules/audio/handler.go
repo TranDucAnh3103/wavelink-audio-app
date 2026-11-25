@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"audio-app-backend/core/logic"
 	"audio-app-backend/infra/external"
 	"audio-app-backend/modules/notification"
+	"audio-app-backend/modules/stream"
 	"audio-app-backend/server/middleware"
 	"audio-app-backend/server/response"
 
@@ -20,11 +22,34 @@ import (
 )
 
 type Handler struct {
-	db *gorm.DB
+	db              *gorm.DB
+	streamTokens    *stream.TokenManager
+	streamCache     *stream.URLCache
+	streamExtractor external.StreamExtractor
+	streamBaseURL   string
+	streamTokenTTL  time.Duration
 }
 
 func NewHandler(db *gorm.DB) *Handler {
 	return &Handler{db: db}
+}
+
+// ConfigureStream wires direct audio stream token issuing, cache warming, and probing.
+func (h *Handler) ConfigureStream(
+	tokens *stream.TokenManager,
+	cache *stream.URLCache,
+	extractor external.StreamExtractor,
+	baseURL string,
+	ttl time.Duration,
+) {
+	h.streamTokens = tokens
+	h.streamCache = cache
+	h.streamExtractor = extractor
+	h.streamBaseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if ttl <= 0 {
+		ttl = 6 * time.Hour
+	}
+	h.streamTokenTTL = ttl
 }
 
 type ImportYouTubeRequest struct {
@@ -60,6 +85,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		audios.PUT("/:id", middleware.RequireAuth(), h.UpdateAudio)
 		audios.DELETE("/:id", middleware.RequireAuth(), middleware.RequireAdmin(), h.DeleteAudio)
 		audios.POST("/:id/refresh", middleware.RequireAuth(), h.RefreshAudio)
+		audios.POST("/:id/stream-token", h.CreateStreamToken)
+		audios.POST("/:id/check-stream", middleware.RequireAuth(), h.CheckAudioStream)
 	}
 }
 
@@ -75,6 +102,7 @@ func (h *Handler) ListAudios(c *gin.Context) {
 	pageStr := strings.TrimSpace(c.Query("page"))
 	limitStr := strings.TrimSpace(c.Query("limit"))
 	isAll := c.Query("all") == "true" || limitStr == "all" || limitStr == "0" || limitStr == "-1"
+	isLite := c.Query("fields") == "lite"
 
 	page := 1
 	if pageStr != "" {
@@ -264,6 +292,7 @@ func (h *Handler) ListAudios(c *gin.Context) {
 		}
 		a.Episodes = epsForAudio
 		a.TotalEpisodes = len(epsForAudio)
+		fullEpisodes := epsForAudio
 
 		// Tính Resume State chuẩn xác theo UpdatedAt mới nhất
 		resume := logic.CalculateResumeState(a, epsForAudio, progsForAudio)
@@ -273,6 +302,20 @@ func (h *Handler) ListAudios(c *gin.Context) {
 		a.CurrentEpisodeID = resume.CurrentEpisodeID
 		a.CurrentEpisodeNumber = resume.CurrentEpisodeNumber
 		a.CurrentEpisodeTitle = resume.CurrentEpisodeTitle
+
+		// fields=lite: chỉ trả tập đang nghe (đủ cho UI thẻ/hero), không trả toàn bộ episodes
+		if isLite {
+			a.Episodes = nil
+			for _, ep := range fullEpisodes {
+				if ep.ID == resume.CurrentEpisodeID {
+					a.Episodes = []domain.Episode{ep}
+					break
+				}
+			}
+			if a.Episodes == nil && len(fullEpisodes) > 0 {
+				a.Episodes = fullEpisodes[:1]
+			}
+		}
 
 		result = append(result, a)
 	}
@@ -324,7 +367,6 @@ func (h *Handler) GetAudioByID(c *gin.Context) {
 	})
 
 	// Gắn progress và trạng thái VIP/Khóa vào từng episode (tôn trọng FreeEpisodesCount & kiểm tra hạn VIP)
-	isVipOrAdmin := logic.IsActiveVIPOrAdmin(currentUser)
 	freeLimit := 1
 	if audio.FreeEpisodesCount != nil {
 		freeLimit = *audio.FreeEpisodesCount
@@ -338,19 +380,8 @@ func (h *Handler) GetAudioByID(c *gin.Context) {
 		if audio.IsVIPOnly && (freeLimit == 0 || episodes[i].EpisodeNumber > freeLimit) {
 			episodes[i].IsVIP = true
 		}
-		if audio.IsVIPOnly || episodes[i].IsVIP {
-			if !isVipOrAdmin {
-				if freeLimit == 0 || episodes[i].EpisodeNumber > freeLimit {
-					episodes[i].IsLocked = true
-				} else {
-					episodes[i].IsLocked = false
-				}
-			} else {
-				episodes[i].IsLocked = false
-			}
-		} else {
-			episodes[i].IsLocked = false
-		}
+		canAccess, _ := logic.CanAccessEpisode(currentUser, audio, episodes[i])
+		episodes[i].IsLocked = !canAccess
 	}
 	audio.Episodes = episodes
 	audio.TotalEpisodes = len(episodes)
@@ -614,6 +645,8 @@ func (h *Handler) ImportYouTube(c *gin.Context) {
 	}
 	notification.CreateSafeNotification(h.db, newNotif)
 
+	h.probeStreamAsync(newAudio.ID, newAudio.YoutubeVideoID)
+
 	response.Created(c, gin.H{
 		"audio":     newAudio,
 		"duplicate": false,
@@ -843,4 +876,212 @@ func (h *Handler) PreviewYouTube(c *gin.Context) {
 	}
 
 	response.OK(c, meta, nil)
+}
+
+type streamTokenRequest struct {
+	EpisodeID     uint `json:"episodeId"`
+	EpisodeNumber int  `json:"episodeNumber"`
+}
+
+// CreateStreamToken verifies episode access via policy_engine, warms the stream URL cache,
+// and returns a short-lived HMAC stream token for HTML5 <audio>.
+func (h *Handler) CreateStreamToken(c *gin.Context) {
+	if h.streamTokens == nil {
+		response.Internal(c, "Dịch vụ stream chưa được cấu hình")
+		return
+	}
+
+	id := c.Param("id")
+	userID := middleware.GetCurrentUserID(c)
+
+	var audio domain.Audio
+	if err := h.db.First(&audio, id).Error; err != nil {
+		response.NotFound(c, "Không tìm thấy Audio")
+		return
+	}
+	if audio.Status != "" && audio.Status != domain.StatusActive {
+		response.Forbidden(c, "Audio này hiện không khả dụng để phát")
+		return
+	}
+
+	var req streamTokenRequest
+	_ = c.ShouldBindJSON(&req)
+	if req.EpisodeID == 0 {
+		if epIDStr := c.Query("episodeId"); epIDStr != "" {
+			if parsed, err := strconv.ParseUint(epIDStr, 10, 32); err == nil {
+				req.EpisodeID = uint(parsed)
+			}
+		}
+	}
+	if req.EpisodeNumber == 0 {
+		if epNumStr := c.Query("episodeNumber"); epNumStr != "" {
+			if parsed, err := strconv.Atoi(epNumStr); err == nil {
+				req.EpisodeNumber = parsed
+			}
+		}
+	}
+
+	var currentUser domain.User
+	if userID > 0 {
+		if err := h.db.First(&currentUser, userID).Error; err != nil {
+			currentUser = domain.User{ID: userID, Role: domain.RoleUser, Membership: domain.MembershipFree}
+		}
+	} else {
+		currentUser = domain.User{Role: domain.RoleGuest, IsGuest: true, Membership: domain.MembershipFree}
+	}
+
+	var episodes []domain.Episode
+	h.db.Where("audio_id = ?", audio.ID).Order("episode_number ASC").Find(&episodes)
+
+	var targetEp domain.Episode
+	foundEp := false
+	if req.EpisodeID > 0 {
+		for _, ep := range episodes {
+			if ep.ID == req.EpisodeID {
+				targetEp = ep
+				foundEp = true
+				break
+			}
+		}
+	} else if req.EpisodeNumber > 0 {
+		for _, ep := range episodes {
+			if ep.EpisodeNumber == req.EpisodeNumber {
+				targetEp = ep
+				foundEp = true
+				break
+			}
+		}
+	} else if len(episodes) > 0 {
+		targetEp = episodes[0]
+		foundEp = true
+	}
+
+	if !foundEp {
+		targetEp = domain.Episode{EpisodeNumber: 1, IsVIP: audio.IsVIPOnly}
+	}
+
+	if can, msg := logic.CanAccessEpisode(currentUser, audio, targetEp); !can {
+		response.Forbidden(c, msg)
+		return
+	}
+
+	guestKey := ""
+	if userID == 0 {
+		guestKey = c.ClientIP()
+	}
+
+	ttl := h.streamTokenTTL
+	if ttl <= 0 {
+		ttl = 6 * time.Hour
+	}
+
+	token, expiresAt, err := h.streamTokens.Generate(audio.YoutubeVideoID, audio.ID, userID, guestKey, ttl)
+	if err != nil {
+		response.Internal(c, "Không thể tạo stream token")
+		return
+	}
+
+	if h.streamCache != nil {
+		h.streamCache.Warm(audio.YoutubeVideoID)
+	}
+
+	streamPath := fmt.Sprintf("/stream/%s?st=%s", audio.YoutubeVideoID, token)
+	streamURL := streamPath
+	if h.streamBaseURL != "" {
+		streamURL = h.streamBaseURL + streamPath
+	}
+
+	response.OK(c, gin.H{
+		"streamToken":  token,
+		"videoId":      audio.YoutubeVideoID,
+		"streamPath":   streamPath,
+		"streamUrl":    streamURL,
+		"expiresAt":    expiresAt.UTC().Format(time.RFC3339),
+		"streamStatus": audio.StreamStatus,
+		"audioMime":    audio.AudioMime,
+	}, nil)
+}
+
+// CheckAudioStream probes whether the audio's YouTube video can be extracted for direct streaming
+// and updates stream_status, stream_checked_at, and audio_mime in the database.
+func (h *Handler) CheckAudioStream(c *gin.Context) {
+	id := c.Param("id")
+	userID := middleware.GetCurrentUserID(c)
+	userRole := middleware.GetCurrentUserRole(c)
+
+	var audio domain.Audio
+	if err := h.db.First(&audio, id).Error; err != nil {
+		response.NotFound(c, "Không tìm thấy Audio")
+		return
+	}
+	if userRole != domain.RoleAdmin && (audio.CreatedBy == 0 || audio.CreatedBy != userID) {
+		response.Forbidden(c, "Bạn không có quyền kiểm tra stream của audio này")
+		return
+	}
+	if h.streamExtractor == nil {
+		response.Internal(c, "Stream extractor chưa được cấu hình")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 25*time.Second)
+	defer cancel()
+
+	now := time.Now().UTC()
+	info, err := h.streamExtractor.Extract(ctx, audio.YoutubeVideoID)
+	if err != nil {
+		h.db.Model(&audio).Updates(map[string]interface{}{
+			"stream_status":     domain.StreamStatusFailed,
+			"stream_checked_at": &now,
+		})
+		response.OK(c, gin.H{
+			"audioId":         audio.ID,
+			"streamStatus":    domain.StreamStatusFailed,
+			"streamCheckedAt": now.Format(time.RFC3339),
+			"error":           err.Error(),
+		}, nil)
+		return
+	}
+
+	updates := map[string]interface{}{
+		"stream_status":     domain.StreamStatusOK,
+		"stream_checked_at": &now,
+		"audio_mime":        info.MIME,
+	}
+	if audio.TotalDurationSeconds <= 0 && info.ApproxDurationMs > 0 {
+		updates["duration_seconds"] = int(info.ApproxDurationMs / 1000)
+	}
+	h.db.Model(&audio).Updates(updates)
+
+	response.OK(c, gin.H{
+		"audioId":         audio.ID,
+		"streamStatus":    domain.StreamStatusOK,
+		"streamCheckedAt": now.Format(time.RFC3339),
+		"audioMime":       info.MIME,
+		"durationSeconds": int(info.ApproxDurationMs / 1000),
+		"source":          info.Source,
+	}, nil)
+}
+
+func (h *Handler) probeStreamAsync(audioID uint, videoID string) {
+	if h.streamExtractor == nil || audioID == 0 || videoID == "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		now := time.Now().UTC()
+		info, err := h.streamExtractor.Extract(ctx, videoID)
+		if err != nil {
+			h.db.Model(&domain.Audio{}).Where("id = ?", audioID).Updates(map[string]interface{}{
+				"stream_status":     domain.StreamStatusFailed,
+				"stream_checked_at": &now,
+			})
+			return
+		}
+		h.db.Model(&domain.Audio{}).Where("id = ?", audioID).Updates(map[string]interface{}{
+			"stream_status":     domain.StreamStatusOK,
+			"stream_checked_at": &now,
+			"audio_mime":        info.MIME,
+		})
+	}()
 }

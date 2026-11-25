@@ -30,13 +30,21 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -trimpath \
     -o /build/wavelink-seed ./cmd/seed/main.go
 
+# Biên dịch binary Stream Proxy độc lập
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+    -ldflags="-w -s" \
+    -trimpath \
+    -o /build/wavelink-stream ./cmd/stream/main.go
+
 # ------------------------------------------------------------------------------
 # STAGE 2: Minimal Distroless / Alpine Runner
 FROM alpine:3.20 AS runner
 
-# Chứng chỉ SSL gốc bắt buộc để kết nối YouTube HTTPS, VietQR và Aiven MySQL TLS
-RUN apk add --no-cache ca-certificates tzdata curl && \
-    update-ca-certificates
+# Chứng chỉ SSL gốc + python3 + yt-dlp cho Direct Audio Stream Proxy
+RUN apk add --no-cache ca-certificates tzdata curl python3 && \
+    update-ca-certificates && \
+    curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
 
 # Tạo user không có đặc quyền root để bảo mật tối đa
 RUN addgroup -S wavelinkgroup -g 333 && \
@@ -47,6 +55,7 @@ WORKDIR /app
 # Copy các file thực thi đã biên dịch từ Stage Builder
 COPY --from=builder /build/wavelink-api /app/wavelink-api
 COPY --from=builder /build/wavelink-seed /app/wavelink-seed
+COPY --from=builder /build/wavelink-stream /app/wavelink-stream
 COPY --from=builder /build/migrations /app/migrations
 
 # Phân quyền cho appuser

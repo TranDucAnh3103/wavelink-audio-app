@@ -7,7 +7,7 @@ import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { SidebarNav } from '@/components/layout/SidebarNav';
 import { MiniPlayer } from '@/components/layout/MiniPlayer';
-import { YouTubeEngineHost } from '@/components/layout/YouTubeEngineHost';
+import { AudioEngineHost } from '@/components/layout/AudioEngineHost';
 import { ToastContainer } from '@/components/ui/Toast';
 import { usePlayerStore } from '@/stores/playerStore';
 
@@ -68,7 +68,7 @@ function ShellBody({ children }: { children: React.ReactNode }) {
         <ScreenLockOverlay onClose={() => setScreenLocked(false)} />
       )}
 
-      <YouTubeEngineHost />
+      <AudioEngineHost />
       <ToastContainer />
     </div>
   );

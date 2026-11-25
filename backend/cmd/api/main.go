@@ -12,6 +12,8 @@ import (
 
 	"audio-app-backend/config"
 	infraDB "audio-app-backend/infra/db"
+	"audio-app-backend/infra/external"
+	"audio-app-backend/modules/stream"
 	"audio-app-backend/server"
 )
 
@@ -40,16 +42,35 @@ func main() {
 		slog.Warn("Tự động kiểm tra seed mặc định gặp cảnh báo", "error", err)
 	}
 
-	// 4. Khởi tạo Router và các Modules
-	router := server.SetupRouter(cfg, db)
+	// 4. Khởi tạo Stream Proxy & Gin Router
+	urlTTL := time.Duration(cfg.StreamURLTTLMinutes) * time.Minute
+	if urlTTL <= 0 {
+		urlTTL = 210 * time.Minute
+	}
+	streamExtractor := external.NewDefaultStreamExtractor(cfg)
+	streamCache := stream.NewURLCache(streamExtractor, urlTTL, 500)
+	streamTokens := stream.NewTokenManager(cfg.StreamTokenSecret)
+	streamLimiter := stream.NewConcurrencyLimiter(cfg.StreamMaxConcurrentPerUser)
+	streamHandler := stream.NewHandler(streamTokens, streamCache, streamLimiter, cfg.AllowedOrigins, cfg.StreamChunkSizeBytes)
 
-	// 5. Khởi động HTTP Server với Graceful Shutdown (CORS đã được xử lý tập trung trong middleware.CORS của router)
+	router := server.SetupRouterWithStream(cfg, db, &server.StreamDeps{
+		Tokens:    streamTokens,
+		Cache:     streamCache,
+		Extractor: streamExtractor,
+	})
+
+	// Mount /stream/ outside Gin middleware (bypasses ETag buffer, Gin Logger, and API timeouts)
+	rootMux := http.NewServeMux()
+	rootMux.Handle("/stream/health", streamHandler.HealthHandler())
+	rootMux.Handle("/stream/", streamHandler)
+	rootMux.Handle("/", router)
+
+	// 5. Khởi động HTTP Server với Graceful Shutdown (không đặt WriteTimeout toàn cục để không cắt luồng audio dài)
 	srv := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 20 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              ":" + cfg.Port,
+		Handler:           rootMux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

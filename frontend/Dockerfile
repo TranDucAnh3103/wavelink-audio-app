@@ -16,9 +16,13 @@ COPY . .
 
 # Hỗ trợ truyền dynamic API URL và các cấu hình phân trang khi build Docker image
 ARG VITE_API_BASE_URL="https://wavelink-audio-app-backend-latest.onrender.com/api/v1"
+ARG VITE_STREAM_BASE_URL=""
+ARG VITE_AUDIO_ENGINE="stream"
 ARG VITE_ITEMS_PER_PAGE="12"
 
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
+    VITE_STREAM_BASE_URL=$VITE_STREAM_BASE_URL \
+    VITE_AUDIO_ENGINE=$VITE_AUDIO_ENGINE \
     VITE_ITEMS_PER_PAGE=$VITE_ITEMS_PER_PAGE 
 
 # Build React Vite

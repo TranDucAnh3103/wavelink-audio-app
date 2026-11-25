@@ -2,35 +2,21 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import { AudioFilter, AudioItem, Episode, ImportYouTubePayload } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
-import { readSwrCache, writeSwrCache } from '@/lib/swrCache';
-import { useIsHydrated } from '@/hooks/useDelayedFallback';
 
 export function useAudios(filter: AudioFilter = {}) {
   const { user } = useAuthStore();
-  const hydrated = useIsHydrated();
-  const cacheKey = `audios:${JSON.stringify(filter)}`;
 
   return useQuery({
     queryKey: ['audios', filter, user?.id || 0],
     queryFn: async () => {
       const { isLive, user: latestUser } = useAuthStore.getState();
       const data = await api.audio.getAudios(filter, isLive, latestUser?.id);
-      if (Array.isArray(data) && data.length > 0 && !filter.search) {
-        writeSwrCache(cacheKey, data);
-      }
       return data;
-    },
-    placeholderData: (prev) => {
-      if (prev !== undefined) return prev;
-      if (!hydrated) return undefined;
-      return readSwrCache<AudioItem[]>(cacheKey)?.data;
     },
   });
 }
 
 export function useAudio(id: number | string | undefined, initialAudio?: AudioItem | null) {
-  const hydrated = useIsHydrated();
-  const cacheKey = id ? `audio:${id}` : '';
 
   return useQuery({
     queryKey: ['audio', id],
@@ -38,24 +24,14 @@ export function useAudio(id: number | string | undefined, initialAudio?: AudioIt
       if (!id) return null;
       const { isLive } = useAuthStore.getState();
       const data = await api.audio.getAudioById(id, isLive);
-      if (data) {
-        writeSwrCache(cacheKey, data);
-      }
       return data;
     },
     enabled: Boolean(id),
     initialData: initialAudio ?? undefined,
-    placeholderData: (prev) => {
-      if (prev !== undefined) return prev;
-      if (!hydrated || !cacheKey) return undefined;
-      return readSwrCache<AudioItem>(cacheKey)?.data;
-    },
   });
 }
 
 export function useAudioEpisodes(audioId: number | string | undefined) {
-  const hydrated = useIsHydrated();
-  const cacheKey = audioId ? `episodes:${audioId}` : '';
 
   return useQuery({
     queryKey: ['episodes', audioId],
@@ -63,17 +39,9 @@ export function useAudioEpisodes(audioId: number | string | undefined) {
       if (!audioId) return [];
       const { isLive } = useAuthStore.getState();
       const data = await api.episode.getEpisodes(audioId, isLive);
-      if (Array.isArray(data) && data.length > 0) {
-        writeSwrCache(cacheKey, data);
-      }
       return data;
     },
     enabled: Boolean(audioId),
-    placeholderData: (prev) => {
-      if (prev !== undefined) return prev;
-      if (!hydrated || !cacheKey) return undefined;
-      return readSwrCache<Episode[]>(cacheKey)?.data;
-    },
   });
 }
 

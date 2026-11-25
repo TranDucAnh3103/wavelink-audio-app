@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/layout_bubble_root"
+    android:layout_width="64dp"
+    android:layout_height="64dp"
+    android:background="@drawable/bg_bubble_circle"
+    android:elevation="12dp">
+
+    <!-- Ảnh bìa bài hát / Thumbnail (tròn xoay) -->
+    <ImageView
+        android:id="@+id/iv_bubble_thumb"
+        android:layout_width="54dp"
+        android:layout_height="54dp"
+        android:layout_gravity="center"
+        android:scaleType="centerCrop"
+        android:contentDescription="WaveLink Album Art" />
+
+    <!-- Huy hiệu Play/Pause nhỏ ở góc -->
+    <FrameLayout
+        android:id="@+id/btn_bubble_toggle"
+        android:layout_width="22dp"
+        android:layout_height="22dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="2dp"
+        android:layout_marginBottom="2dp"
+        android:background="@drawable/bg_bubble_circle">
+
+        <TextView
+            android:id="@+id/tv_play_status_icon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="⏸"
+            android:textColor="@color/white"
+            android:textSize="10sp" />
+    </FrameLayout>
+</FrameLayout>

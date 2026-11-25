@@ -43,7 +43,6 @@ import { Button } from '@/components/ui/Button';
 import { toast } from '@/components/ui/Toast';
 import { SettingsSkeleton } from '@/components/common/Skeletons';
 import { api } from '@/services/api';
-import { clearSwrCache } from '@/lib/swrCache';
 import {
   useNotificationPreferences,
   useUpdateNotificationPreferences,
@@ -369,7 +368,6 @@ export const SettingsPage: React.FC = () => {
 
   const handleClearCache = () => {
     localStorage.removeItem('audio_library_db');
-    clearSwrCache();
     toast.success('Đã dọn dẹp cache! Đang tải lại...');
     setTimeout(() => {
       window.location.reload();

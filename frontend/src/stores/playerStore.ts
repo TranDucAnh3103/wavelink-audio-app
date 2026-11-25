@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { AudioItem, Episode } from '@/types';
 import { api } from '@/services/api';
+import { API_BASE } from '@/lib/axiosClient';
 import { rateCoordinator, RateSyncStatus } from '@/lib/playbackRateCoordinator';
 import { playerLogger } from '@/lib/playerLogger';
 import { useAuthStore } from '@/stores/authStore';
@@ -10,8 +11,12 @@ import { startBackgroundSleepTimer, stopBackgroundSleepTimer } from '@/lib/sleep
 import { startMediaSessionKeeper, stopMediaSessionKeeper } from '@/lib/mediaSessionWorker';
 import { queryClient } from '@/lib/queryClient';
 import { formatTime } from '@/lib/utils';
+import { AudioEngineType } from '@/lib/audio/AudioEngine';
+import { HtmlAudioEngine } from '@/lib/audio/HtmlAudioEngine';
+import { YouTubeEngine } from '@/lib/audio/YouTubeEngine';
+import { getAudioEngineMode, isIOSDevice, isVideoStreamFailed } from '@/lib/streamConfig';
 
-// Global YouTube Player instance reference
+// Global engine instances
 declare global {
   interface Window {
     onYouTubeIframeAPIReady?: () => void;
@@ -21,20 +26,28 @@ declare global {
     __playerStore?: any;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     __measureProgressionRate?: any;
+    __WAVELINK_ENGINE__?: AudioEngineType;
   }
 }
 
+export const htmlAudioEngine = new HtmlAudioEngine((audioId, episodeId, episodeNumber) =>
+  api.audio.getStreamToken(audioId, episodeId, episodeNumber)
+);
+export const youtubeAudioEngine = new YouTubeEngine();
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let ytPlayerInstance: any = null;
-let pollTimer: NodeJS.Timeout | null = null;
-let heartbeatTimer: NodeJS.Timeout | null = null;
-let sleepTimeout: NodeJS.Timeout | null = null;
-let seekDebounceTimer: NodeJS.Timeout | null = null;
-let progressDebounceTimer: NodeJS.Timeout | null = null;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let sleepTimeout: ReturnType<typeof setTimeout> | null = null;
+let seekDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let progressDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let sleepFadeTimer: ReturnType<typeof setInterval> | null = null;
 
 let currentPlayerUserId: number | string | null = null;
-let lastSpeedChangeTimestamp = 0;
-let lastSpeedChangeUserId: number | string | null = null;
+let isAdvancingEpisode = false;
+let lastLocalSaveTs = 0;
+let lastStreamMediaSessionTs = 0;
 
 export function setCurrentPlayerUserId(userId?: number | string | null) {
   currentPlayerUserId = userId !== undefined ? userId : null;
@@ -91,6 +104,11 @@ export function persistUserPlaybackRate(rate: number, userId?: number | string |
 }
 
 export function enforcePlaybackRate(rate: number) {
+  const state = usePlayerStore.getState();
+  if (isStreamEngineActive(state)) {
+    htmlAudioEngine.setRate(rate);
+    return;
+  }
   rateCoordinator.setDesiredRate(rate, 'enforcePlaybackRate');
 }
 
@@ -102,18 +120,21 @@ export async function measureProgressionRate(durationMs: number = 3000): Promise
   confirmedRate: number;
 }> {
   const store = usePlayerStore.getState();
-  const player = ytPlayerInstance;
-  if (!player || typeof player.getCurrentTime !== 'function') {
+  const useStream = isStreamEngineActive(store);
+
+  if (!useStream && (!ytPlayerInstance || typeof ytPlayerInstance.getCurrentTime !== 'function')) {
     throw new Error('Player is not active or getCurrentTime is unavailable');
   }
 
+  const readTime = () => (useStream ? htmlAudioEngine.getTime() : ytPlayerInstance.getCurrentTime());
+
   const startTime = performance.now();
-  const startVideoTime = player.getCurrentTime();
+  const startVideoTime = readTime();
 
   await new Promise((r) => setTimeout(r, durationMs));
 
   const endTime = performance.now();
-  const endVideoTime = player.getCurrentTime();
+  const endVideoTime = readTime();
 
   const deltaWallSec = (endTime - startTime) / 1000;
   const deltaVideoSec = endVideoTime - startVideoTime;
@@ -128,7 +149,7 @@ export async function measureProgressionRate(durationMs: number = 3000): Promise
   };
 
   playerLogger.log({
-    instanceId: rateCoordinator.getInstanceId(),
+    instanceId: useStream ? 'html-audio' : rateCoordinator.getInstanceId(),
     action: 'MEASURE_PROGRESSION_RATE',
     desiredRate: result.desiredRate,
     confirmedRate: result.confirmedRate,
@@ -142,12 +163,14 @@ interface PlayerState {
   currentAudio: AudioItem | null;
   currentEpisode: Episode | null;
   isPlaying: boolean;
+  isBuffering: boolean;
   isExplicitlyPaused: boolean;
   currentTime: number;
   duration: number;
-  playbackRate: number; // Desired rate
-  confirmedPlaybackRate: number; // Confirmed rate from YouTube onPlaybackRateChange
-  rateSyncStatus: RateSyncStatus; // 'synced' | 'applying' | 'unsupported'
+  playbackRate: number;
+  confirmedPlaybackRate: number;
+  rateSyncStatus: RateSyncStatus;
+  activeEngine: AudioEngineType;
   isYtReady: boolean;
   sleepTimerMinutes: number | null;
   sleepTimerEndTimestamp: number | null;
@@ -156,6 +179,9 @@ interface PlayerState {
 
   // Actions
   setScreenLocked: (locked: boolean) => void;
+  setAudioElement: (el: HTMLAudioElement | null) => void;
+  setEngineMode: (mode: AudioEngineType) => void;
+  fallbackToYouTube: (reason?: string) => void;
   play: (audio: AudioItem, episode?: Episode | null, seekSeconds?: number | null) => void;
   togglePlay: () => void;
   pause: () => void;
@@ -173,6 +199,21 @@ interface PlayerState {
   setYtReady: (ready: boolean) => void;
   setYtInstance: (instance: unknown, instanceId?: string) => void;
   handleEpisodeComplete: () => void;
+}
+
+function isStreamEngineActive(state: Pick<PlayerState, 'activeEngine'>): boolean {
+  return state.activeEngine === 'stream' && htmlAudioEngine.isReady();
+}
+
+function isEpisodeVipBlocked(audio: AudioItem, episode: Episode): boolean {
+  const currentUser = useAuthStore.getState().user;
+  const isVipOrAdmin =
+    currentUser?.role === 'VIP' || currentUser?.role === 'ADMIN' || currentUser?.membership === 'VIP';
+  if (isVipOrAdmin) return false;
+  const isVipAudio = Boolean(audio.isVIPOnly || audio.isVipOnly || episode.isVip);
+  if (!isVipAudio) return false;
+  const freeLimit = audio.freeEpisodesCount !== undefined ? audio.freeEpisodesCount : 1;
+  return freeLimit === 0 || episode.episodeNumber > freeLimit || Boolean(episode.isLocked);
 }
 
 const initialStoredRate = getStoredPlaybackRate();
@@ -196,40 +237,68 @@ function getInitialSleepTimer(): { minutes: number | null; endTimestamp: number 
   return { minutes: null, endTimestamp: null };
 }
 
-const initialSleepTimer = getInitialSleepTimer();
+function expireSleepTimerNow() {
+  const store = usePlayerStore.getState();
+  if (sleepTimeout) {
+    clearTimeout(sleepTimeout);
+    sleepTimeout = null;
+  }
+  stopBackgroundSleepTimer();
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('wavelink_sleep_timer_end');
+  }
+  usePlayerStore.setState({ sleepTimerMinutes: null, sleepTimerEndTimestamp: null });
 
-if (initialSleepTimer.endTimestamp) {
-  const onExpire = () => {
-    const store = usePlayerStore.getState();
-    if (sleepTimeout) {
-      clearTimeout(sleepTimeout);
-      sleepTimeout = null;
+  const finishPause = () => {
+    usePlayerStore.getState().pause();
+    if (htmlAudioEngine.isReady()) {
+      htmlAudioEngine.setVolume(1.0);
     }
-    stopBackgroundSleepTimer();
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('wavelink_sleep_timer_end');
-    }
-    usePlayerStore.setState({ sleepTimerMinutes: null, sleepTimerEndTimestamp: null });
-    store.pause();
     stopBackgroundAudio();
     stopMediaSessionKeeper();
     toast.info('Đã tự động tắt audio theo hẹn giờ ngủ.');
   };
+
+  // Gentle volume fade out in stream mode before pausing
+  if (isStreamEngineActive(store) && store.isPlaying) {
+    if (sleepFadeTimer) clearInterval(sleepFadeTimer);
+    let vol = htmlAudioEngine.getVolume() || 1.0;
+    const step = vol / 10;
+    sleepFadeTimer = setInterval(() => {
+      vol = Math.max(0, vol - step);
+      htmlAudioEngine.setVolume(vol);
+      if (vol <= 0.02) {
+        if (sleepFadeTimer) {
+          clearInterval(sleepFadeTimer);
+          sleepFadeTimer = null;
+        }
+        finishPause();
+      }
+    }, 150);
+  } else {
+    finishPause();
+  }
+}
+
+const initialSleepTimer = getInitialSleepTimer();
+if (initialSleepTimer.endTimestamp) {
   const delayMs = Math.max(0, initialSleepTimer.endTimestamp - Date.now());
-  sleepTimeout = setTimeout(onExpire, delayMs);
-  startBackgroundSleepTimer(initialSleepTimer.endTimestamp, onExpire);
+  sleepTimeout = setTimeout(expireSleepTimerNow, delayMs);
+  startBackgroundSleepTimer(initialSleepTimer.endTimestamp, expireSleepTimerNow);
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentAudio: null,
   currentEpisode: null,
   isPlaying: false,
+  isBuffering: false,
   isExplicitlyPaused: true,
   currentTime: 0,
   duration: 14400,
   playbackRate: initialStoredRate,
   confirmedPlaybackRate: initialStoredRate,
   rateSyncStatus: 'synced',
+  activeEngine: getAudioEngineMode(),
   isYtReady: false,
   sleepTimerMinutes: initialSleepTimer.minutes,
   sleepTimerEndTimestamp: initialSleepTimer.endTimestamp,
@@ -239,21 +308,97 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setScreenLocked: (isScreenLocked: boolean) => set({ isScreenLocked }),
   setYtReady: (isYtReady: boolean) => set({ isYtReady }),
 
+  setAudioElement: (el: HTMLAudioElement | null) => {
+    htmlAudioEngine.attachElement(el);
+    if (el) {
+      const state = get();
+      if (state.activeEngine === 'stream' && state.currentAudio && state.isPlaying && !state.isExplicitlyPaused) {
+        const startSec = (state.currentEpisode?.startSeconds || 0) + (state.currentTime || 0);
+        void htmlAudioEngine.load({
+          audioId: state.currentAudio.id,
+          videoId: state.currentAudio.youtubeVideoId,
+          episodeId: state.currentEpisode?.id,
+          episodeNumber: state.currentEpisode?.episodeNumber,
+          startSeconds: startSec,
+          autoplay: true,
+          playbackRate: state.playbackRate || 1.0,
+        });
+      }
+    }
+  },
+
+  setEngineMode: (mode: AudioEngineType) => {
+    if (mode === get().activeEngine) return;
+    if (mode === 'youtube') {
+      htmlAudioEngine.stop();
+    } else {
+      youtubeAudioEngine.stop();
+    }
+    set({ activeEngine: mode });
+    if (typeof window !== 'undefined') {
+      window.__WAVELINK_ENGINE__ = mode;
+    }
+  },
+
+  fallbackToYouTube: (reason?: string) => {
+    const state = get();
+    htmlAudioEngine.stop();
+    stopBackgroundAudio();
+    stopMediaSessionKeeper();
+
+    set({ activeEngine: 'youtube', isBuffering: false });
+    if (typeof window !== 'undefined') {
+      window.__WAVELINK_ENGINE__ = 'youtube';
+    }
+    if (reason) {
+      toast.info(reason);
+    }
+
+    if (state.currentAudio && state.isPlaying && !state.isExplicitlyPaused && ytPlayerInstance) {
+      const startSec = (state.currentEpisode?.startSeconds || 0) + (state.currentTime || 0);
+      void youtubeAudioEngine.load({
+        audioId: state.currentAudio.id,
+        videoId: state.currentAudio.youtubeVideoId,
+        episodeId: state.currentEpisode?.id,
+        episodeNumber: state.currentEpisode?.episodeNumber,
+        startSeconds: startSec,
+        autoplay: true,
+        playbackRate: state.playbackRate || 1.0,
+      });
+      startPolling();
+      startBackgroundAudio();
+      startMediaSessionKeeper(onWorkerMediaTick);
+    }
+  },
+
   setYtInstance: (instance: unknown, instanceId: string = 'yt-player-host') => {
     ytPlayerInstance = instance;
-    set({ isYtReady: true });
+    youtubeAudioEngine.attachPlayer(instance, instanceId);
+
+    // Compatibility: if no HTML5 <audio> element is mounted (e.g., legacy unit tests or youtube mode),
+    // switch activeEngine to 'youtube' so setYtInstance tests execute the YouTube coordinator path.
+    const updates: Partial<PlayerState> = { isYtReady: true };
+    if (!htmlAudioEngine.isReady()) {
+      updates.activeEngine = 'youtube';
+    }
+    set(updates);
+
     const currentRate = get().playbackRate || getStoredPlaybackRate() || 1.0;
     rateCoordinator.setDesiredRate(currentRate, 'setYtInstance');
-    rateCoordinator.attachPlayer(instance, instanceId);
     if (currentRate !== 1.0) {
       rateCoordinator.enforceRateWithRetries(currentRate, 'yt_instance_ready');
     }
 
-    // Xử lý pending playback: nếu user nhấn play trước khi YouTube iframe khởi tạo xong
     const state = get();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const player = instance as any;
-    if (state.currentAudio && state.isPlaying && player && typeof player.loadVideoById === 'function') {
+    if (
+      state.activeEngine === 'youtube' &&
+      state.currentAudio &&
+      state.isPlaying &&
+      player &&
+      typeof player.loadVideoById === 'function'
+    ) {
       const ep = state.currentEpisode;
       const startSec = (ep?.startSeconds || 0) + (state.currentTime || 0);
       try {
@@ -306,33 +451,27 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       };
     }
 
-    // Kiểm tra quyền hạn VIP: Tập 1 được nghe thử nếu truyện có >1 tập, tập 2+ hoặc truyện 1 tập yêu cầu tài khoản VIP
+    // Kiểm tra quyền hạn VIP
     const currentUser = useAuthStore.getState().user;
-    const isVipOrAdmin = currentUser?.role === 'VIP' || currentUser?.role === 'ADMIN' || currentUser?.membership === 'VIP';
-    const isVipAudio = Boolean(audio.isVIPOnly || audio.isVipOnly || targetEpisode.isVip);
-    const totalEps = audio.totalEpisodes || audio.episodes?.length || 1;
-
-    const freeLimit = audio.freeEpisodesCount !== undefined ? audio.freeEpisodesCount : 1;
-
-    if (isVipAudio && !isVipOrAdmin) {
-      if (freeLimit === 0 || targetEpisode.episodeNumber > freeLimit || targetEpisode.isLocked) {
-        if (ytPlayerInstance && typeof ytPlayerInstance.pauseVideo === 'function') {
-          try {
-            ytPlayerInstance.pauseVideo();
-          } catch {}
-        }
-        stopPolling();
-        stopHeartbeat();
-        set({ isPlaying: false });
-        if (!currentUser || currentUser.isGuest || currentUser.role === 'GUEST') {
-          toast.info('Tập VIP yêu cầu đăng nhập tài khoản. Vui lòng đăng nhập để nghe!');
-          navigateToAppRoute('/login');
-        } else {
-          toast.error('Tập này chỉ dành riêng cho thành viên VIP. Vui lòng nâng cấp gói để tiếp tục nghe!');
-          navigateToAppRoute('/membership');
-        }
-        return;
+    if (isEpisodeVipBlocked(audio, targetEpisode)) {
+      if (isStreamEngineActive(get())) {
+        htmlAudioEngine.pause();
+      } else if (ytPlayerInstance && typeof ytPlayerInstance.pauseVideo === 'function') {
+        try {
+          ytPlayerInstance.pauseVideo();
+        } catch {}
       }
+      stopPolling();
+      stopHeartbeat();
+      set({ isPlaying: false });
+      if (!currentUser || currentUser.isGuest || currentUser.role === 'GUEST') {
+        toast.info('Tập VIP yêu cầu đăng nhập tài khoản. Vui lòng đăng nhập để nghe!');
+        navigateToAppRoute('/login');
+      } else {
+        toast.error('Tập này chỉ dành riêng cho thành viên VIP. Vui lòng nâng cấp gói để tiếp tục nghe!');
+        navigateToAppRoute('/membership');
+      }
+      return;
     }
 
     const duration =
@@ -357,43 +496,102 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     const activeRate = get().playbackRate || getStoredPlaybackRate() || 1.0;
 
+    // Auto-select fallback YouTube engine if this video previously failed stream extraction
+    const configuredMode = getAudioEngineMode();
+    let targetEngine = get().activeEngine;
+    if (
+      configuredMode === 'stream' &&
+      htmlAudioEngine.isReady() &&
+      audio.streamStatus !== 'FAILED' &&
+      !isVideoStreamFailed(audio.youtubeVideoId)
+    ) {
+      targetEngine = 'stream';
+      youtubeAudioEngine.stop();
+    } else if (audio.streamStatus === 'FAILED' || isVideoStreamFailed(audio.youtubeVideoId)) {
+      targetEngine = 'youtube';
+      htmlAudioEngine.stop();
+    }
+
     set({
       currentAudio: audio,
       currentEpisode: targetEpisode,
       currentTime,
       duration,
       isPlaying: true,
+      isBuffering: false,
       isExplicitlyPaused: false,
       playbackRate: activeRate,
+      activeEngine: targetEngine,
+      ...(targetEngine === 'stream'
+        ? { confirmedPlaybackRate: activeRate, rateSyncStatus: 'synced' as RateSyncStatus }
+        : {}),
     });
 
-    rateCoordinator.onVideoLoaded(audio.youtubeVideoId);
+    if (targetEngine === 'stream' && htmlAudioEngine.isReady()) {
+      stopBackgroundAudio();
+      stopMediaSessionKeeper();
+      void htmlAudioEngine.load({
+        audioId: audio.id,
+        videoId: audio.youtubeVideoId,
+        episodeId: targetEpisode.id,
+        episodeNumber: targetEpisode.episodeNumber,
+        startSeconds: absoluteStart,
+        autoplay: true,
+        playbackRate: activeRate,
+      });
+      startPolling(); // Used for sleep timer check in stream mode
+      startHeartbeat();
+    } else {
+      rateCoordinator.onVideoLoaded(audio.youtubeVideoId);
 
-    if (ytPlayerInstance && typeof ytPlayerInstance.loadVideoById === 'function') {
-      try {
-        ytPlayerInstance.loadVideoById({
-          videoId: audio.youtubeVideoId,
-          startSeconds: absoluteStart,
-        });
-        ytPlayerInstance.playVideo();
-      } catch (err) {
-        console.warn('YouTube playVideo call error:', err);
+      if (ytPlayerInstance && typeof ytPlayerInstance.loadVideoById === 'function') {
+        try {
+          ytPlayerInstance.loadVideoById({
+            videoId: audio.youtubeVideoId,
+            startSeconds: absoluteStart,
+          });
+          ytPlayerInstance.playVideo();
+        } catch (err) {
+          console.warn('YouTube playVideo call error:', err);
+        }
       }
+
+      startPolling();
+      startHeartbeat();
+      startBackgroundAudio();
+      startMediaSessionKeeper(onWorkerMediaTick);
     }
 
     // Lưu ngay vị trí bắt đầu của tập mới để ghi nhận tập đang nghe mới nhất
     saveProgressFor(audio, targetEpisode, currentTime, duration);
-
-    startPolling();
-    startHeartbeat();
-    startBackgroundAudio();
-    startMediaSessionKeeper(onWorkerMediaTick);
     updateMediaSession(true, audio, targetEpisode, currentTime, duration, activeRate);
   },
 
   togglePlay: () => {
-    const { isPlaying, currentAudio } = get();
+    const state = get();
+    const { isPlaying, currentAudio } = state;
     if (!currentAudio) return;
+
+    const nextPlaying = !isPlaying;
+
+    if (isStreamEngineActive(state)) {
+      if (nextPlaying) {
+        void htmlAudioEngine.play();
+      } else {
+        htmlAudioEngine.pause();
+      }
+      set({ isPlaying: nextPlaying, isExplicitlyPaused: !nextPlaying });
+      if (nextPlaying) {
+        startPolling();
+        startHeartbeat();
+      } else {
+        saveCurrentProgress();
+        stopPolling();
+        stopHeartbeat();
+      }
+      updateMediaSession(nextPlaying, currentAudio, state.currentEpisode, state.currentTime, state.duration, state.playbackRate);
+      return;
+    }
 
     if (ytPlayerInstance) {
       try {
@@ -408,7 +606,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
     }
 
-    const nextPlaying = !isPlaying;
     set({ isPlaying: nextPlaying, isExplicitlyPaused: !nextPlaying });
     if (nextPlaying) {
       startPolling();
@@ -426,7 +623,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   pause: () => {
+    const state = get();
     saveCurrentProgress();
+    if (isStreamEngineActive(state)) {
+      htmlAudioEngine.pause();
+      set({ isPlaying: false, isBuffering: false, isExplicitlyPaused: true });
+      stopPolling();
+      stopHeartbeat();
+      updateMediaSession(false, state.currentAudio, state.currentEpisode, state.currentTime, state.duration, state.playbackRate);
+      return;
+    }
+
     if (ytPlayerInstance) {
       try {
         ytPlayerInstance.pauseVideo();
@@ -434,7 +641,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         // Ignore
       }
     }
-    set({ isPlaying: false, isExplicitlyPaused: true });
+    set({ isPlaying: false, isBuffering: false, isExplicitlyPaused: true });
     stopPolling();
     stopHeartbeat();
     stopBackgroundAudio();
@@ -443,6 +650,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   resume: () => {
+    const state = get();
+    if (isStreamEngineActive(state)) {
+      void htmlAudioEngine.play();
+      set({ isPlaying: true, isExplicitlyPaused: false });
+      startPolling();
+      startHeartbeat();
+      updateMediaSession(true, state.currentAudio, state.currentEpisode, state.currentTime, state.duration, state.playbackRate);
+      return;
+    }
+
     if (ytPlayerInstance) {
       try {
         ytPlayerInstance.playVideo();
@@ -460,7 +677,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   seekTo: (seconds: number) => {
-    const { currentEpisode, duration, currentAudio } = get();
+    const state = get();
+    const { currentEpisode, duration, currentAudio } = state;
     if (!currentEpisode) return;
 
     const currentUser = useAuthStore.getState().user;
@@ -482,7 +700,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     const absoluteTarget = (currentEpisode.startSeconds || 0) + clamped;
 
-    if (ytPlayerInstance && typeof ytPlayerInstance.seekTo === 'function') {
+    if (isStreamEngineActive(state)) {
+      htmlAudioEngine.seek(absoluteTarget);
+      updateMediaSession(state.isPlaying, currentAudio, currentEpisode, clamped, duration, state.playbackRate);
+    } else if (ytPlayerInstance && typeof ytPlayerInstance.seekTo === 'function') {
       try {
         ytPlayerInstance.seekTo(absoluteTarget, true);
         rateCoordinator.applyRate('seekTo_complete');
@@ -508,10 +729,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const currentIndex = eps.findIndex((e) => e.id === currentEpisode?.id);
     if (currentIndex !== -1 && currentIndex + 1 < eps.length) {
       const nextEp = eps[currentIndex + 1];
-      const currentUser = useAuthStore.getState().user;
-      const isVipOrAdmin = currentUser?.role === 'VIP' || currentUser?.role === 'ADMIN' || currentUser?.membership === 'VIP';
-      const isVipAudio = Boolean(currentAudio.isVIPOnly || currentAudio.isVipOnly || nextEp.isVip);
-      if (isVipAudio && !isVipOrAdmin && nextEp.episodeNumber > 1) {
+      if (isEpisodeVipBlocked(currentAudio, nextEp)) {
         toast.error('Tập tiếp theo chỉ dành riêng cho thành viên VIP. Vui lòng nâng cấp gói!');
         return;
       }
@@ -540,11 +758,29 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (targetUserId) {
       currentPlayerUserId = targetUserId;
     }
-    lastSpeedChangeTimestamp = Date.now();
-    lastSpeedChangeUserId = targetUserId || null;
 
     persistUserPlaybackRate(numRate, targetUserId);
     rateCoordinator.setDesiredRate(numRate, 'user_action');
+
+    const state = get();
+    if (isStreamEngineActive(state)) {
+      htmlAudioEngine.setRate(numRate);
+      set({
+        playbackRate: numRate,
+        confirmedPlaybackRate: numRate,
+        rateSyncStatus: 'synced',
+      });
+      updateMediaSession(
+        state.isPlaying,
+        state.currentAudio,
+        state.currentEpisode,
+        state.currentTime,
+        state.duration,
+        numRate
+      );
+      return;
+    }
+
     set({
       playbackRate: numRate,
       confirmedPlaybackRate: rateCoordinator.getConfirmedRate(),
@@ -561,6 +797,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const effectiveRate = getStoredPlaybackRate(targetUserId);
 
     rateCoordinator.setDesiredRate(effectiveRate, 'user_account_sync');
+    const state = get();
+    if (isStreamEngineActive(state)) {
+      htmlAudioEngine.setRate(effectiveRate);
+      set({
+        playbackRate: effectiveRate,
+        confirmedPlaybackRate: effectiveRate,
+        rateSyncStatus: 'synced',
+      });
+      persistUserPlaybackRate(effectiveRate, targetUserId);
+      return;
+    }
+
     set({
       playbackRate: effectiveRate,
       confirmedPlaybackRate: rateCoordinator.getConfirmedRate(),
@@ -582,6 +830,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       clearTimeout(sleepTimeout);
       sleepTimeout = null;
     }
+    if (sleepFadeTimer) {
+      clearInterval(sleepFadeTimer);
+      sleepFadeTimer = null;
+    }
     stopBackgroundSleepTimer();
 
     if (!minutes || minutes <= 0) {
@@ -598,31 +850,24 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       localStorage.setItem('wavelink_sleep_timer_end', String(endTimestamp));
     }
 
-    const onExpire = () => {
-      const store = usePlayerStore.getState();
-      if (sleepTimeout) {
-        clearTimeout(sleepTimeout);
-        sleepTimeout = null;
-      }
-      stopBackgroundSleepTimer();
-      if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('wavelink_sleep_timer_end');
-      }
-      usePlayerStore.setState({ sleepTimerMinutes: null, sleepTimerEndTimestamp: null });
-      store.pause();
-      stopBackgroundAudio();
-      stopMediaSessionKeeper();
-      toast.info('Đã tự động tắt audio theo hẹn giờ ngủ.');
-    };
-
-    sleepTimeout = setTimeout(onExpire, minutes * 60 * 1000);
-    startBackgroundSleepTimer(endTimestamp, onExpire);
+    sleepTimeout = setTimeout(expireSleepTimerNow, minutes * 60 * 1000);
+    startBackgroundSleepTimer(endTimestamp, expireSleepTimerNow);
   },
 
   close: () => {
-    const { currentAudio, currentEpisode, duration } = get();
-    let currentPos = get().currentTime;
-    if (ytPlayerInstance && typeof ytPlayerInstance.getCurrentTime === 'function') {
+    const state = get();
+    const { currentAudio, currentEpisode, duration } = state;
+    let currentPos = state.currentTime;
+
+    if (isStreamEngineActive(state)) {
+      const absTime = htmlAudioEngine.getTime();
+      const startSec = currentEpisode?.startSeconds || 0;
+      const epPos = Math.round(absTime - startSec);
+      if (absTime > 0 && epPos >= 0) {
+        currentPos = epPos;
+      }
+      htmlAudioEngine.pause();
+    } else if (ytPlayerInstance && typeof ytPlayerInstance.getCurrentTime === 'function') {
       try {
         const absTime = ytPlayerInstance.getCurrentTime();
         const startSec = currentEpisode?.startSeconds || 0;
@@ -637,7 +882,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       saveProgressFor(currentAudio, currentEpisode, currentPos, duration);
     }
 
-    if (ytPlayerInstance) {
+    if (!isStreamEngineActive(state) && ytPlayerInstance) {
       try {
         ytPlayerInstance.pauseVideo();
       } catch {
@@ -653,6 +898,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       clearTimeout(sleepTimeout);
       sleepTimeout = null;
     }
+    if (sleepFadeTimer) {
+      clearInterval(sleepFadeTimer);
+      sleepFadeTimer = null;
+    }
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('wavelink_sleep_timer_end');
     }
@@ -660,6 +909,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentAudio: null,
       currentEpisode: null,
       isPlaying: false,
+      isBuffering: false,
       isExplicitlyPaused: true,
       currentTime: currentPos,
       sleepTimerMinutes: null,
@@ -670,6 +920,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   reset: () => {
+    htmlAudioEngine.stop();
     if (ytPlayerInstance) {
       try {
         ytPlayerInstance.pauseVideo?.();
@@ -687,6 +938,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       clearTimeout(sleepTimeout);
       sleepTimeout = null;
     }
+    if (sleepFadeTimer) {
+      clearInterval(sleepFadeTimer);
+      sleepFadeTimer = null;
+    }
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('wavelink_sleep_timer_end');
     }
@@ -696,6 +951,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentAudio: null,
       currentEpisode: null,
       isPlaying: false,
+      isBuffering: false,
       isExplicitlyPaused: true,
       currentTime: 0,
       playbackRate: storedRate,
@@ -709,22 +965,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   handleEpisodeComplete: () => {
-    const { currentAudio, currentEpisode, duration } = get();
+    const state = get();
+    const { currentAudio, currentEpisode, duration } = state;
     if (!currentAudio || !currentEpisode) return;
 
     saveProgressFor(currentAudio, currentEpisode, duration, duration);
 
     const currentUser = useAuthStore.getState().user;
-    const isVipOrAdmin = currentUser?.role === 'VIP' || currentUser?.role === 'ADMIN' || currentUser?.membership === 'VIP';
-    const isVipAudio = Boolean(currentAudio.isVIPOnly || currentAudio.isVipOnly || currentEpisode.isVip);
-
     const eps = currentAudio.episodes || [];
     const currentIndex = eps.findIndex((e) => e.id === currentEpisode.id);
     if (currentIndex !== -1 && currentIndex + 1 < eps.length) {
       const nextEp = eps[currentIndex + 1];
-      const freeLimit = currentAudio.freeEpisodesCount !== undefined ? currentAudio.freeEpisodesCount : 1;
-      if (isVipAudio && !isVipOrAdmin && (freeLimit === 0 || nextEp.episodeNumber > freeLimit || nextEp.isLocked)) {
-        if (ytPlayerInstance && typeof ytPlayerInstance.pauseVideo === 'function') {
+      if (isEpisodeVipBlocked(currentAudio, nextEp)) {
+        if (isStreamEngineActive(state)) {
+          htmlAudioEngine.pause();
+        } else if (ytPlayerInstance && typeof ytPlayerInstance.pauseVideo === 'function') {
           try {
             ytPlayerInstance.pauseVideo();
           } catch {}
@@ -741,6 +996,26 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         }
         return;
       }
+
+      // Stream mode: seamless virtual chapter transition without pausing or reloading <audio> src
+      if (isStreamEngineActive(state)) {
+        const nextDur = nextEp.duration || (nextEp.endSeconds - nextEp.startSeconds) || 14400;
+        set({
+          currentEpisode: nextEp,
+          currentTime: 0,
+          duration: nextDur,
+          isPlaying: true,
+          isExplicitlyPaused: false,
+        });
+        const curTime = htmlAudioEngine.getTime();
+        if (Math.abs(curTime - (nextEp.startSeconds || 0)) > 2) {
+          htmlAudioEngine.seek(nextEp.startSeconds || 0);
+        }
+        saveProgressFor(currentAudio, nextEp, 0, nextDur);
+        updateMediaSession(true, currentAudio, nextEp, 0, nextDur, state.playbackRate);
+        return;
+      }
+
       setTimeout(() => {
         get().play(currentAudio, nextEp, 0);
       }, 1000);
@@ -750,19 +1025,120 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 }));
 
-// Đăng ký listener từ coordinator vào store để đồng bộ trạng thái confirmedPlaybackRate
+// Wire HTML5 AudioEngine event listeners once at module initialization
+htmlAudioEngine.on('time', (absTime, mediaDur) => {
+  const store = usePlayerStore.getState();
+  if (!isStreamEngineActive(store) || !store.currentAudio || !store.currentEpisode) return;
+
+  const ep = store.currentEpisode;
+  const startSec = ep.startSeconds || 0;
+  let endSec = ep.endSeconds || store.duration;
+
+  // Update real duration if single-episode audio reports an accurate media duration
+  const totalEps = store.currentAudio.episodes?.length || 1;
+  if (totalEps <= 1 && mediaDur > 0 && Math.abs(mediaDur - store.duration) > 2) {
+    endSec = startSec + Math.round(mediaDur);
+    usePlayerStore.setState({ duration: Math.round(mediaDur) });
+  }
+
+  if (!store.isSeeking) {
+    const epPos = Math.max(0, Math.round(absTime - startSec));
+    if (epPos !== store.currentTime) {
+      usePlayerStore.setState({ currentTime: epPos });
+    }
+
+    const now = Date.now();
+    if (now - lastLocalSaveTs >= 5000) {
+      lastLocalSaveTs = now;
+      saveLocalSnapshot(store.currentAudio, ep, epPos, store.duration);
+    }
+
+    if (now - lastStreamMediaSessionTs >= 3000 && store.isPlaying) {
+      lastStreamMediaSessionTs = now;
+      updateMediaSession(true, store.currentAudio, ep, epPos, store.duration, store.playbackRate);
+    }
+  }
+
+  if (!isAdvancingEpisode && endSec > startSec && absTime >= endSec) {
+    isAdvancingEpisode = true;
+    try {
+      if (isEpisodeVipBlocked(store.currentAudio, ep)) {
+        htmlAudioEngine.pause();
+        htmlAudioEngine.seek(endSec);
+      }
+      store.handleEpisodeComplete();
+    } finally {
+      setTimeout(() => {
+        isAdvancingEpisode = false;
+      }, 400);
+    }
+  }
+});
+
+htmlAudioEngine.on('state', (engineState) => {
+  const store = usePlayerStore.getState();
+  if (!isStreamEngineActive(store)) return;
+
+  if (engineState === 'playing') {
+    usePlayerStore.setState({ isPlaying: true, isBuffering: false, isSeeking: false });
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = 'playing';
+    }
+  } else if (engineState === 'buffering' || engineState === 'loading') {
+    usePlayerStore.setState({ isBuffering: true });
+  } else if (engineState === 'paused') {
+    usePlayerStore.setState({ isPlaying: false, isBuffering: false });
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = 'paused';
+    }
+  }
+});
+
+htmlAudioEngine.on('rate', (rate) => {
+  const store = usePlayerStore.getState();
+  if (isStreamEngineActive(store)) {
+    usePlayerStore.setState({ confirmedPlaybackRate: rate, rateSyncStatus: 'synced' });
+  }
+});
+
+htmlAudioEngine.on('ended', () => {
+  const store = usePlayerStore.getState();
+  if (isStreamEngineActive(store) && store.isPlaying && !store.isExplicitlyPaused && store.currentAudio) {
+    store.handleEpisodeComplete();
+  }
+});
+
+htmlAudioEngine.on('error', (err) => {
+  const store = usePlayerStore.getState();
+  if (err.code === 'VIP_FORBIDDEN') {
+    store.pause();
+    toast.error(err.message);
+    return;
+  }
+  if (err.shouldFallbackToYouTube && store.activeEngine === 'stream') {
+    store.fallbackToYouTube(err.message);
+  } else if (!err.fatal) {
+    toast.info(err.message);
+  }
+});
+
+// Đăng ký listener từ coordinator vào store để đồng bộ trạng thái confirmedPlaybackRate (YouTube mode)
 rateCoordinator.subscribe({
   onDesiredRateChange: (rate) => {
     usePlayerStore.setState({ playbackRate: rate });
   },
   onConfirmedRateChange: (rate, status) => {
-    usePlayerStore.setState({ confirmedPlaybackRate: rate, rateSyncStatus: status });
+    const store = usePlayerStore.getState();
+    if (!isStreamEngineActive(store)) {
+      usePlayerStore.setState({ confirmedPlaybackRate: rate, rateSyncStatus: status });
+    }
   },
 });
 
 function onWorkerMediaTick() {
   const store = usePlayerStore.getState();
   if (!store.isPlaying || store.isExplicitlyPaused) return;
+  if (isStreamEngineActive(store)) return;
 
   let currentPos = store.currentTime;
   if (ytPlayerInstance && typeof ytPlayerInstance.getCurrentTime === 'function') {
@@ -813,38 +1189,26 @@ function pollIntervalHandler() {
     return;
   }
 
-  // Kiểm tra sleep timer theo mốc thời gian tuyệt đối (chạy nền đồng thời chuẩn xác)
+  // Kiểm tra sleep timer theo mốc thời gian tuyệt đối
   if (store.sleepTimerEndTimestamp && Date.now() >= store.sleepTimerEndTimestamp) {
-    if (sleepTimeout) {
-      clearTimeout(sleepTimeout);
-      sleepTimeout = null;
-    }
-    stopBackgroundSleepTimer();
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('wavelink_sleep_timer_end');
-    }
-    usePlayerStore.setState({ sleepTimerMinutes: null, sleepTimerEndTimestamp: null });
-    store.pause();
-    stopBackgroundAudio();
-    stopMediaSessionKeeper();
-    toast.info('Đã tự động tắt audio theo hẹn giờ ngủ.');
+    expireSleepTimerNow();
+    return;
+  }
+
+  // Stream mode relies on native <audio> timeupdate; polling is only needed for sleep timer above.
+  if (isStreamEngineActive(store)) {
     return;
   }
 
   if (ytPlayerInstance && typeof ytPlayerInstance.getCurrentTime === 'function') {
-    const now = performance.now();
-    // Watchdog Guard: Luôn bảo đảm tốc độ thực của YouTube player đồng bộ chính xác với tốc độ đã chọn
     try {
       const ytState = typeof ytPlayerInstance.getPlayerState === 'function' ? ytPlayerInstance.getPlayerState() : null;
-      // Chỉ watchdog khi player thực sự đang ở trạng thái PLAYING (state 1) và coordinator không đang bận retry
       if (ytState === 1 && !rateCoordinator.isBusyApplying()) {
         const actualRate = ytPlayerInstance.getPlaybackRate();
         const targetRate = store.playbackRate || 1.0;
 
-        // 1. Kiểm tra thuộc tính getPlaybackRate của YouTube
         if (typeof actualRate === 'number' && Math.abs(actualRate - targetRate) > 0.05) {
           watchdogDesyncCounter++;
-          // Cần xác nhận lệch liên tục ít nhất 2 lần poll (2 giây) khi đang phát ổn định để tránh bão retry
           if (watchdogDesyncCounter >= 2) {
             watchdogDesyncCounter = 0;
             rateCoordinator.applyRate('watchdog_poll_desync');
@@ -852,7 +1216,6 @@ function pollIntervalHandler() {
         } else {
           watchdogDesyncCounter = 0;
         }
-
       } else {
         watchdogDesyncCounter = 0;
       }
@@ -870,7 +1233,6 @@ function pollIntervalHandler() {
         usePlayerStore.setState({ currentTime: epPos });
       }
 
-      // Đồng bộ timeline lên Lock Screen / Notification MediaSession định kỳ 3 giây
       mediaSessionSyncCounter++;
       if (mediaSessionSyncCounter >= 3) {
         mediaSessionSyncCounter = 0;
@@ -885,10 +1247,7 @@ function pollIntervalHandler() {
       }
 
       if (absTime >= endSec && endSec > startSec) {
-        const currentUser = useAuthStore.getState().user;
-        const isVipOrAdmin = currentUser?.role === 'VIP' || currentUser?.role === 'ADMIN' || currentUser?.membership === 'VIP';
-        const isVipAudio = Boolean(store.currentAudio?.isVIPOnly || store.currentAudio?.isVipOnly || store.currentEpisode?.isVip);
-        if (isVipAudio && !isVipOrAdmin) {
+        if (isEpisodeVipBlocked(store.currentAudio!, store.currentEpisode!)) {
           try {
             ytPlayerInstance.pauseVideo();
             ytPlayerInstance.seekTo(endSec, true);
@@ -922,7 +1281,7 @@ function startHeartbeat() {
   stopHeartbeat();
   heartbeatTimer = setInterval(() => {
     saveCurrentProgress();
-  }, 60000);
+  }, 30000);
 }
 
 function stopHeartbeat() {
@@ -949,6 +1308,22 @@ function navigateToAppRoute(path: string) {
   }
 }
 
+function saveLocalSnapshot(audio: AudioItem, episode: Episode, currentTime: number, duration: number) {
+  if (typeof localStorage === 'undefined' || !audio || !episode) return;
+  try {
+    localStorage.setItem(
+      `wavelink_progress_${audio.id}`,
+      JSON.stringify({
+        audioId: audio.id,
+        episodeId: episode.id,
+        positionSeconds: currentTime,
+        duration,
+        updatedAt: Date.now(),
+      })
+    );
+  } catch {}
+}
+
 let lastHistoryTrackKey = '';
 let lastHistoryPositionSec = 0;
 
@@ -959,7 +1334,6 @@ function saveProgressFor(audio: AudioItem, episode: Episode, currentTime: number
   const percent = Math.min(100, Math.round((currentTime / dur) * 100));
   const isCompleted = percent >= 95;
 
-  // Cập nhật ngay các trường của audio và episode trong bộ nhớ để giao diện đồng bộ tức thì
   audio.lastPositionSeconds = currentTime;
   audio.progressPercent = percent;
   audio.formattedPosition = formatTime(currentTime);
@@ -970,6 +1344,8 @@ function saveProgressFor(audio: AudioItem, episode: Episode, currentTime: number
   episode.progressPercent = percent;
   if (isCompleted) episode.completed = true;
 
+  saveLocalSnapshot(audio, episode, currentTime, dur);
+
   api.progress.updateProgress({
     audioId: audio.id,
     episodeId: episode.id,
@@ -978,7 +1354,6 @@ function saveProgressFor(audio: AudioItem, episode: Episode, currentTime: number
     completed: isCompleted,
   });
 
-  // Tính thời lượng delta thực tế đã nghe (không gửi cộng dồn startSeconds + currentTime gây đội giờ nghe ảo)
   const trackKey = `${audio.id}:${episode.id}`;
   let deltaSeconds = 0;
   if (lastHistoryTrackKey === trackKey) {
@@ -1008,7 +1383,6 @@ function saveProgressFor(audio: AudioItem, episode: Episode, currentTime: number
     });
   }
 
-  // Đồng bộ React Query cache
   try {
     queryClient.invalidateQueries({ queryKey: ['audios'] });
     queryClient.invalidateQueries({ queryKey: ['audio'] });
@@ -1022,26 +1396,75 @@ function saveCurrentProgress() {
   saveProgressFor(currentAudio, currentEpisode, currentTime, duration);
 }
 
+function flushProgressWithKeepalive() {
+  const { currentAudio, currentEpisode, currentTime, duration } = usePlayerStore.getState();
+  if (!currentAudio || !currentEpisode) return;
+  const dur = duration || currentEpisode.duration || (currentEpisode.endSeconds - currentEpisode.startSeconds) || 14400;
+  const percent = Math.min(100, Math.round((currentTime / dur) * 100));
+  saveLocalSnapshot(currentAudio, currentEpisode, currentTime, dur);
+
+  try {
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    if (token && typeof fetch === 'function') {
+      void fetch(`${API_BASE}/progress`, {
+        method: 'PUT',
+        keepalive: true,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          audioId: currentAudio.id,
+          episodeId: currentEpisode.id,
+          positionSeconds: currentTime,
+          progressPercent: percent,
+          completed: percent >= 95,
+        }),
+      }).catch(() => {});
+    }
+  } catch {}
+}
+
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
     saveCurrentProgress();
   });
+  window.addEventListener('pagehide', () => {
+    flushProgressWithKeepalive();
+  });
   window.__playerStore = usePlayerStore;
   window.__measureProgressionRate = measureProgressionRate;
 
-  // ─── Android Background Audio: visibilitychange guard ──────────────────────
-  // Khi màn hình bật lại sau khi tắt (Android), resume YouTube nếu đang phát.
-  // Chrome Android đôi khi pause YouTube player khi document hidden → phải force resume.
   document.addEventListener('visibilitychange', () => {
+    const store = usePlayerStore.getState();
+    if (document.visibilityState === 'hidden') {
+      if (store.currentAudio && store.currentEpisode) {
+        saveCurrentProgress();
+      }
+      return;
+    }
+
     if (document.visibilityState === 'visible') {
-      const store = usePlayerStore.getState();
+      if (isStreamEngineActive(store)) {
+        // Refresh mediaSession position when user returns to foreground
+        if (store.currentAudio) {
+          updateMediaSession(
+            store.isPlaying,
+            store.currentAudio,
+            store.currentEpisode,
+            store.currentTime,
+            store.duration,
+            store.playbackRate
+          );
+        }
+        return;
+      }
+
       if (store.isPlaying && !store.isExplicitlyPaused) {
-        // Delay nhỏ để đảm bảo AudioContext đã được resume bởi backgroundAudioKeeper
         setTimeout(() => {
           if (ytPlayerInstance && typeof ytPlayerInstance.getPlayerState === 'function') {
             try {
               const state = ytPlayerInstance.getPlayerState();
-              // YouTube state: -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering, 5=cued
               if (state === 2 || state === -1) {
                 ytPlayerInstance.playVideo();
                 rateCoordinator.applyRate('visibility_resume');
@@ -1053,11 +1476,10 @@ if (typeof window !== 'undefined') {
     }
   });
 
-  // Nhận ACK từ Service Worker để xác nhận SW vẫn alive
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('message', (event) => {
       if (event.data?.type === 'AUDIO_KEEPALIVE_ACK') {
-        // SW đang sống và healthy - không cần action cụ thể
+        // SW alive ACK
       }
     });
   }
@@ -1076,15 +1498,16 @@ function updateMediaSession(
   if (!audio) {
     navigator.mediaSession.metadata = null;
     navigator.mediaSession.playbackState = 'none';
-    // Xóa tất cả action handlers khi không có audio
-    (['play', 'pause', 'stop', 'seekbackward', 'seekforward', 'previoustrack', 'nexttrack', 'seekto'] as const)
-      .forEach((action) => {
-        try { navigator.mediaSession.setActionHandler(action, null); } catch {}
-      });
+    (['play', 'pause', 'stop', 'seekbackward', 'seekforward', 'previoustrack', 'nexttrack', 'seekto'] as const).forEach(
+      (action) => {
+        try {
+          navigator.mediaSession.setActionHandler(action, null);
+        } catch {}
+      }
+    );
     return;
   }
 
-  // Cập nhật metadata
   navigator.mediaSession.metadata = new MediaMetadata({
     title: episode?.title || audio.title,
     artist: audio.author || 'WaveLink Audio',
@@ -1097,7 +1520,6 @@ function updateMediaSession(
 
   navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
 
-  // Cập nhật vị trí phát (progress bar trên lock screen / notification)
   if ('setPositionState' in navigator.mediaSession && duration && duration > 0) {
     try {
       const curPos = Math.max(0, Math.min(currentTime || 0, duration));
@@ -1108,10 +1530,6 @@ function updateMediaSession(
       });
     } catch {}
   }
-
-  // ─── MediaSession Action Handlers ──────────────────────────────────────────
-  // Đây là các handler cho nút điều khiển trên Lock Screen, Notification, Tai nghe, SmartWatch.
-  // QUAN TRỌNG: Phải đăng ký đủ handler để Android OS routing audio session đúng cách.
 
   try {
     navigator.mediaSession.setActionHandler('play', () => {
@@ -1131,38 +1549,44 @@ function updateMediaSession(
     });
   } catch {}
 
+  const ios = isIOSDevice();
   try {
-    // Tua lùi 10 giây (nút << trên notification Android)
-    navigator.mediaSession.setActionHandler('seekbackward', (details) => {
-      const skipSec = details.seekOffset ?? 10;
-      usePlayerStore.getState().skipSeconds(-skipSec);
-    });
+    navigator.mediaSession.setActionHandler(
+      'seekbackward',
+      ios
+        ? null
+        : (details) => {
+            const skipSec = details.seekOffset ?? 10;
+            usePlayerStore.getState().skipSeconds(-skipSec);
+          }
+    );
   } catch {}
 
   try {
-    // Tua tiến 30 giây (nút >> trên notification Android)
-    navigator.mediaSession.setActionHandler('seekforward', (details) => {
-      const skipSec = details.seekOffset ?? 30;
-      usePlayerStore.getState().skipSeconds(skipSec);
-    });
+    navigator.mediaSession.setActionHandler(
+      'seekforward',
+      ios
+        ? null
+        : (details) => {
+            const skipSec = details.seekOffset ?? 30;
+            usePlayerStore.getState().skipSeconds(skipSec);
+          }
+    );
   } catch {}
 
   try {
-    // Tập trước
     navigator.mediaSession.setActionHandler('previoustrack', () => {
       usePlayerStore.getState().prevEpisode();
     });
   } catch {}
 
   try {
-    // Tập tiếp theo
     navigator.mediaSession.setActionHandler('nexttrack', () => {
       usePlayerStore.getState().nextEpisode();
     });
   } catch {}
 
   try {
-    // Seek đến vị trí cụ thể (drag thanh progress trên notification)
     navigator.mediaSession.setActionHandler('seekto', (details) => {
       if (details.seekTime != null) {
         usePlayerStore.getState().seekTo(details.seekTime);
@@ -1170,4 +1594,3 @@ function updateMediaSession(
     });
   } catch {}
 }
-
