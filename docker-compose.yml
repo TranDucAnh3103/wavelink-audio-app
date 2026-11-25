@@ -57,6 +57,16 @@ services:
       - PAYOS_CHECKSUM_KEY=${PAYOS_CHECKSUM_KEY:-}
       - PAYOS_RETURN_URL=${PAYOS_RETURN_URL:-http://localhost:3000/membership?payment=success}
       - PAYOS_CANCEL_URL=${PAYOS_CANCEL_URL:-http://localhost:3000/membership?payment=cancelled}
+      - STREAM_TOKEN_SECRET=${STREAM_TOKEN_SECRET:-}
+      - STREAM_TOKEN_TTL_MINUTES=${STREAM_TOKEN_TTL_MINUTES:-360}
+      - STREAM_URL_TTL_MINUTES=${STREAM_URL_TTL_MINUTES:-210}
+      - STREAM_MAX_CONCURRENT_PER_USER=${STREAM_MAX_CONCURRENT_PER_USER:-4}
+      - STREAM_MAX_CONCURRENT_EXTRACT=${STREAM_MAX_CONCURRENT_EXTRACT:-2}
+      - STREAM_CHUNK_SIZE_BYTES=${STREAM_CHUNK_SIZE_BYTES:-10485760}
+      - STREAM_AUDIO_FORMAT=${STREAM_AUDIO_FORMAT:-bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio}
+      - STREAM_BASE_URL=${STREAM_BASE_URL:-}
+      - YTDLP_COOKIES_FILE=${YTDLP_COOKIES_FILE:-}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-}
     networks:
       - wavelink-net
     healthcheck:
@@ -164,6 +174,78 @@ services:
       options:
         max-size: "15m"
         max-file: "3"
+
+  # ============================================================================
+  # 4. WAVELINK STREAMER (Optional Standalone Direct Audio Stream Proxy)
+  # Profile: streamer, all
+  # ============================================================================
+  streamer:
+    profiles:
+      - streamer
+      - all
+    image: ${BACKEND_IMAGE:-ghcr.io/tranducanh3103/wavelink-backend:latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: wavelink-streamer
+    restart: unless-stopped
+    entrypoint: ["/app/wavelink-stream"]
+    ports:
+      - "${STREAM_BIND_IP:-127.0.0.1}:${STREAM_PORT:-8081}:8081"
+    environment:
+      - STREAM_PORT=8081
+      - APP_ENV=${APP_ENV:-production}
+      - JWT_SECRET=${JWT_SECRET:-dev-super-secret-key-change-this-now-wavelink-2026}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      - STREAM_TOKEN_SECRET=${STREAM_TOKEN_SECRET:-}
+      - STREAM_URL_TTL_MINUTES=${STREAM_URL_TTL_MINUTES:-210}
+      - STREAM_MAX_CONCURRENT_PER_USER=${STREAM_MAX_CONCURRENT_PER_USER:-4}
+      - STREAM_MAX_CONCURRENT_EXTRACT=${STREAM_MAX_CONCURRENT_EXTRACT:-2}
+      - STREAM_CHUNK_SIZE_BYTES=${STREAM_CHUNK_SIZE_BYTES:-10485760}
+      - STREAM_AUDIO_FORMAT=${STREAM_AUDIO_FORMAT:-bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio}
+      - YTDLP_COOKIES_FILE=${YTDLP_COOKIES_FILE:-}
+    networks:
+      - wavelink-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          memory: 48M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "15m"
+        max-file: "3"
+
+  # ============================================================================
+  # 5. CLOUDFLARE NAMED TUNNEL (Optional Zero Trust Tunnel)
+  # Profile: tunnel, all
+  # ============================================================================
+  cloudflared:
+    profiles:
+      - tunnel
+      - all
+    image: cloudflare/cloudflared:latest
+    container_name: wavelink-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    networks:
+      - wavelink-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "2"
 
 volumes:
   mysql_data:

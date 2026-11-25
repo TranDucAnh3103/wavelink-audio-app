@@ -43,42 +43,27 @@ class LocalDbManager {
   private db: LocalDbSchema | null = null;
   private isLoaded = false;
 
+  private purgeLegacyLocalStorage() {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem(DB_KEY);
+      } catch {
+        // Ignore
+      }
+    }
+  }
+
   async init(): Promise<LocalDbSchema> {
+    this.purgeLegacyLocalStorage();
     if (this.isLoaded && this.db) return this.db;
 
-    try {
-      const cached = typeof localStorage !== 'undefined' ? localStorage.getItem(DB_KEY) : null;
-      if (cached) {
-        this.db = JSON.parse(cached);
-      } else {
-        this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
-      }
-    } catch {
-      this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
-    }
-    if (!this.db) {
-      this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
-    }
-    if (Array.isArray(this.db.audios)) {
-      this.db.audios = this.db.audios.filter((a) => !isMockAudio(a));
-    }
+    this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
     this.isLoaded = true;
     return this.db;
   }
 
   get(): LocalDbSchema {
-    if (!this.db) {
-      const cached = typeof localStorage !== 'undefined' ? localStorage.getItem(DB_KEY) : null;
-      if (cached) {
-        try {
-          this.db = JSON.parse(cached);
-        } catch {
-          this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
-        }
-      } else {
-        this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
-      }
-    }
+    this.purgeLegacyLocalStorage();
     if (!this.db) {
       this.db = { systemStats: {}, categories: [], tags: [], audios: [], recentHistory: [] };
     }
@@ -91,15 +76,13 @@ class LocalDbManager {
   }
 
   save() {
-    if (this.db && typeof localStorage !== 'undefined') {
-      localStorage.setItem(DB_KEY, JSON.stringify(this.db));
-    }
+    // Chỉ giữ dữ liệu fallback trong RAM (In-Memory), không ghi audio_library_db xuống localStorage.
+    // Dữ liệu thực tế đã được lưu trữ hoàn toàn trên Database Backend (MySQL).
+    this.purgeLegacyLocalStorage();
   }
 
   clear() {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(DB_KEY);
-    }
+    this.purgeLegacyLocalStorage();
     this.db = null;
     this.isLoaded = false;
   }

@@ -5,7 +5,7 @@
  * - Cache API assets để app load nhanh hơn khi mạng chậm
  */
 
-const CACHE_NAME = 'wavelink-v2.1';
+const CACHE_NAME = 'wavelink-v2.2';
 const AUDIO_KEEPALIVE_CHANNEL = 'wavelink-audio-keepalive';
 
 const PRECACHE_ASSETS = [
@@ -55,15 +55,16 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   if (!url.origin.includes(self.location.origin)) return;
 
-  // Bỏ qua API calls (không cache dynamic data)
+  // Bỏ qua API calls và Direct Audio Stream / Range requests (không cache 206 Partial Content)
   if (url.pathname.startsWith('/api/')) return;
+  if (url.pathname.startsWith('/stream/') || request.headers.has('range')) return;
 
   event.respondWith(
     caches.open(CACHE_NAME).then(async (cache) => {
       try {
         const networkResponse = await fetch(request);
-        // Chỉ cache successful responses
-        if (networkResponse.ok) {
+        // Chỉ cache full 200 OK responses (Cache.put từ chối 206 Partial Content)
+        if (networkResponse.ok && networkResponse.status === 200) {
           cache.put(request, networkResponse.clone());
         }
         return networkResponse;

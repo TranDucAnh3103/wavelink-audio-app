@@ -243,4 +243,40 @@ describe('Three Issues Verification (VIP Guest Access, Clean Logout, Background 
       expect(usePlayerStore.getState().isExplicitlyPaused).toBe(false);
     });
   });
+
+  describe('Issue 4: QuotaExceededError Resilience on Import YouTube & LocalDb Save', () => {
+    it('does not throw QuotaExceededError when localStorage is full during localDb.save() or audioService.importYouTube()', async () => {
+      const adminUser: User = { id: 1, username: 'Admin', role: 'ADMIN', isGuest: false };
+      useAuthStore.setState({ user: adminUser });
+
+      const spy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+        const err = new Error(
+          "QuotaExceededError: Failed to execute 'setItem' on 'Storage': Setting the value of 'audio_library_db' exceeded the quota."
+        );
+        err.name = 'QuotaExceededError';
+        throw err;
+      });
+
+      try {
+        expect(() => localDb.save()).not.toThrow();
+
+        const result = await audioService.importYouTube(
+          {
+            url: 'https://youtu.be/x_RzkqR_-JY',
+            categoryId: 1,
+            tags: ['Mạt Thế'],
+            durationSeconds: 36000,
+            blockSizeSeconds: 14400,
+          },
+          false,
+          1
+        );
+
+        expect(result.duplicate).toBe(false);
+        expect(result.audio.youtubeVideoId).toBe('x_RzkqR_-JY');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
 });

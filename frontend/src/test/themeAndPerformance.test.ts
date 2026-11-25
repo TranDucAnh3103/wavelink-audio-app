@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { useThemeStore } from '@/stores/themeStore';
 import { useDelayedFallback } from '@/hooks/useDelayedFallback';
-import { clearSwrCache, readSwrCache, writeSwrCache } from '@/lib/swrCache';
 
 describe('themeStore', () => {
   beforeEach(() => {
@@ -62,39 +61,6 @@ describe('themeStore', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(false);
 
     cleanup();
-  });
-});
-
-describe('swrCache', () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.useRealTimers();
-  });
-
-  it('writes, reads, expires, and clears cached entries in non-test environments', () => {
-    vi.stubEnv('NODE_ENV', 'production');
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-
-    localStorage.setItem('setting_theme', 'dark');
-    writeSwrCache('home_audios', [{ id: 1, title: 'WaveLink Story' }]);
-
-    const cached = readSwrCache<Array<{ id: number; title: string }>>('home_audios', 10_000);
-    expect(cached?.data).toEqual([{ id: 1, title: 'WaveLink Story' }]);
-
-    // Advance beyond TTL
-    vi.advanceTimersByTime(10_001);
-    expect(readSwrCache('home_audios', 10_000)).toBeUndefined();
-
-    // Clear only SWR keys while preserving user settings
-    writeSwrCache('categories', [{ id: 1 }]);
-    clearSwrCache();
-    expect(readSwrCache('categories')).toBeUndefined();
-    expect(localStorage.getItem('setting_theme')).toBe('dark');
   });
 });
 

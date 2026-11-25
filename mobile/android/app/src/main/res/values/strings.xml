@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Wave Link Mobile v2</string>
+    <string name="bubble_channel_name">Wave Link Bong Bóng Phát</string>
+    <string name="bubble_channel_desc">Duy trì phát âm thanh khi thoát ứng dụng</string>
+    <string name="audio_service_channel_name">Wave Link Audio Playback</string>
+    <string name="audio_service_channel_desc">Điều khiển âm thanh đang phát</string>
+</resources>

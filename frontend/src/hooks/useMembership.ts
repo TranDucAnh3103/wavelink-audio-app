@@ -2,46 +2,26 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import { PaymentInfo, MembershipPackage } from '@/types';
-import { readSwrCache, writeSwrCache } from '@/lib/swrCache';
-import { useIsHydrated } from '@/hooks/useDelayedFallback';
 
 export function useMembershipPackages() {
   const { user } = useAuthStore();
-  const hydrated = useIsHydrated();
   return useQuery({
     queryKey: ['membership-packages', user?.id, user?.role, user?.membership],
     queryFn: async () => {
       const { isLive } = useAuthStore.getState();
       const data = await api.membership.getPackages(isLive);
-      if (Array.isArray(data) && data.length > 0) {
-        writeSwrCache('membership-packages', data);
-      }
       return data;
-    },
-    placeholderData: (prev) => {
-      if (prev !== undefined) return prev;
-      if (!hydrated) return undefined;
-      return readSwrCache<MembershipPackage[]>('membership-packages')?.data;
     },
   });
 }
 
 export function usePaymentInfo() {
-  const hydrated = useIsHydrated();
   return useQuery({
     queryKey: ['payment-info'],
     queryFn: async () => {
       const { isLive } = useAuthStore.getState();
       const data = await api.membership.getPaymentInfo(isLive);
-      if (data) {
-        writeSwrCache('payment-info', data);
-      }
       return data;
-    },
-    placeholderData: (prev) => {
-      if (prev !== undefined) return prev;
-      if (!hydrated) return undefined;
-      return readSwrCache<PaymentInfo>('payment-info')?.data;
     },
   });
 }

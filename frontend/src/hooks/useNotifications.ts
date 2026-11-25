@@ -4,8 +4,6 @@ import { api } from '@/services/api';
 import { NotificationItem, NotificationPreferences } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 import { playNotificationSound } from '@/lib/soundEffects';
-import { readSwrCache, writeSwrCache } from '@/lib/swrCache';
-import { useIsHydrated } from '@/hooks/useDelayedFallback';
 
 const LAST_KNOWN_UNREAD_KEY = 'wavelink_last_known_unread_count';
 
@@ -38,9 +36,7 @@ export function triggerNotificationSync(playChime = true) {
 
 export function useNotifications() {
   const { user } = useAuthStore();
-  const hydrated = useIsHydrated();
   const isMember = Boolean(user && !user.isGuest && user.role !== 'GUEST');
-  const cacheKey = `notifications:${user?.id || 'guest'}`;
 
   return useQuery({
     queryKey: ['notifications', user?.id || 'guest'],
@@ -48,15 +44,7 @@ export function useNotifications() {
     queryFn: async () => {
       const { isLive } = useAuthStore.getState();
       const data = await api.notification.getNotifications(isLive);
-      if (Array.isArray(data)) {
-        writeSwrCache(cacheKey, data);
-      }
       return data;
-    },
-    placeholderData: (prev) => {
-      if (prev !== undefined) return prev;
-      if (!hydrated) return undefined;
-      return readSwrCache<NotificationItem[]>(cacheKey)?.data;
     },
   });
 }

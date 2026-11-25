@@ -149,6 +149,15 @@ func AutoMigrate(db *gorm.DB) error {
 		_ = m.AddColumn(&domain.Audio{}, "free_episodes_count")
 		db.Model(&domain.Audio{}).Where("free_episodes_count = 0 OR free_episodes_count IS NULL").Update("free_episodes_count", 1)
 	}
+	if !m.HasColumn(&domain.Audio{}, "stream_status") {
+		_ = m.AddColumn(&domain.Audio{}, "stream_status")
+	}
+	if !m.HasColumn(&domain.Audio{}, "stream_checked_at") {
+		_ = m.AddColumn(&domain.Audio{}, "stream_checked_at")
+	}
+	if !m.HasColumn(&domain.Audio{}, "audio_mime") {
+		_ = m.AddColumn(&domain.Audio{}, "audio_mime")
+	}
 	if !m.HasColumn(&domain.NotificationPreference{}, "external_audio") {
 		_ = m.AddColumn(&domain.NotificationPreference{}, "external_audio")
 	}

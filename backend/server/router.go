@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"audio-app-backend/config"
+	"audio-app-backend/infra/external"
 	"audio-app-backend/modules/audio"
 	"audio-app-backend/modules/auth"
 	"audio-app-backend/modules/community"
@@ -17,6 +18,7 @@ import (
 	"audio-app-backend/modules/notification"
 	"audio-app-backend/modules/progress"
 	"audio-app-backend/modules/stats"
+	"audio-app-backend/modules/stream"
 	"audio-app-backend/modules/taxonomy"
 	"audio-app-backend/modules/user"
 	"audio-app-backend/server/middleware"
@@ -26,8 +28,20 @@ import (
 	"gorm.io/gorm"
 )
 
+// StreamDeps injects direct audio stream components into the API router.
+type StreamDeps struct {
+	Tokens    *stream.TokenManager
+	Cache     *stream.URLCache
+	Extractor external.StreamExtractor
+}
+
 // SetupRouter cấu hình Gin Router và gắn kết toàn bộ các Module nghiệp vụ
 func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
+	return SetupRouterWithStream(cfg, db, nil)
+}
+
+// SetupRouterWithStream builds the Gin engine wired with direct audio stream token & probe dependencies.
+func SetupRouterWithStream(cfg *config.Config, db *gorm.DB, deps *StreamDeps) *gin.Engine {
 	// Phân tách chế độ theo môi trường: Release khi Production, Debug khi Development
 	if cfg.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
@@ -36,12 +50,25 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	}
 
 	r := gin.New()
+	if strings.TrimSpace(cfg.TrustedProxies) != "" {
+		raw := strings.Split(cfg.TrustedProxies, ",")
+		var proxies []string
+		for _, p := range raw {
+			if t := strings.TrimSpace(p); t != "" {
+				proxies = append(proxies, t)
+			}
+		}
+		if len(proxies) > 0 {
+			_ = r.SetTrustedProxies(proxies)
+		}
+	}
 
 	// Middlewares cốt lõi
 	r.Use(gin.Recovery())
 	r.Use(gin.Logger())
 	r.Use(middleware.CORS(cfg.AllowedOrigins))
 	r.Use(middleware.SessionMiddleware(cfg.JWTSecret))
+	r.Use(middleware.ETag())
 
 	// Rate Limiters bảo vệ các endpoint công khai
 	guestLimiter := middleware.NewRateLimiter(20)  // 20 req/min
@@ -87,6 +114,22 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 
 		// 4. Audio Module (Kèm Rate Limiter cho Import)
 		audioHandler := audio.NewHandler(db)
+		streamTokens := stream.NewTokenManager(cfg.StreamTokenSecret)
+		var streamCache *stream.URLCache
+		var streamExtractor external.StreamExtractor
+		if deps != nil {
+			if deps.Tokens != nil {
+				streamTokens = deps.Tokens
+			}
+			streamCache = deps.Cache
+			streamExtractor = deps.Extractor
+		}
+		tokenTTL := time.Duration(cfg.StreamTokenTTLMinutes) * time.Minute
+		if tokenTTL <= 0 {
+			tokenTTL = 6 * time.Hour
+		}
+		audioHandler.ConfigureStream(streamTokens, streamCache, streamExtractor, cfg.StreamBaseURL, tokenTTL)
+
 		audioGroup := v1.Group("/audios")
 		{
 			audioGroup.GET("", audioHandler.ListAudios)
@@ -94,9 +137,11 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 			audioGroup.GET("/preview-youtube", audioHandler.PreviewYouTube)
 			audioGroup.POST("/preview-youtube", audioHandler.PreviewYouTube)
 			audioGroup.GET("/:id", audioHandler.GetAudioByID)
+			audioGroup.POST("/:id/stream-token", audioHandler.CreateStreamToken)
+			audioGroup.POST("/:id/check-stream", middleware.RequireAuth(), audioHandler.CheckAudioStream)
 			audioGroup.POST("/import-youtube", importLimiter.Middleware(), middleware.RequireAuth(), audioHandler.ImportYouTube)
 			audioGroup.PUT("/:id", middleware.RequireAuth(), audioHandler.UpdateAudio)
-			audioGroup.DELETE("/:id", middleware.RequireAuth(), audioHandler.DeleteAudio)
+			audioGroup.DELETE("/:id", middleware.RequireAuth(), middleware.RequireAdmin(), audioHandler.DeleteAudio)
 			audioGroup.POST("/:id/refresh", middleware.RequireAuth(), audioHandler.RefreshAudio)
 		}
 

@@ -46,6 +46,20 @@ type Config struct {
 	DBMaxIdleConns           int
 	DBConnMaxLifetimeMinutes int
 	DBConnMaxIdleTimeMinutes int
+
+	// Direct Audio Stream Proxy configuration
+	StreamPort                 string
+	StreamTokenSecret          string
+	StreamTokenTTLMinutes      int
+	StreamURLTTLMinutes        int
+	StreamMaxConcurrentPerUser int
+	StreamMaxConcurrentExtract int
+	StreamChunkSizeBytes       int64
+	YtDlpPath                  string
+	YtDlpCookiesFile           string
+	StreamAudioFormat          string
+	StreamBaseURL              string
+	TrustedProxies             string
 }
 
 func (c *Config) IsProduction() bool {
@@ -149,6 +163,20 @@ func Load() *Config {
 		DBMaxIdleConns:           getEnvInt("DB_MAX_IDLE_CONNS", 10),
 		DBConnMaxLifetimeMinutes: getEnvInt("DB_CONN_MAX_LIFETIME_MINUTES", 15),
 		DBConnMaxIdleTimeMinutes: getEnvInt("DB_CONN_MAX_IDLE_TIME_MINUTES", 3),
+
+		// Direct Audio Stream Proxy
+		StreamPort:                 getEnv("STREAM_PORT", "8081"),
+		StreamTokenSecret:          getEnv("STREAM_TOKEN_SECRET", jwtSecret+":stream"),
+		StreamTokenTTLMinutes:      getEnvInt("STREAM_TOKEN_TTL_MINUTES", 360),
+		StreamURLTTLMinutes:        getEnvInt("STREAM_URL_TTL_MINUTES", 210),
+		StreamMaxConcurrentPerUser: getEnvInt("STREAM_MAX_CONCURRENT_PER_USER", 4),
+		StreamMaxConcurrentExtract: getEnvInt("STREAM_MAX_CONCURRENT_EXTRACT", 2),
+		StreamChunkSizeBytes:       getEnvInt64("STREAM_CHUNK_SIZE_BYTES", 10*1024*1024),
+		YtDlpPath:                  getEnv("YTDLP_PATH", "yt-dlp"),
+		YtDlpCookiesFile:           getEnv("YTDLP_COOKIES_FILE", ""),
+		StreamAudioFormat:          getEnv("STREAM_AUDIO_FORMAT", "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio"),
+		StreamBaseURL:              strings.TrimRight(getEnv("STREAM_BASE_URL", ""), "/"),
+		TrustedProxies:             getEnv("TRUSTED_PROXIES", ""),
 	}
 
 	// Kiểm tra an toàn: Nếu môi trường là Production, tuyệt đối cấm dùng JWT Secret mặc định
@@ -169,6 +197,15 @@ func getEnv(key, defaultVal string) string {
 func getEnvInt(key string, defaultVal int) int {
 	if val := os.Getenv(key); val != "" {
 		if i, err := strconv.Atoi(val); err == nil && i > 0 {
+			return i
+		}
+	}
+	return defaultVal
+}
+
+func getEnvInt64(key string, defaultVal int64) int64 {
+	if val := os.Getenv(key); val != "" {
+		if i, err := strconv.ParseInt(val, 10, 64); err == nil && i > 0 {
 			return i
 		}
 	}
