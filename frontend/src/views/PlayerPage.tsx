@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft,
   Headphones,
@@ -33,6 +33,9 @@ import {
   ListMusic,
   ArrowLeft,
   Tag,
+  Link2,
+  Copy,
+  ClipboardPaste,
 } from 'lucide-react';
 import { useAudio, useToggleFavorite } from '@/hooks/useAudio';
 import { useDelayedFallback } from '@/hooks/useDelayedFallback';
@@ -49,6 +52,16 @@ import { DEFAULT_PAGE_SIZE } from '@/config/pagination';
 import { api } from '@/services/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { ShareStoryModal } from '@/components/community/ShareStoryModal';
+import { RelatedAudiosSection } from '@/components/player/RelatedAudiosSection';
+import {
+  applyMappedPositionToAudioCache,
+  buildYouTubeUrlAtTimestamp,
+  getAbsoluteYouTubeSeconds,
+  mapAbsoluteSecondsToEpisode,
+  parseYouTubeTimeInput,
+  parseYouTubeTimestampValue,
+  syncAudioToYouTubeTimestamp,
+} from '@/lib/youtubeSync';
 import { resumeAudioContextOnGesture } from '@/lib/backgroundAudioKeeper';
 import { AudioItem } from '@/types';
 
@@ -59,8 +72,9 @@ export interface PlayerPageProps {
 export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const { user } = useAuthStore();
+  const { user, isLive } = useAuthStore();
 
   const { data: audio, isLoading } = useAudio(id, initialAudio);
   const toggleFavoriteMutation = useToggleFavorite();
@@ -74,6 +88,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
     playbackRate,
     sleepTimerMinutes,
     play,
+    pause,
     togglePlay,
     seekTo,
     skipSeconds,
@@ -101,8 +116,12 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   });
 
   const [activeTab, setActiveTab] = useState<'player' | 'episodes'>('player');
-  const [isDescriptionOpen, setIsDescriptionOpen] = useState(true);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const [episodeSearch, setEpisodeSearch] = useState('');
+  const [isYtSyncModalOpen, setIsYtSyncModalOpen] = useState(false);
+  const [ytSyncInput, setYtSyncInput] = useState('');
+  const [isApplyingYtSync, setIsApplyingYtSync] = useState(false);
+  const appliedUrlTimestampKeyRef = React.useRef<string | null>(null);
 
   const touchStartXRef = React.useRef<number | null>(null);
   const touchStartYRef = React.useRef<number | null>(null);
@@ -201,6 +220,80 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   React.useEffect(() => {
     setOptimisticFavorite(null);
   }, [audio?.id, audio?.isFavorite]);
+
+  React.useEffect(() => {
+    setIsDescriptionExpanded(false);
+  }, [audio?.id]);
+
+  React.useEffect(() => {
+    const rawT = searchParams.get('t');
+    if (!rawT || !audio?.id || !audio.episodes || audio.episodes.length === 0) return;
+
+    const dedupeKey = `${audio.id}:${rawT}`;
+    if (appliedUrlTimestampKeyRef.current === dedupeKey) return;
+
+    const seconds = parseYouTubeTimestampValue(rawT);
+    appliedUrlTimestampKeyRef.current = dedupeKey;
+
+    if (seconds !== null && seconds > 0) {
+      const mapped = mapAbsoluteSecondsToEpisode(audio, seconds);
+      if (mapped) {
+        const updatedAudio = applyMappedPositionToAudioCache(audio, mapped);
+        queryClient.setQueryData(['audio', id], (old: AudioItem | null | undefined) =>
+          old ? applyMappedPositionToAudioCache(old, mapped) : updatedAudio
+        );
+        setSyncedRecentInfo({
+          position: mapped.formattedEpisodePos,
+          epNumber: mapped.episode.episodeNumber,
+        });
+        const epIdx = episodesList.findIndex((ep) => ep.id === mapped.episode.id);
+        if (epIdx !== -1) {
+          setEpisodePage(Math.floor(epIdx / DEFAULT_PAGE_SIZE) + 1);
+        }
+
+        const isVipOrAdm =
+          user?.role === 'VIP' || user?.role === 'ADMIN' || user?.membership === 'VIP';
+        const epIsVip = Boolean(audio.isVIPOnly || audio.isVipOnly || mapped.episode.isVip);
+        const freeLimit = audio.freeEpisodesCount !== undefined ? audio.freeEpisodesCount : 1;
+        const locked =
+          !isVipOrAdm &&
+          epIsVip &&
+          (mapped.episode.episodeNumber > freeLimit ||
+            freeLimit === 0 ||
+            Boolean(mapped.episode.isLocked));
+
+        if (isTargetAudioPlaying && !locked) {
+          play(updatedAudio, mapped.episode, mapped.positionSeconds);
+        }
+
+        void syncAudioToYouTubeTimestamp(audio, seconds, isLive)
+          .then(() => {
+            queryClient.invalidateQueries({ queryKey: ['audio'] });
+          })
+          .catch(() => {});
+
+        toast.success(
+          `Đã đồng bộ từ YouTube (${mapped.formattedAbsolute}) → Tập ${mapped.episode.episodeNumber} (${mapped.formattedEpisodePos})`
+        );
+      }
+    }
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('t');
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    audio,
+    episodesList,
+    id,
+    isLive,
+    isTargetAudioPlaying,
+    play,
+    queryClient,
+    searchParams,
+    setSearchParams,
+    user?.membership,
+    user?.role,
+  ]);
 
   React.useEffect(() => {
     if (!isTargetAudioPlaying || !isPlaying) {
@@ -405,6 +498,113 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
     }
   };
 
+  const descriptionText = audio.description || '';
+  const shouldCollapseDescription =
+    descriptionText.length > 160 || descriptionText.split(/\r?\n/).length > 3;
+
+  const absoluteYouTubeSeconds = getAbsoluteYouTubeSeconds(activeEp, currentPosition);
+  const formattedAbsoluteYouTube = formatTime(
+    absoluteYouTubeSeconds,
+    absoluteYouTubeSeconds >= 3600
+  );
+  const youtubeSyncedUrl = audio.youtubeVideoId
+    ? buildYouTubeUrlAtTimestamp(audio.youtubeVideoId, absoluteYouTubeSeconds)
+    : '';
+
+  const parsedYtInput = parseYouTubeTimeInput(ytSyncInput);
+  const previewYtMapped =
+    parsedYtInput.seconds !== null
+      ? mapAbsoluteSecondsToEpisode(audio, parsedYtInput.seconds)
+      : null;
+
+  const handleOpenYouTubeSynced = () => {
+    if (activeEp?.id) {
+      Promise.resolve(
+        api.progress.updateProgress(
+          {
+            audioId: audio.id,
+            episodeId: activeEp.id,
+            positionSeconds: Math.round(currentPosition),
+            progressPercent: rawPercent,
+            completed: rawPercent >= 95,
+          },
+          isLive
+        )
+      ).catch(() => {});
+      setSyncedRecentInfo({
+        position: formatTime(currentPosition),
+        epNumber: activeEp.episodeNumber || 1,
+      });
+      queryClient.invalidateQueries({ queryKey: ['audio'] });
+    }
+    if (isTargetAudioPlaying && isPlaying) {
+      pause();
+    }
+  };
+
+  const handleCopySyncedYouTubeUrl = async () => {
+    if (!youtubeSyncedUrl) return;
+    try {
+      await navigator.clipboard.writeText(youtubeSyncedUrl);
+      toast.success(`Đã sao chép link YouTube tại ${formattedAbsoluteYouTube}`);
+    } catch {
+      toast.error('Không sao chép được vào clipboard');
+    }
+  };
+
+  const handlePasteYtSyncInput = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) setYtSyncInput(text.trim());
+    } catch {
+      toast.error('Không đọc được clipboard, vui lòng dán thủ công');
+    }
+  };
+
+  const handleApplyYouTubeSync = async () => {
+    if (parsedYtInput.seconds === null) {
+      toast.error('Vui lòng nhập mốc thời gian hoặc dán link YouTube hợp lệ');
+      return;
+    }
+    setIsApplyingYtSync(true);
+    try {
+      const mapped = await syncAudioToYouTubeTimestamp(audio, parsedYtInput.seconds, isLive);
+      if (!mapped) {
+        toast.error('Không tìm thấy danh sách tập để đồng bộ thời gian');
+        return;
+      }
+
+      const updatedAudio = applyMappedPositionToAudioCache(audio, mapped);
+      queryClient.setQueryData(['audio', id], (old: AudioItem | null | undefined) =>
+        old ? applyMappedPositionToAudioCache(old, mapped) : updatedAudio
+      );
+      queryClient.invalidateQueries({ queryKey: ['audio'] });
+      setSyncedRecentInfo({
+        position: mapped.formattedEpisodePos,
+        epNumber: mapped.episode.episodeNumber,
+      });
+
+      const epIdx = episodesList.findIndex((ep) => ep.id === mapped.episode.id);
+      if (epIdx !== -1) {
+        setEpisodePage(Math.floor(epIdx / DEFAULT_PAGE_SIZE) + 1);
+      }
+
+      if (isTargetAudioPlaying && !isEpLocked(mapped.episode)) {
+        play(updatedAudio, mapped.episode, mapped.positionSeconds);
+      }
+
+      setIsYtSyncModalOpen(false);
+      setYtSyncInput('');
+      toast.success(
+        `Đã đồng bộ về Tập ${mapped.episode.episodeNumber} (${mapped.formattedEpisodePos})`
+      );
+    } catch {
+      toast.error('Lỗi khi lưu đồng bộ thời gian YouTube');
+    } finally {
+      setIsApplyingYtSync(false);
+    }
+  };
+
   return (
     <div
       className="w-full max-w-6xl mx-auto px-4 md:px-6 flex flex-col pb-40 md:pb-28 gap-4 fade-in-comic select-none sm:select-auto"
@@ -557,39 +757,92 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                 {audio.title}
               </h1>
 
-              {/* Hàng Tác giả & Nút nguồn YouTube trên 1 hàng gọn gàng */}
-              <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-[var(--border-ink)]/20">
+              {/* Hàng Tác giả & Nút nguồn YouTube + Đồng bộ YT trên 1 hàng gọn gàng */}
+              <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-[var(--border-ink)]/20 flex-wrap">
                 <span className="text-xs sm:text-sm font-semibold text-[var(--ink-secondary)] truncate">
                   Tác giả: <strong className="text-[var(--ink-primary)]">{audio.author || 'Chưa rõ'}</strong>
                 </span>
-                {audio.youtubeVideoId && (
-                  <a
-                    href={`https://www.youtube.com/watch?v=${audio.youtubeVideoId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn-comic text-[11px] h-8 px-2.5 bg-[#FF0000] border-[#111113] text-white hover:bg-red-700 font-bold shrink-0 whitespace-nowrap"
-                    title="Mở video gốc trên YouTube"
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    data-testid="open-yt-sync-btn"
+                    onClick={() => setIsYtSyncModalOpen(true)}
+                    className="btn-comic text-[11px] h-8 px-2.5 bg-[var(--surface-elevated)] hover:bg-[#FFE600] hover:text-[#111113] font-bold shrink-0 whitespace-nowrap"
+                    title="Đồng bộ mốc thời gian nghe hai chiều giữa YouTube và WaveLink"
                   >
-                    <Youtube className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
-                    <span>YouTube</span>
-                  </a>
-                )}
+                    <Link2 className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
+                    <span>Đồng bộ YT</span>
+                  </button>
+                  {audio.youtubeVideoId && (
+                    <a
+                      data-testid="open-youtube-synced-link"
+                      href={youtubeSyncedUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={handleOpenYouTubeSynced}
+                      className="btn-comic text-[11px] h-8 px-2.5 bg-[#FF0000] border-[#111113] text-white hover:bg-red-700 font-bold shrink-0 whitespace-nowrap"
+                      title={
+                        absoluteYouTubeSeconds > 0
+                          ? `Mở trên YouTube tại ${formattedAbsoluteYouTube} (tự động đồng bộ mốc nghe)`
+                          : 'Mở video gốc trên YouTube'
+                      }
+                    >
+                      <Youtube className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
+                      <span>
+                        YouTube{absoluteYouTubeSeconds > 0 ? ` · ${formattedAbsoluteYouTube}` : ''}
+                      </span>
+                    </a>
+                  )}
+                </div>
               </div>
 
-              {/* Mô tả hiển thị thoáng trực tiếp trên nền thẻ, không bó trong hộp cuộn hẹp */}
-              <div className="flex flex-col gap-1">
+              {/* Mô tả hiển thị gọn mặc định (~3 dòng) kèm nút Xem thêm / Thu gọn */}
+              <div className="flex flex-col gap-1.5">
                 <span className="text-[11px] font-extrabold text-[var(--ink-primary)] uppercase">
                   Mô tả video:
                 </span>
-                <div className="whitespace-pre-line text-xs sm:text-sm text-[var(--ink-secondary)] leading-relaxed break-words">
-                  {audio.description ? (
-                    audio.description
-                  ) : (
-                    <span className="italic text-[var(--ink-muted)]">
-                      Không có mô tả cho audio này.
-                    </span>
+                <div className="relative">
+                  <div
+                    className={`whitespace-pre-line text-xs sm:text-sm text-[var(--ink-secondary)] leading-relaxed break-words ${
+                      shouldCollapseDescription && !isDescriptionExpanded ? 'line-clamp-3' : ''
+                    }`}
+                  >
+                    {descriptionText ? (
+                      descriptionText
+                    ) : (
+                      <span className="italic text-[var(--ink-muted)]">
+                        Không có mô tả cho audio này.
+                      </span>
+                    )}
+                  </div>
+                  {shouldCollapseDescription && !isDescriptionExpanded && (
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-[var(--surface-card)] to-transparent"
+                    />
                   )}
                 </div>
+                {shouldCollapseDescription && (
+                  <button
+                    type="button"
+                    data-testid="toggle-description-btn"
+                    aria-expanded={isDescriptionExpanded}
+                    onClick={() => setIsDescriptionExpanded((prev) => !prev)}
+                    className="self-start inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] hover:bg-[#FFE600] hover:text-[#111113] text-[11px] font-extrabold text-[var(--ink-primary)] shadow-comic-sm transition-colors cursor-pointer"
+                  >
+                    {isDescriptionExpanded ? (
+                      <>
+                        <ChevronUp className="w-3.5 h-3.5 shrink-0" strokeWidth={2.5} />
+                        <span>Thu gọn mô tả</span>
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-3.5 h-3.5 shrink-0" strokeWidth={2.5} />
+                        <span>Xem thêm mô tả</span>
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
 
               {/* Danh sách thẻ gắn (#Tags) */}
@@ -656,7 +909,10 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                     (isTargetAudioPlaying && currentEpisode
                       ? currentEpisode.episodeNumber
                       : audio.currentEpisodeNumber || 1)}{' '}
-                  <span className="text-[10px] font-mono">({currentPercent}%)</span>
+                  <span className="text-[10px] font-mono">
+                    ({currentPercent}%)
+                    {absoluteYouTubeSeconds > 0 && ` · YT ${formattedAbsoluteYouTube}`}
+                  </span>
                 </span>
               </div>
             </div>
@@ -1023,6 +1279,9 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
         </div>
       </div>
 
+      {/* Audio liên quan ở cuối trang Player */}
+      <RelatedAudiosSection currentAudio={audio} />
+
       {/* Speed Selection Modal */}
       <Modal
         isOpen={isSpeedModalOpen}
@@ -1148,6 +1407,95 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
           thumbnailUrl: audio.thumbnailUrl,
         }}
       />
+
+      {/* YouTube Bidirectional Timestamp Sync Modal */}
+      <Modal
+        isOpen={isYtSyncModalOpen}
+        onClose={() => setIsYtSyncModalOpen(false)}
+        title="ĐỒNG BỘ THỜI GIAN YOUTUBE"
+        showFooter={false}
+        size="sm"
+      >
+        <div className="flex flex-col gap-3">
+          <div className="card-comic-sm p-3 bg-[var(--surface-accent-soft)] flex flex-col gap-2">
+            <span className="text-[11px] font-extrabold uppercase text-[var(--ink-secondary)]">
+              Mốc đang nghe trên app
+            </span>
+            <div className="text-xs font-bold text-[var(--ink-primary)]">
+              Tập {activeEp.episodeNumber} · {formatTime(currentPosition)} = Tổng YouTube:{' '}
+              <span className="font-mono text-[#E63946]">{formattedAbsoluteYouTube}</span>
+            </div>
+            {youtubeSyncedUrl && (
+              <button
+                type="button"
+                onClick={handleCopySyncedYouTubeUrl}
+                className="btn-comic btn-comic-yellow text-[11px] py-1.5 px-2.5 self-start font-extrabold"
+              >
+                <Copy className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
+                <span>Sao chép link YT tại mốc này</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="yt-sync-input"
+              className="text-[11px] font-extrabold uppercase text-[var(--ink-primary)]"
+            >
+              Đồng bộ từ YouTube về App
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                id="yt-sync-input"
+                data-testid="yt-sync-input"
+                type="text"
+                value={ytSyncInput}
+                onChange={(e) => setYtSyncInput(e.target.value)}
+                placeholder="Dán link YouTube có ?t=... hoặc nhập giờ (vd: 09:23:45)"
+                className="input-comic text-xs font-mono flex-1 py-2 px-3"
+              />
+              <button
+                type="button"
+                onClick={handlePasteYtSyncInput}
+                className="btn-comic text-xs py-2 px-2.5 shrink-0"
+                title="Dán từ clipboard"
+              >
+                <ClipboardPaste className="w-3.5 h-3.5" strokeWidth={2.25} />
+              </button>
+            </div>
+          </div>
+
+          {parsedYtInput.videoId &&
+            audio.youtubeVideoId &&
+            parsedYtInput.videoId !== audio.youtubeVideoId && (
+              <div className="card-comic-sm p-2.5 bg-[#FFFBEB] dark:bg-[#2F2614] border-2 border-[#F59E0B] text-[11px] font-bold text-[#92400E] dark:text-[#FCD34D]">
+                Lưu ý: Link vừa dán thuộc video YouTube khác ({parsedYtInput.videoId}), nhưng vẫn
+                có thể áp dụng mốc thời gian nếu đúng phần truyện.
+              </div>
+            )}
+
+          {previewYtMapped && (
+            <div
+              data-testid="yt-sync-preview"
+              className="card-comic-sm p-2.5 bg-[var(--surface-elevated)] border-2 border-[#2A9D8F] text-xs font-bold text-[var(--ink-primary)]"
+            >
+              → Sẽ đồng bộ về <strong>Tập {previewYtMapped.episode.episodeNumber}</strong> ·{' '}
+              <span className="font-mono">{previewYtMapped.formattedEpisodePos}</span> (
+              {previewYtMapped.progressPercent}%)
+            </div>
+          )}
+
+          <button
+            type="button"
+            data-testid="apply-yt-sync-btn"
+            disabled={parsedYtInput.seconds === null || isApplyingYtSync}
+            onClick={handleApplyYouTubeSync}
+            className="btn-comic btn-comic-primary text-xs py-2.5 font-black w-full justify-center disabled:opacity-50"
+          >
+            {isApplyingYtSync ? 'Đang đồng bộ...' : 'Áp dụng & Lưu Mốc Nghe'}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 };

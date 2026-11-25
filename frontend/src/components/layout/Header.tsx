@@ -6,6 +6,9 @@ import { Headphones, Search, Bell, Settings, Sun, Moon, User } from 'lucide-reac
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useUnreadNotificationCount } from '@/hooks/useNotifications';
+import { extractYouTubeId } from '@/lib/utils';
+import { extractYouTubeTimestamp } from '@/lib/youtubeSync';
+import { api } from '@/services/api';
 
 export const Header: React.FC = React.memo(() => {
   const navigate = useNavigate();
@@ -16,14 +19,36 @@ export const Header: React.FC = React.memo(() => {
 
   const displayName = user?.username || (!isInitialized ? '...' : user?.isGuest ? 'Khách' : 'Độc Giả');
 
-  const handleQuickSearch = (e: React.FormEvent) => {
+  const handleQuickSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = quickQuery.trim();
-    if (trimmed) {
-      navigate(`/library?search=${encodeURIComponent(trimmed)}`);
-    } else {
+    if (!trimmed) {
       navigate('/library');
+      return;
     }
+
+    const ytId = extractYouTubeId(trimmed);
+    if (ytId) {
+      const ytTime = extractYouTubeTimestamp(trimmed);
+      try {
+        const found = await api.audio.getAudios({ search: ytId }, isLive);
+        const matched = found.find((a) => a.youtubeVideoId === ytId) || found[0];
+        setQuickQuery('');
+        if (matched) {
+          navigate(
+            ytTime && ytTime > 0 ? `/player/${matched.id}?t=${ytTime}` : `/player/${matched.id}`
+          );
+          return;
+        }
+      } catch {
+        // Fallback to upload route with full pasted YouTube URL
+      }
+      setQuickQuery('');
+      navigate(`/upload?url=${encodeURIComponent(trimmed)}`);
+      return;
+    }
+
+    navigate(`/library?search=${encodeURIComponent(trimmed)}`);
   };
 
   return (

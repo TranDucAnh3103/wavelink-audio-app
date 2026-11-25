@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Youtube,
   Gauge,
@@ -19,6 +20,7 @@ import {
   Lock,
   CheckCheck,
   Info,
+  Clock,
 } from 'lucide-react';
 import { useCategories } from '@/hooks/useCategories';
 import { useImportYouTube, useImportQuota } from '@/hooks/useAudio';
@@ -32,14 +34,22 @@ import { toast } from '@/components/ui/Toast';
 import {
   extractYouTubeId,
   formatDuration,
+  formatTime,
   parseDurationToSec,
   computeLogicalEpisodes,
 } from '@/lib/utils';
+import {
+  extractYouTubeTimestamp,
+  MappedEpisodePosition,
+  syncAudioToYouTubeTimestamp,
+} from '@/lib/youtubeSync';
 import { resolveYouTubeDurationViaIframe } from '@/lib/youtubeResolver';
 import { UploadSkeleton } from '@/components/common/Skeletons';
 
 export const UploadPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const queryClient = useQueryClient();
   const { user, isLive, isLoading, isInitialized } = useAuthStore();
   const { data: categories = [] } = useCategories();
   const importMutation = useImportYouTube();
@@ -60,11 +70,14 @@ export const UploadPage: React.FC = () => {
 
   const [duplicateModalAudio, setDuplicateModalAudio] = useState<AudioItem | null>(null);
   const [successModalAudio, setSuccessModalAudio] = useState<AudioItem | null>(null);
+  const [syncedTimestampResult, setSyncedTimestampResult] =
+    useState<MappedEpisodePosition | null>(null);
 
   const isVipOrAdmin = user?.role === 'ADMIN' || user?.role === 'VIP';
   const userRole = user?.role || 'GUEST';
 
   const checkDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialQueryUrlAppliedRef = useRef(false);
 
   useEffect(() => {
     if (categories.length > 0 && !categoryId) {
@@ -342,6 +355,26 @@ export const UploadPage: React.FC = () => {
   const calculatedTotalSec = parseDurationToSec(durationInput, previewData?.durationSeconds || 0);
   const computedEpisodes = computeLogicalEpisodes(calculatedTotalSec, blockSize);
   const calculatedEpisodeCount = computedEpisodes.length;
+  const detectedYoutubeTimestamp = extractYouTubeTimestamp(url);
+  const previewMappedEpisode =
+    detectedYoutubeTimestamp !== null && detectedYoutubeTimestamp > 0 && computedEpisodes.length > 0
+      ? computedEpisodes.find(
+          (ep) =>
+            detectedYoutubeTimestamp >= ep.startSeconds &&
+            detectedYoutubeTimestamp < ep.endSeconds
+        ) || computedEpisodes[computedEpisodes.length - 1]
+      : null;
+
+  useEffect(() => {
+    if (initialQueryUrlAppliedRef.current) return;
+    const queryUrl = searchParams.get('url');
+    if (queryUrl && queryUrl.trim()) {
+      initialQueryUrlAppliedRef.current = true;
+      setUrl(queryUrl.trim());
+      void checkURL(queryUrl.trim());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const isQuotaExceeded =
     !isVipOrAdmin && !user?.isGuest && Boolean(importQuota && importQuota.canImport === false);
@@ -399,6 +432,27 @@ export const UploadPage: React.FC = () => {
         isVipOnly,
         freeEpisodesCount: isVipOnly ? freeEpisodesCount : 1,
       });
+
+      if (
+        detectedYoutubeTimestamp !== null &&
+        detectedYoutubeTimestamp > 0 &&
+        result.audio
+      ) {
+        try {
+          const mapped = await syncAudioToYouTubeTimestamp(
+            result.audio,
+            detectedYoutubeTimestamp,
+            isLive
+          );
+          setSyncedTimestampResult(mapped);
+          queryClient.invalidateQueries({ queryKey: ['audio'] });
+          queryClient.invalidateQueries({ queryKey: ['audios'] });
+        } catch {
+          setSyncedTimestampResult(null);
+        }
+      } else {
+        setSyncedTimestampResult(null);
+      }
 
       if (result.duplicate) {
         setDuplicateModalAudio(result.audio);
@@ -571,6 +625,26 @@ export const UploadPage: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {detectedYoutubeTimestamp !== null && detectedYoutubeTimestamp > 0 && (
+              <div
+                data-testid="upload-yt-timestamp-badge"
+                className="card-comic-sm p-2.5 bg-[var(--surface-accent-soft)] border-2 border-[#2A9D8F] flex items-center gap-2 text-xs font-bold text-[var(--ink-primary)] fade-in-comic"
+              >
+                <Clock className="w-4 h-4 text-[#2A9D8F] shrink-0" strokeWidth={2.5} />
+                <span>
+                  Phát hiện mốc đang xem trên YouTube:{' '}
+                  <strong className="font-mono">
+                    {formatTime(detectedYoutubeTimestamp, detectedYoutubeTimestamp >= 3600)}
+                  </strong>
+                  {previewMappedEpisode &&
+                    ` → Tự động lưu vào Tập ${previewMappedEpisode.episodeNumber} (${formatTime(
+                      detectedYoutubeTimestamp - previewMappedEpisode.startSeconds,
+                      previewMappedEpisode.durationSeconds >= 3600
+                    )})`}
+                </span>
+              </div>
+            )}
 
             {urlError && (
               <div className="card-comic-sm p-3 bg-[#FEE2E2] dark:bg-[#2F161A] flex items-center gap-2.5 border-2 border-[#E63946] text-[#B91C1C] dark:text-[#FCA5A5] fade-in-comic">
@@ -883,7 +957,13 @@ export const UploadPage: React.FC = () => {
         confirmText="Nghe Ngay"
         cancelText="Về Thư Viện"
         onConfirm={() => {
-          if (duplicateModalAudio) navigate(`/player/${duplicateModalAudio.id}`);
+          if (duplicateModalAudio) {
+            const suffix =
+              detectedYoutubeTimestamp && detectedYoutubeTimestamp > 0
+                ? `?t=${detectedYoutubeTimestamp}`
+                : '';
+            navigate(`/player/${duplicateModalAudio.id}${suffix}`);
+          }
         }}
       >
         <div className="flex flex-col items-center text-center gap-2.5 py-1">
@@ -900,6 +980,15 @@ export const UploadPage: React.FC = () => {
             </strong>{' '}
             ({duplicateModalAudio?.formattedDuration || 'chuẩn'}). Bạn không cần phân tập lại!
           </p>
+          {(syncedTimestampResult ||
+            (detectedYoutubeTimestamp !== null && detectedYoutubeTimestamp > 0)) && (
+            <span className="badge-comic badge-comic-teal text-[10px] font-bold">
+              Đã đồng bộ mốc nghe YouTube:{' '}
+              {syncedTimestampResult
+                ? `${syncedTimestampResult.formattedAbsolute} → Tập ${syncedTimestampResult.episode.episodeNumber} (${syncedTimestampResult.formattedEpisodePos})`
+                : formatTime(detectedYoutubeTimestamp || 0, true)}
+            </span>
+          )}
         </div>
       </Modal>
 
@@ -911,7 +1000,13 @@ export const UploadPage: React.FC = () => {
         confirmText="Phát Ngay"
         cancelText="Về Thư Viện"
         onConfirm={() => {
-          if (successModalAudio) navigate(`/player/${successModalAudio.id}`);
+          if (successModalAudio) {
+            const suffix =
+              detectedYoutubeTimestamp && detectedYoutubeTimestamp > 0
+                ? `?t=${detectedYoutubeTimestamp}`
+                : '';
+            navigate(`/player/${successModalAudio.id}${suffix}`);
+          }
         }}
       >
         <div className="flex flex-col items-center text-center gap-2.5 py-1">
@@ -928,6 +1023,15 @@ export const UploadPage: React.FC = () => {
             </strong>{' '}
             chuẩn 100% YouTube ToS.
           </p>
+          {(syncedTimestampResult ||
+            (detectedYoutubeTimestamp !== null && detectedYoutubeTimestamp > 0)) && (
+            <span className="badge-comic badge-comic-teal text-[10px] font-bold">
+              Đã đồng bộ mốc nghe YouTube:{' '}
+              {syncedTimestampResult
+                ? `${syncedTimestampResult.formattedAbsolute} → Tập ${syncedTimestampResult.episode.episodeNumber} (${syncedTimestampResult.formattedEpisodePos})`
+                : formatTime(detectedYoutubeTimestamp || 0, true)}
+            </span>
+          )}
         </div>
       </Modal>
     </div>

@@ -11,6 +11,7 @@ import { triggerNotificationSync } from '@/hooks/useNotifications';
 
 vi.mock('@/hooks/useAudio', () => ({
   useAudio: vi.fn(),
+  useAudios: vi.fn(() => ({ data: [], isLoading: false })),
   useToggleFavorite: vi.fn(() => ({
     mutate: vi.fn(),
   })),
