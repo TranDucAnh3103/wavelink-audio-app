@@ -48,6 +48,7 @@ let currentPlayerUserId: number | string | null = null;
 let isAdvancingEpisode = false;
 let lastLocalSaveTs = 0;
 let lastStreamMediaSessionTs = 0;
+let ytTrackSwitchUntil = 0;
 
 export function setCurrentPlayerUserId(userId?: number | string | null) {
   currentPlayerUserId = userId !== undefined ? userId : null;
@@ -512,6 +513,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       htmlAudioEngine.stop();
     }
 
+    if (seekDebounceTimer) {
+      clearTimeout(seekDebounceTimer);
+      seekDebounceTimer = null;
+    }
+
     set({
       currentAudio: audio,
       currentEpisode: targetEpisode,
@@ -519,6 +525,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       duration,
       isPlaying: true,
       isBuffering: false,
+      isSeeking: false,
       isExplicitlyPaused: false,
       playbackRate: activeRate,
       activeEngine: targetEngine,
@@ -543,6 +550,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       startHeartbeat();
     } else {
       rateCoordinator.onVideoLoaded(audio.youtubeVideoId);
+
+      if (prevAudio?.youtubeVideoId !== audio.youtubeVideoId) {
+        ytTrackSwitchUntil = Date.now() + 2500;
+        if (ytPlayerInstance && typeof ytPlayerInstance.pauseVideo === 'function') {
+          try {
+            ytPlayerInstance.pauseVideo();
+          } catch {}
+        }
+      }
 
       if (ytPlayerInstance && typeof ytPlayerInstance.loadVideoById === 'function') {
         try {
@@ -902,6 +918,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       clearInterval(sleepFadeTimer);
       sleepFadeTimer = null;
     }
+    if (seekDebounceTimer) {
+      clearTimeout(seekDebounceTimer);
+      seekDebounceTimer = null;
+    }
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('wavelink_sleep_timer_end');
     }
@@ -910,6 +930,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentEpisode: null,
       isPlaying: false,
       isBuffering: false,
+      isSeeking: false,
       isExplicitlyPaused: true,
       currentTime: currentPos,
       sleepTimerMinutes: null,
@@ -942,6 +963,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       clearInterval(sleepFadeTimer);
       sleepFadeTimer = null;
     }
+    if (seekDebounceTimer) {
+      clearTimeout(seekDebounceTimer);
+      seekDebounceTimer = null;
+    }
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('wavelink_sleep_timer_end');
     }
@@ -952,6 +977,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentEpisode: null,
       isPlaying: false,
       isBuffering: false,
+      isSeeking: false,
       isExplicitlyPaused: true,
       currentTime: 0,
       playbackRate: storedRate,
@@ -1017,7 +1043,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
 
       setTimeout(() => {
-        get().play(currentAudio, nextEp, 0);
+        if (get().currentAudio?.id === currentAudio.id) {
+          get().play(currentAudio, nextEp, 0);
+        }
       }, 1000);
     } else {
       get().pause();
@@ -1029,6 +1057,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 htmlAudioEngine.on('time', (absTime, mediaDur) => {
   const store = usePlayerStore.getState();
   if (!isStreamEngineActive(store) || !store.currentAudio || !store.currentEpisode) return;
+  if (htmlAudioEngine.getLoadedVideoId() !== store.currentAudio.youtubeVideoId) return;
 
   const ep = store.currentEpisode;
   const startSec = ep.startSeconds || 0;
@@ -1059,7 +1088,7 @@ htmlAudioEngine.on('time', (absTime, mediaDur) => {
     }
   }
 
-  if (!isAdvancingEpisode && endSec > startSec && absTime >= endSec) {
+  if (!store.isSeeking && !isAdvancingEpisode && endSec > startSec && absTime >= endSec) {
     isAdvancingEpisode = true;
     try {
       if (isEpisodeVipBlocked(store.currentAudio, ep)) {
@@ -1103,7 +1132,13 @@ htmlAudioEngine.on('rate', (rate) => {
 
 htmlAudioEngine.on('ended', () => {
   const store = usePlayerStore.getState();
-  if (isStreamEngineActive(store) && store.isPlaying && !store.isExplicitlyPaused && store.currentAudio) {
+  if (
+    isStreamEngineActive(store) &&
+    store.isPlaying &&
+    !store.isExplicitlyPaused &&
+    store.currentAudio &&
+    htmlAudioEngine.getLoadedVideoId() === store.currentAudio.youtubeVideoId
+  ) {
     store.handleEpisodeComplete();
   }
 });
@@ -1224,6 +1259,18 @@ function pollIntervalHandler() {
     if (store.isSeeking) return;
 
     try {
+      const loadedId =
+        typeof ytPlayerInstance.getVideoData === 'function'
+          ? ytPlayerInstance.getVideoData()?.video_id
+          : null;
+      if (
+        loadedId &&
+        store.currentAudio?.youtubeVideoId &&
+        loadedId !== store.currentAudio.youtubeVideoId
+      ) {
+        return;
+      }
+
       const absTime = ytPlayerInstance.getCurrentTime();
       const startSec = store.currentEpisode?.startSeconds || 0;
       const endSec = store.currentEpisode?.endSeconds || store.duration;
@@ -1246,7 +1293,7 @@ function pollIntervalHandler() {
         );
       }
 
-      if (absTime >= endSec && endSec > startSec) {
+      if (!store.isSeeking && Date.now() >= ytTrackSwitchUntil && absTime >= endSec && endSec > startSec) {
         if (isEpisodeVipBlocked(store.currentAudio!, store.currentEpisode!)) {
           try {
             ytPlayerInstance.pauseVideo();
@@ -1355,8 +1402,9 @@ function saveProgressFor(audio: AudioItem, episode: Episode, currentTime: number
   });
 
   const trackKey = `${audio.id}:${episode.id}`;
+  const isSameTrackKey = lastHistoryTrackKey === trackKey;
   let deltaSeconds = 0;
-  if (lastHistoryTrackKey === trackKey) {
+  if (isSameTrackKey) {
     const diff = Math.floor(currentTime - lastHistoryPositionSec);
     if (diff > 0 && diff <= 300) {
       deltaSeconds = diff;
@@ -1369,12 +1417,14 @@ function saveProgressFor(audio: AudioItem, episode: Episode, currentTime: number
 
   const prevDuration = episode.startSeconds || 0;
   const accumulatedDuration = prevDuration + currentTime;
+  const hasAuthToken =
+    typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('auth_token'));
 
-  if (deltaSeconds >= 10) {
+  if (deltaSeconds >= 10 || (!hasAuthToken && !isSameTrackKey)) {
     api.history.recordHistory({
       audioId: audio.id,
       episodeId: episode.id,
-      durationListened: deltaSeconds,
+      durationListened: Math.max(deltaSeconds, 1),
       totalDurationListened: accumulatedDuration,
       audio,
       episode,
@@ -1387,6 +1437,7 @@ function saveProgressFor(audio: AudioItem, episode: Episode, currentTime: number
     queryClient.invalidateQueries({ queryKey: ['audios'] });
     queryClient.invalidateQueries({ queryKey: ['audio'] });
     queryClient.invalidateQueries({ queryKey: ['history'] });
+    queryClient.invalidateQueries({ queryKey: ['recent-history'] });
   } catch {}
 }
 

@@ -68,12 +68,14 @@ export const ProfilePage: React.FC = () => {
 
   const pageSize = DEFAULT_PAGE_SIZE;
   const [historyPage, setHistoryPage] = useState(1);
+  const [showAllHistory, setShowAllHistory] = useState(false);
   const totalHistoryPages = Math.max(1, Math.ceil(history.length / pageSize));
   const safeHistoryPage = Math.min(Math.max(1, historyPage), totalHistoryPages);
   const paginatedHistory = history.slice(
     (safeHistoryPage - 1) * pageSize,
     safeHistoryPage * pageSize
   );
+  const displayedHistory = showAllHistory ? history : paginatedHistory;
 
   const [myAudiosPage, setMyAudiosPage] = useState(1);
   const totalMyAudiosPages = Math.max(1, Math.ceil(myAudios.length / pageSize));
@@ -488,17 +490,29 @@ export const ProfilePage: React.FC = () => {
 
         {history.length > 0 && (
           <div className="card-comic p-4 flex flex-col gap-3">
-            <div className="flex items-center justify-between pb-2 border-b-2 border-[var(--border-ink)]">
+            <div className="flex items-center justify-between pb-2 border-b-2 border-[var(--border-ink)] gap-2 flex-wrap">
               <span className="font-extrabold text-xs uppercase text-[var(--ink-primary)]">
                 Tiến Trình Nghe Tạm Trong Phiên
               </span>
-              <span className="badge-comic badge-comic-yellow text-[9px] font-black">
-                {history.length} BỘ TRUYỆN
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="badge-comic badge-comic-yellow text-[9px] font-black">
+                  {history.length} BỘ TRUYỆN
+                </span>
+                {history.length > pageSize && (
+                  <button
+                    type="button"
+                    data-testid="profile-toggle-all-history-btn"
+                    onClick={() => setShowAllHistory((prev) => !prev)}
+                    className="text-[11px] font-extrabold text-[#3A86FF] hover:underline cursor-pointer"
+                  >
+                    {showAllHistory ? 'Thu gọn' : `Xem tất cả (${history.length})`}
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-              {paginatedHistory.map((item) => {
+              {displayedHistory.map((item) => {
                 const progress = item.progressPercent || 0;
                 const title = item.title || 'Truyện Audio';
                 const epTitle = item.currentEpisodeTitle || 'Tập 1';
@@ -560,7 +574,7 @@ export const ProfilePage: React.FC = () => {
               })}
             </div>
 
-            {totalHistoryPages > 1 && (
+            {!showAllHistory && totalHistoryPages > 1 && (
               <Pagination
                 currentPage={safeHistoryPage}
                 totalPages={totalHistoryPages}
@@ -743,13 +757,25 @@ export const ProfilePage: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         {/* Listening History */}
         <div className="card-comic p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between pb-2 border-b-2 border-[var(--border-ink)]">
+          <div className="flex items-center justify-between pb-2 border-b-2 border-[var(--border-ink)] gap-2 flex-wrap">
             <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
               Nhật Ký Cày Truyện Của Bạn
             </span>
-            <span className="badge-comic badge-comic-yellow text-[9px] font-black">
-              {history.length} BỘ TRUYỆN
-            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="badge-comic badge-comic-yellow text-[9px] font-black">
+                {history.length} BỘ TRUYỆN
+              </span>
+              {history.length > pageSize && (
+                <button
+                  type="button"
+                  data-testid="profile-toggle-all-history-btn"
+                  onClick={() => setShowAllHistory((prev) => !prev)}
+                  className="text-[11px] font-extrabold text-[#3A86FF] hover:underline cursor-pointer"
+                >
+                  {showAllHistory ? 'Thu gọn' : `Xem tất cả (${history.length})`}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-col gap-2.5">
@@ -759,7 +785,7 @@ export const ProfilePage: React.FC = () => {
               </span>
             ) : (
               <>
-                {paginatedHistory.map((item) => {
+                {displayedHistory.map((item) => {
                   const progress = item.progressPercent || 0;
                   const title = item.title || 'Truyện Audio';
                   const epTitle = item.currentEpisodeTitle || 'Tập 1';
@@ -822,13 +848,15 @@ export const ProfilePage: React.FC = () => {
                   );
                 })}
 
-                <Pagination
-                  currentPage={safeHistoryPage}
-                  totalPages={totalHistoryPages}
-                  totalItems={history.length}
-                  pageSize={pageSize}
-                  onPageChange={(p) => setHistoryPage(p)}
-                />
+                {!showAllHistory && (
+                  <Pagination
+                    currentPage={safeHistoryPage}
+                    totalPages={totalHistoryPages}
+                    totalItems={history.length}
+                    pageSize={pageSize}
+                    onPageChange={(p) => setHistoryPage(p)}
+                  />
+                )}
               </>
             )}
           </div>

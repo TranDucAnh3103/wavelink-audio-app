@@ -1,6 +1,7 @@
 package history
 
 import (
+	"sort"
 	"time"
 
 	"audio-app-backend/core/domain"
@@ -39,38 +40,51 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 func (h *Handler) GetRecentHistory(c *gin.Context) {
 	userID := middleware.GetCurrentUserID(c)
 
-	// Lấy danh sách lịch sử nghe gần nhất của user
-	var rawHistory []domain.ListeningHistory
-	err := h.db.Where("user_id = ?", userID).
-		Order("created_at DESC").
-		Limit(100).
-		Find(&rawHistory).Error
-
-	if err != nil {
+	// 1. Gom nhóm theo audio_id trên toàn bộ nhật ký nghe (tránh Limit trên bảng thô làm rớt truyện cũ)
+	type histAgg struct {
+		AudioID uint `gorm:"column:audio_id"`
+		MaxID   uint `gorm:"column:max_id"`
+		Total   int  `gorm:"column:total"`
+	}
+	var aggs []histAgg
+	if err := h.db.Model(&domain.ListeningHistory{}).
+		Select("audio_id, MAX(id) as max_id, SUM(duration_listened) as total").
+		Where("user_id = ? AND audio_id > 0", userID).
+		Group("audio_id").
+		Scan(&aggs).Error; err != nil {
 		response.Internal(c, "Lỗi truy vấn lịch sử nghe")
 		return
 	}
 
-	// Gom nhóm theo AudioID để mỗi truyện chỉ xuất hiện đúng 1 mục mới nhất
-	seenAudio := make(map[uint]bool)
-	var uniqueAudioIDs []uint
-	for _, hRec := range rawHistory {
-		if !seenAudio[hRec.AudioID] && hRec.AudioID > 0 {
-			seenAudio[hRec.AudioID] = true
-			uniqueAudioIDs = append(uniqueAudioIDs, hRec.AudioID)
+	durMap := make(map[uint]int, len(aggs))
+	maxIDs := make([]uint, 0, len(aggs))
+	for _, a := range aggs {
+		durMap[a.AudioID] = a.Total
+		if a.MaxID > 0 {
+			maxIDs = append(maxIDs, a.MaxID)
 		}
 	}
 
-	if len(uniqueAudioIDs) == 0 {
-		response.OK(c, []domain.ConsolidatedHistoryItem{}, nil)
-		return
+	histTimeByAudio := make(map[uint]time.Time, len(aggs))
+	if len(maxIDs) > 0 {
+		var latestHistRows []domain.ListeningHistory
+		if err := h.db.Where("id IN ?", maxIDs).Find(&latestHistRows).Error; err == nil {
+			for _, rec := range latestHistRows {
+				if rec.CreatedAt.After(histTimeByAudio[rec.AudioID]) {
+					histTimeByAudio[rec.AudioID] = rec.CreatedAt
+				}
+			}
+		}
 	}
 
-	// Lấy latest progress của từng audio cho user
+	// 2. Lấy toàn bộ tiến trình nghe của user để gộp cả audio mới bắt đầu nghe (<10s hoặc mới có progress)
 	var progs []domain.ListeningProgress
-	h.db.Where("user_id = ? AND audio_id IN ?", userID, uniqueAudioIDs).
+	if err := h.db.Where("user_id = ? AND audio_id > 0", userID).
 		Order("updated_at DESC").
-		Find(&progs)
+		Find(&progs).Error; err != nil {
+		response.Internal(c, "Lỗi truy vấn tiến trình nghe")
+		return
+	}
 
 	progByAudio := make(map[uint]domain.ListeningProgress)
 	for _, p := range progs {
@@ -79,26 +93,38 @@ func (h *Handler) GetRecentHistory(c *gin.Context) {
 		}
 	}
 
-	// Tổng hợp thời lượng nghe cho từng AudioID
-	type sumDur struct {
-		AudioID uint
-		Total   int
+	lastActivityAt := make(map[uint]time.Time)
+	for aID, t := range histTimeByAudio {
+		lastActivityAt[aID] = t
 	}
-	var sumDurs []sumDur
-	h.db.Model(&domain.ListeningHistory{}).
-		Select("audio_id, sum(duration_listened) as total").
-		Where("user_id = ? AND audio_id IN ?", userID, uniqueAudioIDs).
-		Group("audio_id").
-		Scan(&sumDurs)
-	durMap := make(map[uint]int)
-	for _, s := range sumDurs {
-		durMap[s.AudioID] = s.Total
+	for aID, p := range progByAudio {
+		if existing, exists := lastActivityAt[aID]; !exists || p.UpdatedAt.After(existing) {
+			lastActivityAt[aID] = p.UpdatedAt
+		}
 	}
+
+	if len(lastActivityAt) == 0 {
+		response.OK(c, []domain.ConsolidatedHistoryItem{}, nil)
+		return
+	}
+
+	uniqueAudioIDs := make([]uint, 0, len(lastActivityAt))
+	for aID := range lastActivityAt {
+		uniqueAudioIDs = append(uniqueAudioIDs, aID)
+	}
+	sort.Slice(uniqueAudioIDs, func(i, j int) bool {
+		ti := lastActivityAt[uniqueAudioIDs[i]]
+		tj := lastActivityAt[uniqueAudioIDs[j]]
+		if ti.Equal(tj) {
+			return uniqueAudioIDs[i] > uniqueAudioIDs[j]
+		}
+		return ti.After(tj)
+	})
 
 	// Lấy thông tin Audio kèm Episode
 	var audios []domain.Audio
 	h.db.Preload("Episodes").Where("id IN ?", uniqueAudioIDs).Find(&audios)
-	audioMap := make(map[uint]domain.Audio)
+	audioMap := make(map[uint]domain.Audio, len(audios))
 	for _, a := range audios {
 		audioMap[a.ID] = a
 	}
@@ -130,7 +156,7 @@ func (h *Handler) GetRecentHistory(c *gin.Context) {
 			accumulatedDuration = durMap[aID]
 		}
 
-		lastTime := prog.UpdatedAt
+		lastTime := lastActivityAt[aID]
 		if lastTime.IsZero() {
 			lastTime = time.Now().UTC()
 		}
@@ -165,9 +191,9 @@ func (h *Handler) RecordHistory(c *gin.Context) {
 		return
 	}
 
-	// Chỉ lưu nhật ký nếu nghe >= 30 giây; chặn giá trị ảo vượt quá 4 giờ/lần gửi
-	if req.DurationListened < 30 {
-		response.OK(c, gin.H{"recorded": false, "reason": "duration < 30s"}, nil)
+	// Chỉ lưu nhật ký nếu nghe >= 10 giây; chặn giá trị ảo vượt quá 4 giờ/lần gửi
+	if req.DurationListened < 10 {
+		response.OK(c, gin.H{"recorded": false, "reason": "duration < 10s"}, nil)
 		return
 	}
 	duration := req.DurationListened

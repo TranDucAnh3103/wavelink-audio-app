@@ -352,4 +352,63 @@ describe('Bidirectional YouTube <-> App Sync UI', () => {
       expect(decodeURIComponent(dest)).toContain('newVid99999&t=1200');
     });
   });
+
+  it('PlayerPage shows missing-timestamp hint for share URLs without ?t=, accepts quick H/M/S inputs, and shows live sleep timer countdown', async () => {
+    const updateProgressSpy = vi.spyOn(api.progress, 'updateProgress').mockResolvedValue();
+    usePlayerStore.setState({
+      sleepTimerMinutes: null,
+      sleepTimerEndTimestamp: null,
+    });
+    const qc = createTestClient();
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/player/189']}>
+          <Routes>
+            <Route path="/player/:id" element={<PlayerPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    // 1. Pasting a standard mobile/share URL without ?t= displays hint and allows quick H/M/S
+    fireEvent.click(screen.getByTestId('open-yt-sync-btn'));
+    fireEvent.change(screen.getByTestId('yt-sync-input'), {
+      target: { value: 'https://youtu.be/UMgx3NLnTU4?si=cwiiTestToken' },
+    });
+    expect(screen.getByTestId('yt-sync-missing-time-hint')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId('yt-sync-hours'), { target: { value: '9' } });
+    fireEvent.change(screen.getByTestId('yt-sync-minutes'), { target: { value: '23' } });
+    fireEvent.change(screen.getByTestId('yt-sync-seconds'), { target: { value: '45' } });
+
+    const preview = screen.getByTestId('yt-sync-preview');
+    expect(preview).toHaveTextContent('Tập 3');
+    expect(preview).toHaveTextContent('01:23:45');
+
+    const applyBtn = screen.getByTestId('apply-yt-sync-btn') as HTMLButtonElement;
+    expect(applyBtn.disabled).toBe(false);
+    fireEvent.click(applyBtn);
+
+    await waitFor(() => {
+      expect(updateProgressSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          audioId: 189,
+          episodeId: 3,
+          positionSeconds: 5025,
+        }),
+        true
+      );
+    });
+
+    // 2. Sleep timer custom input & live countdown badge
+    fireEvent.click(screen.getByRole('button', { name: 'Chọn giờ ngủ' }));
+    fireEvent.change(screen.getByTestId('custom-sleep-minutes-input'), {
+      target: { value: '20' },
+    });
+    fireEvent.click(screen.getByTestId('apply-custom-sleep-btn'));
+
+    expect(usePlayerStore.getState().sleepTimerMinutes).toBe(20);
+    expect(screen.getByTestId('sleep-timer-countdown-badge')).toHaveTextContent(/19:|20:00/);
+  });
 });

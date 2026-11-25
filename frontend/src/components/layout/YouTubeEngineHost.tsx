@@ -150,6 +150,14 @@ export const YouTubeEngineHost: React.FC = () => {
               }
             } else if (state === window.YT?.PlayerState?.ENDED) {
               const currentStore = usePlayerStore.getState();
+              const loadedId = playerRef.current?.getVideoData?.()?.video_id;
+              if (
+                loadedId &&
+                currentStore.currentAudio?.youtubeVideoId &&
+                loadedId !== currentStore.currentAudio.youtubeVideoId
+              ) {
+                return;
+              }
               // Chỉ kích hoạt khi đang phát tự nhiên và không do người dùng chủ động tắt, dừng hoặc tua/chuyển bài
               if (currentStore.isPlaying && !currentStore.isExplicitlyPaused && currentStore.currentAudio) {
                 usePlayerStore.setState({ isPlaying: false });

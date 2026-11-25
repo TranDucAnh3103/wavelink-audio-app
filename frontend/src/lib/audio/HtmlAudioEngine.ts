@@ -58,6 +58,8 @@ export class HtmlAudioEngine implements AudioEngine {
 
   private currentOpts: AudioEngineLoadOptions | null = null;
   private currentVideoId: string | null = null;
+  private loadedVideoId: string | null = null;
+  private loadingNewStream = false;
   private pendingStartSeconds = 0;
   private pendingAutoplay = false;
   private pendingRate = 1.0;
@@ -67,6 +69,11 @@ export class HtmlAudioEngine implements AudioEngine {
   private loadSeq = 0;
   private stopped = false;
   private boundCleanup: (() => void) | null = null;
+
+  getLoadedVideoId(): string | null {
+    if (this.loadingNewStream || !this.metadataApplied || this.stopped) return null;
+    return this.loadedVideoId;
+  }
 
   attachElement(el: HTMLAudioElement | null): void {
     if (this.el === el) return;
@@ -78,22 +85,23 @@ export class HtmlAudioEngine implements AudioEngine {
     if (!el) return;
 
     const onTimeUpdate = () => {
+      if (this.loadingNewStream || !this.metadataApplied || this.stopped || el.seeking) return;
       const dur = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 0;
       this.emit('time', el.currentTime || 0, dur);
     };
 
     const onLoadedMetadata = () => {
       if (!this.metadataApplied) {
-        this.metadataApplied = true;
-        if (this.pendingStartSeconds > 0) {
-          try {
-            el.currentTime = this.pendingStartSeconds;
-          } catch {}
-        }
+        try {
+          el.currentTime = this.pendingStartSeconds;
+        } catch {}
         applyPreservesPitch(el);
         try {
           el.playbackRate = this.pendingRate || 1.0;
         } catch {}
+        this.metadataApplied = true;
+        this.loadingNewStream = false;
+        this.loadedVideoId = this.currentVideoId;
       }
       const dur = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 0;
       if (dur > 0) {
@@ -130,6 +138,7 @@ export class HtmlAudioEngine implements AudioEngine {
     };
 
     const onEnded = () => {
+      if (this.loadingNewStream || !this.metadataApplied || this.stopped) return;
       this.emit('state', 'ended');
       this.emit('ended');
     };
@@ -210,11 +219,16 @@ export class HtmlAudioEngine implements AudioEngine {
     }
 
     const seq = ++this.loadSeq;
+    this.loadingNewStream = true;
+    this.metadataApplied = false;
+    this.loadedVideoId = null;
     this.currentVideoId = options.videoId;
     this.pendingStartSeconds = Math.max(0, options.startSeconds || 0);
     this.pendingAutoplay = options.autoplay;
-    this.metadataApplied = false;
     this.retryCount = 0;
+    try {
+      el.pause();
+    } catch {}
     this.emit('state', 'loading');
 
     try {
@@ -238,12 +252,12 @@ export class HtmlAudioEngine implements AudioEngine {
       el.load();
 
       if (el.readyState >= 1) {
+        try {
+          el.currentTime = this.pendingStartSeconds;
+        } catch {}
         this.metadataApplied = true;
-        if (this.pendingStartSeconds > 0) {
-          try {
-            el.currentTime = this.pendingStartSeconds;
-          } catch {}
-        }
+        this.loadingNewStream = false;
+        this.loadedVideoId = this.currentVideoId;
         if (this.pendingAutoplay && el.paused) {
           this.pendingAutoplay = false;
           await this.play();
@@ -327,6 +341,7 @@ export class HtmlAudioEngine implements AudioEngine {
   }
 
   getTime(): number {
+    if (this.loadingNewStream || !this.metadataApplied) return this.pendingStartSeconds;
     if (!this.el) return 0;
     return Number.isFinite(this.el.currentTime) ? this.el.currentTime : 0;
   }
@@ -345,6 +360,9 @@ export class HtmlAudioEngine implements AudioEngine {
 
   stop(): void {
     this.stopped = true;
+    this.loadingNewStream = false;
+    this.metadataApplied = false;
+    this.loadedVideoId = null;
     this.loadSeq++;
     this.clearRetryTimer();
     this.pendingAutoplay = false;
