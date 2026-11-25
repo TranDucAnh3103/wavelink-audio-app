@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   BackHandler,
   Animated,
+  Linking,
 } from 'react-native';
 import { WebView, WebViewMessageEvent, WebViewNavigation } from 'react-native-webview';
 import { getActiveWebUrl } from './config/appConfig';
@@ -470,6 +471,13 @@ export default function App() {
         injectedJavaScriptBeforeContentLoaded={INJECTED_MEDIA_BRIDGE_SCRIPT}
         injectedJavaScript={INJECTED_MEDIA_BRIDGE_SCRIPT}
         onMessage={handleWebMessage}
+        onShouldStartLoadWithRequest={(request) => {
+          if (/^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/watch|youtu\.be\/)/i.test(request.url)) {
+            Linking.openURL(request.url).catch(() => {});
+            return false;
+          }
+          return true;
+        }}
         onNavigationStateChange={(navState: WebViewNavigation) => setCanGoBack(navState.canGoBack)}
         onLoadEnd={handleLoadEnd}
         // Tối ưu hóa hiệu năng & bộ nhớ đệm

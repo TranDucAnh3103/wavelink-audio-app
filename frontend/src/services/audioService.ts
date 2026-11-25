@@ -8,12 +8,15 @@ import { useAuthStore } from '@/stores/authStore';
 export const audioService = {
   async getAudios(filter: AudioFilter = {}, isLive = true, currentUserId?: number): Promise<AudioItem[]> {
     const token = typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    const normalizedSearch = filter.search
+      ? extractYouTubeId(filter.search) || filter.search
+      : '';
 
     if (isLive) {
       try {
         const params = new URLSearchParams();
         params.append('fields', 'lite');
-        if (filter.search) params.append('search', filter.search);
+        if (normalizedSearch) params.append('search', normalizedSearch);
         if (filter.categoryId) params.append('categoryId', String(filter.categoryId));
         if (filter.status) params.append('status', filter.status);
         if (filter.tag) params.append('tag', filter.tag);
@@ -71,8 +74,8 @@ export const audioService = {
       const targetUID = String(filter.userId || filter.createdBy);
       list = list.filter((a) => a.createdBy && String(a.createdBy) === targetUID);
     }
-    if (filter.search) {
-      const q = filter.search.toLowerCase();
+    if (normalizedSearch) {
+      const q = normalizedSearch.toLowerCase();
       list = list.filter(
         (a) =>
           a.title.toLowerCase().includes(q) ||
