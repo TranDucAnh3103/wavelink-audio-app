@@ -44,7 +44,9 @@ func ETag() gin.HandlerFunc {
 			tag := `"` + hex.EncodeToString(sum[:]) + `"`
 			h := orig.Header()
 			h.Set("ETag", tag)
-			h.Set("Cache-Control", "private, no-cache")
+			if h.Get("Cache-Control") == "" {
+				h.Set("Cache-Control", "private, no-cache")
+			}
 			h.Add("Vary", "Authorization")
 			for _, t := range strings.Split(c.GetHeader("If-None-Match"), ",") {
 				if strings.TrimSpace(t) == tag {

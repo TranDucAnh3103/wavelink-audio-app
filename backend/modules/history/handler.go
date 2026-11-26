@@ -1,7 +1,10 @@
 package history
 
 import (
+	"math"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"audio-app-backend/core/domain"
@@ -121,16 +124,114 @@ func (h *Handler) GetRecentHistory(c *gin.Context) {
 		return ti.After(tj)
 	})
 
-	// Lấy thông tin Audio kèm Episode
+	totalCount := len(uniqueAudioIDs)
+	pageStr := strings.TrimSpace(c.Query("page"))
+	limitStr := strings.TrimSpace(c.Query("limit"))
+	isAll := c.Query("all") == "true" || limitStr == "all" || limitStr == "0" || limitStr == "-1"
+
+	page := 1
+	if p, err := strconv.Atoi(pageStr); err == nil && p >= 1 {
+		page = p
+	}
+	limit := 0
+	hasPagination := false
+	if !isAll && limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+			if limit > 500 {
+				limit = 500
+			}
+			hasPagination = true
+		}
+	} else if !isAll && pageStr != "" {
+		limit = 12
+		hasPagination = true
+	}
+
+	pageAudioIDs := uniqueAudioIDs
+	if hasPagination {
+		start := (page - 1) * limit
+		if start >= totalCount {
+			pageAudioIDs = nil
+		} else {
+			end := start + limit
+			if end > totalCount {
+				end = totalCount
+			}
+			pageAudioIDs = uniqueAudioIDs[start:end]
+		}
+	}
+
+	effLimit := limit
+	if effLimit <= 0 {
+		effLimit = totalCount
+		if effLimit <= 0 {
+			effLimit = 1
+		}
+	}
+	totalPages := int(math.Ceil(float64(totalCount) / float64(effLimit)))
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	meta := gin.H{
+		"total":      totalCount,
+		"page":       page,
+		"limit":      effLimit,
+		"totalPages": totalPages,
+	}
+
+	if len(pageAudioIDs) == 0 {
+		response.OK(c, []domain.ConsolidatedHistoryItem{}, meta)
+		return
+	}
+
+	// Lấy thông tin Audio gọn (bỏ description) & chỉ tải đúng episode đang nghe + tổng số tập
 	var audios []domain.Audio
-	h.db.Preload("Episodes").Where("id IN ?", uniqueAudioIDs).Find(&audios)
+	h.db.Omit("description").Where("id IN ?", pageAudioIDs).Find(&audios)
 	audioMap := make(map[uint]domain.Audio, len(audios))
 	for _, a := range audios {
 		audioMap[a.ID] = a
 	}
 
-	consolidated := make([]domain.ConsolidatedHistoryItem, 0, len(uniqueAudioIDs))
-	for _, aID := range uniqueAudioIDs {
+	type histEpCount struct {
+		AudioID uint `gorm:"column:audio_id"`
+		Total   int  `gorm:"column:total"`
+	}
+	var epCounts []histEpCount
+	h.db.Model(&domain.Episode{}).
+		Select("audio_id, COUNT(*) as total").
+		Where("audio_id IN ?", pageAudioIDs).
+		Group("audio_id").
+		Scan(&epCounts)
+	epCountMap := make(map[uint]int, len(epCounts))
+	for _, ec := range epCounts {
+		epCountMap[ec.AudioID] = ec.Total
+	}
+
+	neededEpIDs := make([]uint, 0, len(pageAudioIDs))
+	for _, aID := range pageAudioIDs {
+		if p, ok := progByAudio[aID]; ok && p.EpisodeID > 0 {
+			neededEpIDs = append(neededEpIDs, p.EpisodeID)
+		}
+	}
+	var episodes []domain.Episode
+	if len(neededEpIDs) > 0 {
+		h.db.Where("id IN ? OR (audio_id IN ? AND episode_number = 1)", neededEpIDs, pageAudioIDs).Find(&episodes)
+	} else {
+		h.db.Where("audio_id IN ? AND episode_number = 1", pageAudioIDs).Find(&episodes)
+	}
+	epByID := make(map[uint]domain.Episode, len(episodes))
+	epFirstByAudio := make(map[uint]domain.Episode, len(pageAudioIDs))
+	for _, ep := range episodes {
+		epByID[ep.ID] = ep
+		if ep.EpisodeNumber == 1 {
+			epFirstByAudio[ep.AudioID] = ep
+		}
+	}
+
+	consolidated := make([]domain.ConsolidatedHistoryItem, 0, len(pageAudioIDs))
+	for _, aID := range pageAudioIDs {
 		audio, exists := audioMap[aID]
 		if !exists {
 			continue
@@ -140,13 +241,14 @@ func (h *Handler) GetRecentHistory(c *gin.Context) {
 		epTitle := "Tập 1"
 		epNum := 1
 		startSec := 0
-		for _, ep := range audio.Episodes {
-			if ep.ID == prog.EpisodeID {
-				epTitle = ep.Title
-				epNum = ep.EpisodeNumber
-				startSec = ep.StartSeconds
-				break
-			}
+		if ep, ok := epByID[prog.EpisodeID]; ok {
+			epTitle = ep.Title
+			epNum = ep.EpisodeNumber
+			startSec = ep.StartSeconds
+		} else if firstEp, ok := epFirstByAudio[aID]; ok {
+			epTitle = firstEp.Title
+			epNum = firstEp.EpisodeNumber
+			startSec = firstEp.StartSeconds
 		}
 
 		// Tính thời gian đã nghe tích luỹ qua các tập:
@@ -161,12 +263,17 @@ func (h *Handler) GetRecentHistory(c *gin.Context) {
 			lastTime = time.Now().UTC()
 		}
 
+		totalEps := epCountMap[audio.ID]
+		if totalEps <= 0 {
+			totalEps = 1
+		}
+
 		item := domain.ConsolidatedHistoryItem{
 			AudioID:               audio.ID,
 			Title:                 audio.Title,
 			Author:                audio.Author,
 			ThumbnailURL:          audio.ThumbnailURL,
-			TotalEpisodes:         len(audio.Episodes),
+			TotalEpisodes:         totalEps,
 			CurrentEpisodeID:      prog.EpisodeID,
 			CurrentEpisodeNumber:  epNum,
 			CurrentEpisodeTitle:   epTitle,
@@ -180,7 +287,7 @@ func (h *Handler) GetRecentHistory(c *gin.Context) {
 		consolidated = append(consolidated, item)
 	}
 
-	response.OK(c, consolidated, nil)
+	response.OK(c, consolidated, meta)
 }
 
 func (h *Handler) RecordHistory(c *gin.Context) {

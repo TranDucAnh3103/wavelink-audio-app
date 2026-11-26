@@ -122,6 +122,8 @@ func AutoMigrate(db *gorm.DB) error {
 		&domain.MembershipOrder{},
 		&domain.SystemSetting{},
 		&domain.CommunityMessage{},
+		&domain.SupportTicket{},
+		&domain.AdminAuditLog{},
 	}
 
 	var firstErr error
@@ -136,6 +138,11 @@ func AutoMigrate(db *gorm.DB) error {
 
 	// Đảm bảo an toàn tuyệt đối cho MySQL/SQLite nếu bảng đã tồn tại từ migration cũ
 	m := db.Migrator()
+	for _, col := range []string{"is_banned", "ban_reason", "banned_at", "last_login_at"} {
+		if !m.HasColumn(&domain.User{}, col) {
+			_ = m.AddColumn(&domain.User{}, col)
+		}
+	}
 	if !m.HasColumn(&domain.Episode{}, "is_vip") {
 		_ = m.AddColumn(&domain.Episode{}, "is_vip")
 	}

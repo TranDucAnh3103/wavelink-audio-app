@@ -28,6 +28,44 @@ export function useCreateTag() {
   });
 }
 
+export function useUpdateTag() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number | string; data: Partial<Tag> }) => {
+      const { isLive } = useAuthStore.getState();
+      return api.tag.updateTag(id, data, isLive);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+    },
+  });
+}
+
+export function useMergeTags() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ sourceIds, targetId }: { sourceIds: number[]; targetId: number }) =>
+      api.tag.mergeTags(sourceIds, targetId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+      queryClient.invalidateQueries({ queryKey: ['audios'] });
+    },
+  });
+}
+
+export function useCleanupUnusedTags() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => api.tag.cleanupUnusedTags(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tags'] });
+    },
+  });
+}
+
 export function useDeleteTag() {
   const queryClient = useQueryClient();
 

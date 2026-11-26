@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
-import { NotificationItem, NotificationPreferences } from '@/types';
+import { NotificationPreferences } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 import { playNotificationSound } from '@/lib/soundEffects';
+import { externalNotificationService } from '@/services/externalNotificationService';
 
 const LAST_KNOWN_UNREAD_KEY = 'wavelink_last_known_unread_count';
 
@@ -34,24 +35,25 @@ export function triggerNotificationSync(playChime = true) {
   }
 }
 
-export function useNotifications() {
+export function useNotifications(opts?: { filter?: string; type?: string }) {
   const { user } = useAuthStore();
   const isMember = Boolean(user && !user.isGuest && user.role !== 'GUEST');
+  const filter = opts?.filter || 'all';
+  const type = opts?.type || 'ALL';
 
   return useQuery({
-    queryKey: ['notifications', user?.id || 'guest'],
+    queryKey: ['notifications', user?.id || 'guest', filter, type],
     enabled: isMember,
     queryFn: async () => {
       const { isLive } = useAuthStore.getState();
-      const data = await api.notification.getNotifications(isLive);
-      return data;
+      return api.notification.getNotifications(isLive, { filter, type });
     },
   });
 }
 
 export function useUnreadNotificationCount() {
   const queryClient = useQueryClient();
-  const { user } = useAuthStore();
+  const { user, isLive } = useAuthStore();
   const isMember = Boolean(user && !user.isGuest && user.role !== 'GUEST');
 
   useEffect(() => {
@@ -67,6 +69,24 @@ export function useUnreadNotificationCount() {
     window.addEventListener('wavelink:notification:sync', handleSync);
     return () => window.removeEventListener('wavelink:notification:sync', handleSync);
   }, [queryClient]);
+
+  useEffect(() => {
+    if (!isMember || !isLive) return;
+
+    // Đồng bộ cài đặt thông báo từ server vào localStorage ngay khi vào app
+    api.notification.getPreferences(true).catch(() => {});
+
+    const disconnect = api.notification.connectWebSocket((item) => {
+      playChimeDeduped();
+      queryClient.invalidateQueries({ queryKey: ['unread-notification-count'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      externalNotificationService.notifyFromServerItem(item).catch(() => {});
+    });
+
+    return () => {
+      disconnect();
+    };
+  }, [isMember, isLive, user?.id, queryClient]);
 
   return useQuery({
     queryKey: ['unread-notification-count', user?.id || 'guest'],
@@ -84,7 +104,8 @@ export function useUnreadNotificationCount() {
       } catch {}
       return count;
     },
-    refetchInterval: isMember ? 8000 : false,
+    refetchInterval: isMember ? 60000 : false,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: isMember,
   });
 }

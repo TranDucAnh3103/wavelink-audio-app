@@ -36,6 +36,10 @@ type User struct {
 	Role         string     `json:"role" gorm:"size:20;default:'USER';not null"`
 	Membership   string     `json:"membership" gorm:"size:20;default:'FREE';not null"`
 	VipExpiresAt *time.Time `json:"vipExpiresAt,omitempty" gorm:"column:vip_expires_at"`
+	IsBanned     bool       `json:"isBanned" gorm:"column:is_banned;default:false;not null;index"`
+	BanReason    string     `json:"banReason,omitempty" gorm:"column:ban_reason;size:255"`
+	BannedAt     *time.Time `json:"bannedAt,omitempty" gorm:"column:banned_at"`
+	LastLoginAt  *time.Time `json:"lastLoginAt,omitempty" gorm:"column:last_login_at"`
 	CreatedAt    time.Time  `json:"createdAt"`
 	UpdatedAt    time.Time  `json:"updatedAt"`
 }
@@ -62,27 +66,27 @@ type Tag struct {
 
 // Audio Entity (YouTube Video)
 type Audio struct {
-	ID                   uint           `json:"id" gorm:"primaryKey"`
-	YoutubeVideoID       string         `json:"youtubeVideoId" gorm:"column:youtube_video_id;size:20;uniqueIndex;not null"`
-	YoutubeURL           string         `json:"youtubeUrl" gorm:"column:youtube_url;size:500;not null"`
-	Title                string         `json:"title" gorm:"size:255;not null;index"`
-	Description          string         `json:"description" gorm:"type:text"`
-	Author               string         `json:"author" gorm:"column:author_name;size:150"`
-	ChannelID            string         `json:"channelId" gorm:"column:channel_id;size:100"`
-	ThumbnailURL         string         `json:"thumbnailUrl" gorm:"column:thumbnail_url;size:500"`
-	TotalDurationSeconds int            `json:"totalDurationSeconds" gorm:"column:duration_seconds;default:0;not null"`
-	CategoryID           uint           `json:"categoryId" gorm:"column:category_id;index"`
-	Category             *Category      `json:"category,omitempty" gorm:"foreignKey:CategoryID"`
-	Status               string         `json:"status" gorm:"size:20;default:'ACTIVE';index"`
-	StreamStatus         string         `json:"streamStatus" gorm:"column:stream_status;size:20;default:'UNKNOWN';index"`
-	StreamCheckedAt      *time.Time     `json:"streamCheckedAt,omitempty" gorm:"column:stream_checked_at"`
-	AudioMime            string         `json:"audioMime,omitempty" gorm:"column:audio_mime;size:100"`
-	IsVIPOnly            bool           `json:"isVipOnly" gorm:"column:is_vip_only;default:false"`
-	FreeEpisodesCount    *int           `json:"freeEpisodesCount" gorm:"column:free_episodes_count;default:1"`
-	CreatedBy            uint           `json:"createdBy" gorm:"column:created_by;index;default:0"`
-	CreatedAt            time.Time      `json:"createdAt"`
-	UpdatedAt            time.Time      `json:"updatedAt"`
-	
+	ID                   uint       `json:"id" gorm:"primaryKey"`
+	YoutubeVideoID       string     `json:"youtubeVideoId" gorm:"column:youtube_video_id;size:20;uniqueIndex;not null"`
+	YoutubeURL           string     `json:"youtubeUrl" gorm:"column:youtube_url;size:500;not null"`
+	Title                string     `json:"title" gorm:"size:255;not null;index"`
+	Description          string     `json:"description" gorm:"type:text"`
+	Author               string     `json:"author" gorm:"column:author_name;size:150"`
+	ChannelID            string     `json:"channelId" gorm:"column:channel_id;size:100"`
+	ThumbnailURL         string     `json:"thumbnailUrl" gorm:"column:thumbnail_url;size:500"`
+	TotalDurationSeconds int        `json:"totalDurationSeconds" gorm:"column:duration_seconds;default:0;not null"`
+	CategoryID           uint       `json:"categoryId" gorm:"column:category_id;index"`
+	Category             *Category  `json:"category,omitempty" gorm:"foreignKey:CategoryID"`
+	Status               string     `json:"status" gorm:"size:20;default:'ACTIVE';index"`
+	StreamStatus         string     `json:"streamStatus" gorm:"column:stream_status;size:20;default:'UNKNOWN';index"`
+	StreamCheckedAt      *time.Time `json:"streamCheckedAt,omitempty" gorm:"column:stream_checked_at"`
+	AudioMime            string     `json:"audioMime,omitempty" gorm:"column:audio_mime;size:100"`
+	IsVIPOnly            bool       `json:"isVipOnly" gorm:"column:is_vip_only;default:false"`
+	FreeEpisodesCount    *int       `json:"freeEpisodesCount" gorm:"column:free_episodes_count;default:1"`
+	CreatedBy            uint       `json:"createdBy" gorm:"column:created_by;index;default:0"`
+	CreatedAt            time.Time  `json:"createdAt"`
+	UpdatedAt            time.Time  `json:"updatedAt"`
+
 	// Relations
 	Tags     []Tag     `json:"-" gorm:"many2many:audio_tags;constraint:OnDelete:CASCADE;"`
 	Episodes []Episode `json:"episodes,omitempty" gorm:"foreignKey:AudioID;constraint:OnDelete:CASCADE;"`
@@ -225,6 +229,47 @@ type CommunityMessage struct {
 	CreatedAt     time.Time `json:"createdAt" gorm:"index"`
 }
 
+// SupportTicket stores refund requests and user complaints/DMCA reports for admin tracking.
+type SupportTicket struct {
+	ID         uint       `json:"id" gorm:"primaryKey"`
+	UserID     uint       `json:"userId" gorm:"column:user_id;index;not null"`
+	Username   string     `json:"username" gorm:"size:100;not null"`
+	Kind       string     `json:"kind" gorm:"size:30;index;not null"` // REFUND | COMPLAINT
+	Category   string     `json:"category" gorm:"size:80"`
+	OrderCode  string     `json:"orderCode,omitempty" gorm:"column:order_code;size:50;index"`
+	BankInfo   string     `json:"bankInfo,omitempty" gorm:"column:bank_info;size:255"`
+	Subject    string     `json:"subject" gorm:"size:200;not null"`
+	Content    string     `json:"content" gorm:"type:text;not null"`
+	Status     string     `json:"status" gorm:"size:30;default:'PENDING';index;not null"` // PENDING | IN_PROGRESS | RESOLVED | REJECTED
+	AdminNote  string     `json:"adminNote,omitempty" gorm:"column:admin_note;type:text"`
+	ResolvedBy uint       `json:"resolvedBy,omitempty" gorm:"column:resolved_by"`
+	ResolvedAt *time.Time `json:"resolvedAt,omitempty" gorm:"column:resolved_at"`
+	CreatedAt  time.Time  `json:"createdAt" gorm:"index"`
+	UpdatedAt  time.Time  `json:"updatedAt"`
+}
+
+// AdminAuditLog records state-changing admin actions for traceability.
+type AdminAuditLog struct {
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	AdminID    uint      `json:"adminId" gorm:"column:admin_id;index;not null"`
+	AdminName  string    `json:"adminName" gorm:"column:admin_name;size:100;not null"`
+	Action     string    `json:"action" gorm:"size:60;index;not null"`
+	TargetType string    `json:"targetType" gorm:"column:target_type;size:40;index"`
+	TargetID   string    `json:"targetId" gorm:"column:target_id;size:60"`
+	TargetName string    `json:"targetName" gorm:"column:target_name;size:200"`
+	Detail     string    `json:"detail" gorm:"type:text"`
+	CreatedAt  time.Time `json:"createdAt" gorm:"index"`
+}
+
+// SiteConfig stores dynamic operational settings managed by admins in system_settings.
+type SiteConfig struct {
+	FreeImportDailyLimit int    `json:"freeImportDailyLimit"`
+	AllowUserImport      bool   `json:"allowUserImport"`
+	AllowGuestChat       bool   `json:"allowGuestChat"`
+	MaintenanceMode      bool   `json:"maintenanceMode"`
+	MaintenanceMessage   string `json:"maintenanceMessage"`
+}
+
 // Leaderboard DTOs
 type TopListener struct {
 	Rank           int     `json:"rank"`
@@ -266,6 +311,8 @@ func (NotificationPreference) TableName() string { return "notification_preferen
 func (MembershipOrder) TableName() string        { return "membership_orders" }
 func (SystemSetting) TableName() string          { return "system_settings" }
 func (CommunityMessage) TableName() string       { return "community_messages" }
+func (SupportTicket) TableName() string          { return "support_tickets" }
+func (AdminAuditLog) TableName() string          { return "admin_audit_logs" }
 
 // Consolidated History Item for Profile
 type ConsolidatedHistoryItem struct {

@@ -2,6 +2,7 @@ package audio
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -22,16 +23,40 @@ import (
 )
 
 type Handler struct {
-	db              *gorm.DB
-	streamTokens    *stream.TokenManager
-	streamCache     *stream.URLCache
-	streamExtractor external.StreamExtractor
-	streamBaseURL   string
-	streamTokenTTL  time.Duration
+	db                *gorm.DB
+	streamTokens      *stream.TokenManager
+	streamCache       *stream.URLCache
+	streamExtractor   external.StreamExtractor
+	streamBaseURL     string
+	streamTokenTTL    time.Duration
+	onTaxonomyChanged func()
 }
 
 func NewHandler(db *gorm.DB) *Handler {
 	return &Handler{db: db}
+}
+
+// SetOnTaxonomyChanged registers a callback to invalidate category/tag caches when audio tags change.
+func (h *Handler) SetOnTaxonomyChanged(fn func()) {
+	h.onTaxonomyChanged = fn
+}
+
+func (h *Handler) notifyTaxonomyChanged() {
+	if h.onTaxonomyChanged != nil {
+		h.onTaxonomyChanged()
+	}
+}
+
+func (h *Handler) loadSiteConfig() domain.SiteConfig {
+	cfg := logic.DefaultSiteConfig()
+	var s domain.SystemSetting
+	if err := h.db.Session(&gorm.Session{}).Where("`key` = ?", "site_config").Take(&s).Error; err == nil && s.Value != "" {
+		_ = json.Unmarshal([]byte(s.Value), &cfg)
+	}
+	if cfg.FreeImportDailyLimit <= 0 {
+		cfg.FreeImportDailyLimit = logic.MaxFreeImportsPerDay
+	}
+	return cfg
 }
 
 // ConfigureStream wires direct audio stream token issuing, cache warming, and probing.
@@ -63,14 +88,18 @@ type ImportYouTubeRequest struct {
 }
 
 type UpdateAudioRequest struct {
-	Title             string   `json:"title"`
-	Author            string   `json:"author"`
-	Description       string   `json:"description"`
-	CategoryID        uint     `json:"categoryId"`
-	Tags              []string `json:"tags"`
-	Status            string   `json:"status"`
-	IsVIPOnly         *bool    `json:"isVipOnly"`
-	FreeEpisodesCount *int     `json:"freeEpisodesCount"`
+	Title                string   `json:"title"`
+	Author               string   `json:"author"`
+	Description          string   `json:"description"`
+	CategoryID           uint     `json:"categoryId"`
+	Tags                 []string `json:"tags"`
+	Status               string   `json:"status"`
+	IsVIPOnly            *bool    `json:"isVipOnly"`
+	FreeEpisodesCount    *int     `json:"freeEpisodesCount"`
+	YoutubeURL           string   `json:"youtubeUrl"`
+	YoutubeVideoID       string   `json:"youtubeVideoId"`
+	ThumbnailURL         string   `json:"thumbnailUrl"`
+	TotalDurationSeconds *int     `json:"totalDurationSeconds"`
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -102,7 +131,9 @@ func (h *Handler) ListAudios(c *gin.Context) {
 	pageStr := strings.TrimSpace(c.Query("page"))
 	limitStr := strings.TrimSpace(c.Query("limit"))
 	isAll := c.Query("all") == "true" || limitStr == "all" || limitStr == "0" || limitStr == "-1"
-	isLite := c.Query("fields") == "lite"
+	fieldsMode := c.Query("fields")
+	isCatalog := fieldsMode == "catalog"
+	isLite := fieldsMode == "lite" || isCatalog
 
 	page := 1
 	if pageStr != "" {
@@ -127,7 +158,17 @@ func (h *Handler) ListAudios(c *gin.Context) {
 		hasPagination = true
 	}
 
-	query := h.db.Model(&domain.Audio{}).Preload("Category").Preload("Tags")
+	var query *gorm.DB
+	if isCatalog {
+		query = h.db.Model(&domain.Audio{}).
+			Preload("Category").
+			Select("youtube_videos.id, youtube_videos.youtube_video_id, youtube_videos.youtube_url, youtube_videos.title, youtube_videos.author_name, youtube_videos.thumbnail_url, youtube_videos.duration_seconds, youtube_videos.category_id, youtube_videos.status, youtube_videos.is_vip_only, youtube_videos.created_at")
+	} else {
+		query = h.db.Model(&domain.Audio{}).Preload("Category").Preload("Tags")
+		if isLite {
+			query = query.Omit("description")
+		}
+	}
 
 	if search != "" {
 		likePattern := "%" + search + "%"
@@ -184,7 +225,12 @@ func (h *Handler) ListAudios(c *gin.Context) {
 
 	var audios []domain.Audio
 	if sortBy == "popular" {
-		query = query.Select("youtube_videos.*").
+		if isLite {
+			query = query.Select("youtube_videos.id, youtube_videos.youtube_video_id, youtube_videos.youtube_url, youtube_videos.title, youtube_videos.author_name, youtube_videos.channel_id, youtube_videos.thumbnail_url, youtube_videos.duration_seconds, youtube_videos.category_id, youtube_videos.status, youtube_videos.stream_status, youtube_videos.stream_checked_at, youtube_videos.audio_mime, youtube_videos.is_vip_only, youtube_videos.free_episodes_count, youtube_videos.created_by, youtube_videos.created_at, youtube_videos.updated_at")
+		} else {
+			query = query.Select("youtube_videos.*")
+		}
+		query = query.
 			Joins("LEFT JOIN (SELECT audio_id, COUNT(DISTINCT user_id) as v_cnt FROM listening_progress WHERE progress_percent >= 15.0 GROUP BY audio_id) vp ON vp.audio_id = youtube_videos.id").
 			Order("COALESCE(vp.v_cnt, 0) DESC, youtube_videos.created_at DESC")
 	} else {
@@ -225,10 +271,60 @@ func (h *Handler) ListAudios(c *gin.Context) {
 
 	audioIDs := lo.Map(audios, func(a domain.Audio, _ int) uint { return a.ID })
 
-	// Tối ưu N+1: Lấy danh sách episodes theo batch
-	var allEpisodes []domain.Episode
-	h.db.Where("audio_id IN ?", audioIDs).Order("episode_number ASC").Find(&allEpisodes)
-	episodesByAudio := lo.GroupBy(allEpisodes, func(ep domain.Episode) uint { return ep.AudioID })
+	if isCatalog {
+		type epCountRow struct {
+			AudioID uint `gorm:"column:audio_id"`
+			Total   int  `gorm:"column:total"`
+		}
+		var epCounts []epCountRow
+		h.db.Model(&domain.Episode{}).
+			Select("audio_id, COUNT(*) as total").
+			Where("audio_id IN ?", audioIDs).
+			Group("audio_id").
+			Scan(&epCounts)
+		epCountMap := make(map[uint]int, len(epCounts))
+		for _, r := range epCounts {
+			epCountMap[r.AudioID] = r.Total
+		}
+
+		type catalogViewStat struct {
+			AudioID uint  `gorm:"column:audio_id"`
+			Views   int64 `gorm:"column:views"`
+		}
+		var viewStats []catalogViewStat
+		h.db.Model(&domain.ListeningProgress{}).
+			Select("audio_id, COUNT(DISTINCT user_id) as views").
+			Where("audio_id IN ? AND progress_percent >= 15.0", audioIDs).
+			Group("audio_id").
+			Scan(&viewStats)
+		viewMap := make(map[uint]int64, len(viewStats))
+		for _, vs := range viewStats {
+			viewMap[vs.AudioID] = vs.Views
+		}
+
+		result := make([]domain.Audio, 0, len(audios))
+		for _, a := range audios {
+			a.ViewCount = viewMap[a.ID]
+			if a.Category != nil {
+				a.CategoryName = a.Category.Name
+			}
+			a.FormattedDuration = logic.FormatDuration(a.TotalDurationSeconds)
+			a.TotalEpisodes = epCountMap[a.ID]
+			if a.TotalEpisodes <= 0 {
+				a.TotalEpisodes = 1
+			}
+			result = append(result, a)
+		}
+
+		c.Header("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
+		response.OK(c, result, gin.H{
+			"total":      totalCount,
+			"page":       page,
+			"limit":      effLimit,
+			"totalPages": totalPages,
+		})
+		return
+	}
 
 	// Tối ưu N+1: Lấy danh sách favorites theo batch
 	favMap := make(map[uint]bool)
@@ -248,6 +344,78 @@ func (h *Handler) ListAudios(c *gin.Context) {
 			Find(&progs)
 	}
 	progressByAudio := lo.GroupBy(progs, func(p domain.ListeningProgress) uint { return p.AudioID })
+
+	// Tối ưu N+1 & Payload: Khi fields=lite chỉ đếm tổng tập + tải đúng tập đang nghe/tập kế tiếp/tập 1
+	var allEpisodes []domain.Episode
+	epCountMap := make(map[uint]int, len(audioIDs))
+	if isLite {
+		type epCountRow struct {
+			AudioID uint `gorm:"column:audio_id"`
+			Total   int  `gorm:"column:total"`
+		}
+		var epCounts []epCountRow
+		h.db.Model(&domain.Episode{}).
+			Select("audio_id, COUNT(*) as total").
+			Where("audio_id IN ?", audioIDs).
+			Group("audio_id").
+			Scan(&epCounts)
+		for _, r := range epCounts {
+			epCountMap[r.AudioID] = r.Total
+		}
+
+		progEpIDs := make([]uint, 0, len(progs))
+		seenProgEp := make(map[uint]bool, len(progs))
+		for _, p := range progs {
+			if p.EpisodeID > 0 && !seenProgEp[p.EpisodeID] {
+				seenProgEp[p.EpisodeID] = true
+				progEpIDs = append(progEpIDs, p.EpisodeID)
+			}
+		}
+
+		type epNumRow struct {
+			ID            uint `gorm:"column:id"`
+			AudioID       uint `gorm:"column:audio_id"`
+			EpisodeNumber int  `gorm:"column:episode_number"`
+		}
+		progEpNums := make(map[uint]epNumRow, len(progEpIDs))
+		if len(progEpIDs) > 0 {
+			var numRows []epNumRow
+			h.db.Model(&domain.Episode{}).
+				Select("id, audio_id, episode_number").
+				Where("id IN ?", progEpIDs).
+				Scan(&numRows)
+			for _, nr := range numRows {
+				progEpNums[nr.ID] = nr
+			}
+		}
+
+		conds := []string{"(audio_id IN ? AND episode_number = 1)"}
+		args := []interface{}{audioIDs}
+		if len(progEpIDs) > 0 {
+			conds = append(conds, "id IN ?")
+			args = append(args, progEpIDs)
+		}
+		seenNext := make(map[string]bool)
+		for _, p := range progs {
+			if p.Completed || p.ProgressPercent >= logic.CompletionThresholdPercent {
+				if nr, ok := progEpNums[p.EpisodeID]; ok && nr.EpisodeNumber > 0 {
+					nextNum := nr.EpisodeNumber + 1
+					key := fmt.Sprintf("%d:%d", p.AudioID, nextNum)
+					if !seenNext[key] {
+						seenNext[key] = true
+						conds = append(conds, "(audio_id = ? AND episode_number = ?)")
+						args = append(args, p.AudioID, nextNum)
+					}
+				}
+			}
+		}
+		h.db.Where(strings.Join(conds, " OR "), args...).
+			Order("episode_number ASC").
+			Find(&allEpisodes)
+	} else {
+		h.db.Where("audio_id IN ?", audioIDs).Order("episode_number ASC").Find(&allEpisodes)
+	}
+	episodesByAudio := lo.GroupBy(allEpisodes, func(ep domain.Episode) uint { return ep.AudioID })
 
 	// Lấy số lượt xem (View Count): 1 user nghe >= 15% của 1 tập = 1 view duy nhất cho audio, không cộng dồn của 1 user
 	type AudioViewStat struct {
@@ -292,6 +460,11 @@ func (h *Handler) ListAudios(c *gin.Context) {
 		}
 		a.Episodes = epsForAudio
 		a.TotalEpisodes = len(epsForAudio)
+		if isLite {
+			if cnt := epCountMap[a.ID]; cnt > a.TotalEpisodes {
+				a.TotalEpisodes = cnt
+			}
+		}
 		fullEpisodes := epsForAudio
 
 		// Tính Resume State chuẩn xác theo UpdatedAt mới nhất
@@ -447,9 +620,10 @@ func (h *Handler) GetImportQuota(c *gin.Context) {
 		Where("created_by = ? AND created_at >= ?", currentUser.ID, startOfDay).
 		Count(&todayCount)
 
-	canImport, reason := logic.CanImportYouTube(currentUser, int(todayCount))
+	siteCfg := h.loadSiteConfig()
+	canImport, reason := logic.CanImportYouTubeWithConfig(currentUser, int(todayCount), siteCfg)
 
-	remaining := logic.MaxFreeImportsPerDay - int(todayCount)
+	remaining := siteCfg.FreeImportDailyLimit - int(todayCount)
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -461,7 +635,7 @@ func (h *Handler) GetImportQuota(c *gin.Context) {
 		"isGuest":          false,
 		"isVipOrAdmin":     isVipOrAdmin,
 		"todayImportCount": todayCount,
-		"maxImportsPerDay": logic.MaxFreeImportsPerDay,
+		"maxImportsPerDay": siteCfg.FreeImportDailyLimit,
 		"remaining":        remaining,
 		"canImport":        canImport,
 		"reason":           reason,
@@ -481,7 +655,8 @@ func (h *Handler) ImportYouTube(c *gin.Context) {
 		Where("created_by = ? AND created_at >= ?", currentUser.ID, startOfDay).
 		Count(&todayCount)
 
-	if can, msg := logic.CanImportYouTube(currentUser, int(todayCount)); !can {
+	siteCfg := h.loadSiteConfig()
+	if can, msg := logic.CanImportYouTubeWithConfig(currentUser, int(todayCount), siteCfg); !can {
 		response.Forbidden(c, msg)
 		return
 	}
@@ -645,6 +820,7 @@ func (h *Handler) ImportYouTube(c *gin.Context) {
 	}
 	notification.CreateSafeNotification(h.db, newNotif)
 
+	h.notifyTaxonomyChanged()
 	h.probeStreamAsync(newAudio.ID, newAudio.YoutubeVideoID)
 
 	response.Created(c, gin.H{
@@ -697,6 +873,32 @@ func (h *Handler) UpdateAudio(c *gin.Context) {
 	}
 	if req.FreeEpisodesCount != nil {
 		updates["free_episodes_count"] = *req.FreeEpisodesCount
+	}
+	if userRole == domain.RoleAdmin {
+		if strings.TrimSpace(req.ThumbnailURL) != "" {
+			updates["thumbnail_url"] = strings.TrimSpace(req.ThumbnailURL)
+		}
+		if req.TotalDurationSeconds != nil && *req.TotalDurationSeconds > 0 {
+			updates["duration_seconds"] = *req.TotalDurationSeconds
+		}
+		rawSource := strings.TrimSpace(req.YoutubeURL)
+		if rawSource == "" {
+			rawSource = strings.TrimSpace(req.YoutubeVideoID)
+		}
+		if rawSource != "" {
+			vidRes := logic.ExtractYouTubeVideoID(rawSource)
+			if vidRes.IsError() {
+				response.BadRequest(c, vidRes.Error().Error())
+				return
+			}
+			vid := vidRes.MustGet()
+			updates["youtube_video_id"] = vid
+			updates["youtube_url"] = fmt.Sprintf("https://www.youtube.com/watch?v=%s", vid)
+			updates["stream_status"] = domain.StreamStatusUnknown
+			if h.streamCache != nil && audio.YoutubeVideoID != vid {
+				h.streamCache.Invalidate(audio.YoutubeVideoID)
+			}
+		}
 	}
 
 	// Đồng bộ trạng thái VIP và số tập miễn phí của các tập
@@ -758,6 +960,7 @@ func (h *Handler) UpdateAudio(c *gin.Context) {
 			}
 		}
 		_ = h.db.Model(&audio).Association("Tags").Replace(tagsToAdd)
+		h.notifyTaxonomyChanged()
 	}
 
 	h.db.Preload("Category").Preload("Tags").First(&audio, id)

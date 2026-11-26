@@ -63,6 +63,7 @@ import {
   syncAudioToYouTubeTimestamp,
 } from '@/lib/youtubeSync';
 import { resumeAudioContextOnGesture } from '@/lib/backgroundAudioKeeper';
+import { peekLibraryReturnState } from '@/lib/libraryNavigationState';
 import { AudioItem } from '@/types';
 
 export interface PlayerPageProps {
@@ -76,7 +77,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   const queryClient = useQueryClient();
   const { user, isLive } = useAuthStore();
 
-  const { data: audio, isLoading } = useAudio(id, initialAudio);
+  const { data: fetchedAudio, isLoading, isError, refetch } = useAudio(id, initialAudio);
   const toggleFavoriteMutation = useToggleFavorite();
 
   const {
@@ -99,6 +100,30 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
     setSleepTimer,
     setScreenLocked,
   } = usePlayerStore();
+
+  const playingFallbackAudio =
+    currentAudio && id && String(currentAudio.id) === String(id) ? currentAudio : null;
+  const audio = fetchedAudio || playingFallbackAudio;
+
+  // Khi quay lại app từ khay ứng dụng / mạng vừa khôi phục, tự đồng bộ lại nếu dữ liệu bị lỗi hoặc chưa đầy đủ
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || !id) return;
+    const handleResumeSync = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (
+        typeof refetch === 'function' &&
+        (!fetchedAudio || isError || !fetchedAudio.episodes || fetchedAudio.episodes.length === 0)
+      ) {
+        void refetch();
+      }
+    };
+    document.addEventListener('visibilitychange', handleResumeSync);
+    window.addEventListener('online', handleResumeSync);
+    return () => {
+      document.removeEventListener('visibilitychange', handleResumeSync);
+      window.removeEventListener('online', handleResumeSync);
+    };
+  }, [id, fetchedAudio, isError, refetch]);
 
   const [isSpeedModalOpen, setIsSpeedModalOpen] = useState(false);
   const [isSleepModalOpen, setIsSleepModalOpen] = useState(false);
@@ -385,6 +410,37 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   }
 
   if (!audio) {
+    if (isError) {
+      return (
+        <div className="w-full max-w-lg mx-auto flex flex-col items-center justify-center p-10 text-center gap-4 fade-in-comic">
+          <div className="w-16 h-16 rounded-2xl border-2 border-[#111113] bg-[#FFE600] text-[#111113] flex items-center justify-center shadow-comic">
+            <RefreshCw className="w-8 h-8" strokeWidth={2.25} />
+          </div>
+          <h3 className="font-extrabold text-lg text-[var(--ink-primary)] uppercase">
+            Mất kết nối tạm thời khi tải audio
+          </h3>
+          <div className="flex items-center gap-2.5 flex-wrap justify-center">
+            <button
+              type="button"
+              onClick={() => typeof refetch === 'function' && void refetch()}
+              className="btn-comic btn-comic-primary text-xs"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>Thử tải lại</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/library')}
+              className="btn-comic text-xs"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Về Thư Viện</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="w-full max-w-lg mx-auto flex flex-col items-center justify-center p-10 text-center gap-4 fade-in-comic">
         <div className="w-16 h-16 rounded-2xl border-2 border-[#111113] bg-[#FFE600] text-[#111113] flex items-center justify-center shadow-comic">
@@ -680,7 +736,14 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
       <div className="flex items-center justify-between gap-2 pt-2">
         <button
           type="button"
-          onClick={() => navigate(-1)}
+          onClick={() => {
+            if (typeof window !== 'undefined' && window.history.length > 1) {
+              navigate(-1);
+            } else {
+              const saved = peekLibraryReturnState();
+              navigate(saved && saved.page > 1 ? `/library?page=${saved.page}` : '/library');
+            }
+          }}
           className="btn-comic text-xs h-9 px-3 whitespace-nowrap shrink-0"
           aria-label="Quay lại"
         >

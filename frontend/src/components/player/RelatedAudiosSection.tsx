@@ -27,11 +27,40 @@ const FILTER_OPTIONS: Array<{ mode: RelatedFilterMode; label: string }> = [
 
 export const RelatedAudiosSection: React.FC<RelatedAudiosSectionProps> = ({ currentAudio }) => {
   const navigate = useNavigate();
-  const { data: audios = [] } = useAudios();
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const triggerRef = useRef<HTMLDivElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
+  const [isNearViewport, setIsNearViewport] = useState<boolean>(
+    () => typeof IntersectionObserver === 'undefined'
+  );
   const [activeFilter, setActiveFilter] = useState<RelatedFilterMode>('all');
   const [visibleCount, setVisibleCount] = useState<number>(RELATED_BATCH_SIZE);
+
+  useEffect(() => {
+    if (isNearViewport || typeof IntersectionObserver === 'undefined') return;
+    const target = triggerRef.current;
+    if (!target) {
+      setIsNearViewport(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setIsNearViewport(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '300px 0px' }
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [isNearViewport]);
+
+  const { data: audios = [] } = useAudios(
+    { page: 1, limit: 60 },
+    { enabled: isNearViewport }
+  );
 
   const allMatches = useMemo(
     () => getRelatedAudios(currentAudio, audios),
@@ -82,6 +111,10 @@ export const RelatedAudiosSection: React.FC<RelatedAudiosSectionProps> = ({ curr
       }
     }
   }, [activeFilter]);
+
+  if (!isNearViewport) {
+    return <div ref={triggerRef} className="h-4 w-full" aria-hidden="true" />;
+  }
 
   if (allMatches.length === 0) {
     return null;
@@ -135,6 +168,7 @@ export const RelatedAudiosSection: React.FC<RelatedAudiosSectionProps> = ({ curr
 
   return (
     <section
+      ref={sectionRef}
       aria-label="Audio liên quan"
       data-testid="related-audios-section"
       className="card-comic p-4 md:p-5 flex flex-col gap-3 fade-in-comic"
@@ -241,6 +275,8 @@ export const RelatedAudiosSection: React.FC<RelatedAudiosSectionProps> = ({ curr
                 <img
                   src={item.thumbnailUrl || '/wavelink-icon.png'}
                   alt={item.title}
+                  loading="lazy"
+                  decoding="async"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent" />

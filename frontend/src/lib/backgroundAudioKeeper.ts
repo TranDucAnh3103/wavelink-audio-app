@@ -23,6 +23,25 @@ let wakeLockSentinel: any = null;
 // Visibility change handler reference để cleanup đúng cách
 let visibilityHandler: (() => void) | null = null;
 let swHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let currentEngineMode: 'stream' | 'youtube' = 'youtube';
+let currentKeepScreenAwake = false;
+
+export interface BackgroundAudioOptions {
+  engine?: 'stream' | 'youtube';
+  keepScreenAwake?: boolean;
+}
+
+function shouldKeepScreenAwake(explicit?: boolean): boolean {
+  if (explicit === true) return true;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      return localStorage.getItem('wavelink_keep_screen_awake') === 'true';
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
 
 /**
  * Tạo hoặc resume AudioContext với silent buffer loop.
@@ -220,8 +239,8 @@ function registerVisibilityHandler(): void {
       if (anchor && anchor.paused) {
         anchor.play().catch(() => {});
       }
-      // Reacquire WakeLock nếu đã bị release
-      if (!wakeLockSentinel) {
+      // Reacquire WakeLock only when explicitly enabled by user/options
+      if (shouldKeepScreenAwake(currentKeepScreenAwake) && !wakeLockSentinel) {
         acquireWakeLock();
       }
     }
@@ -251,47 +270,10 @@ export function primeAudioContextOnFirstGesture(): void {
   document.addEventListener('keydown', primeOnce, { once: true });
 }
 
-/**
- * Kích hoạt phiên phát âm thanh nền.
- * Gọi ngay khi bắt đầu phát audio.
- */
-export function startBackgroundAudio(): void {
-  if (typeof window === 'undefined') return;
-
-  cleanupLegacyAnchors();
-
-  const ctx = ensureAudioContext();
-  if (ctx) {
-    createSilentLoop(ctx);
-  }
-
-  createNativeAudioAnchor();
-  registerVisibilityHandler();
-  startSwHeartbeat();
-  acquireWakeLock();
-
-  isRunning = true;
-}
-
-/**
- * Dừng phiên phát âm thanh nền.
- * Gọi khi pause, close, hoặc sleep timer expired.
- */
-export function stopBackgroundAudio(): void {
-  isRunning = false;
-
+function teardownSilentKeepaliveNodes(): void {
   stopNativeAudioAnchor();
-  cleanupLegacyAnchors();
   stopSwHeartbeat();
-  releaseWakeLock();
 
-  // Cleanup visibility handler
-  if (visibilityHandler && typeof document !== 'undefined') {
-    document.removeEventListener('visibilitychange', visibilityHandler);
-    visibilityHandler = null;
-  }
-
-  // Dừng silent source
   if (silentSource) {
     try {
       silentSource.stop();
@@ -307,9 +289,65 @@ export function stopBackgroundAudio(): void {
     gainNode = null;
   }
 
-  // Suspend AudioContext (không close để có thể reuse)
   if (silentAudioCtx && silentAudioCtx.state !== 'closed') {
     silentAudioCtx.suspend().catch(() => {});
+  }
+}
+
+/**
+ * Kích hoạt phiên phát âm thanh nền.
+ * Gọi ngay khi bắt đầu phát audio.
+ */
+export function startBackgroundAudio(options?: BackgroundAudioOptions): void {
+  if (typeof window === 'undefined') return;
+
+  cleanupLegacyAnchors();
+  currentEngineMode = options?.engine ?? 'youtube';
+  currentKeepScreenAwake = shouldKeepScreenAwake(options?.keepScreenAwake);
+  isRunning = true;
+
+  if (currentKeepScreenAwake) {
+    acquireWakeLock();
+  } else {
+    void releaseWakeLock();
+  }
+
+  // Stream mode plays directly on native <audio>; skip battery-heavy silent audio loops & SW ping.
+  if (currentEngineMode === 'stream') {
+    teardownSilentKeepaliveNodes();
+    if (visibilityHandler && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', visibilityHandler);
+      visibilityHandler = null;
+    }
+    return;
+  }
+
+  const ctx = ensureAudioContext();
+  if (ctx) {
+    createSilentLoop(ctx);
+  }
+
+  createNativeAudioAnchor();
+  registerVisibilityHandler();
+  startSwHeartbeat();
+}
+
+/**
+ * Dừng phiên phát âm thanh nền.
+ * Gọi khi pause, close, hoặc sleep timer expired.
+ */
+export function stopBackgroundAudio(): void {
+  isRunning = false;
+  currentKeepScreenAwake = false;
+
+  cleanupLegacyAnchors();
+  teardownSilentKeepaliveNodes();
+  void releaseWakeLock();
+
+  // Cleanup visibility handler
+  if (visibilityHandler && typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', visibilityHandler);
+    visibilityHandler = null;
   }
 }
 

@@ -31,6 +31,7 @@ import { useCategories } from '@/hooks/useCategories';
 import { useTags } from '@/hooks/useTags';
 import { useDelayedFallback } from '@/hooks/useDelayedFallback';
 import { usePlayerStore } from '@/stores/playerStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '@/stores/authStore';
 import { HomeSkeleton } from '@/components/common/Skeletons';
 import { toast } from '@/components/ui/Toast';
@@ -39,14 +40,30 @@ import { groupAudiosIntoSeries, groupTopAuthors } from '@/lib/seriesGrouping';
 
 const GREETING_DISMISSED_SESSION_KEY = 'wavelink_hide_greeting_banner';
 const SERIES_BATCH_SIZE = 10;
+const HOME_AUDIO_BATCH_STEP = 36;
 
 export const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const { currentAudio: playingAudio, isPlaying, play, togglePlay } = usePlayerStore();
+  const { currentAudio: playingAudio, isPlaying, play, togglePlay } = usePlayerStore(
+    useShallow((s) => ({
+      currentAudio: s.currentAudio,
+      isPlaying: s.isPlaying,
+      play: s.play,
+      togglePlay: s.togglePlay,
+    }))
+  );
 
+  const [audioBatchLimit, setAudioBatchLimit] = useState<number>(HOME_AUDIO_BATCH_STEP);
   const { data: stats, isLoading: statsLoading } = useStats();
-  const { data: audios = [], isLoading: audiosLoading } = useAudios({ pageSize: 200 });
+  const { data: audios = [], isLoading: audiosLoading } = useAudios({
+    page: 1,
+    limit: audioBatchLimit,
+  });
+  const { data: catalogAudios = [] } = useAudios({
+    all: true,
+    fields: 'catalog',
+  });
   const { data: history = [] } = useRecentHistory();
   const { data: categories = [] } = useCategories();
   const { data: tags = [] } = useTags();
@@ -78,17 +95,18 @@ export const HomePage: React.FC = () => {
   const userName = user?.username || (user?.isGuest ? 'Khách Nghe Thử' : 'Độc Giả');
   const userRole = user?.role || 'GUEST';
 
-  // Top 3 phổ biến nhất: sắp xếp hoàn toàn theo lượt xem (viewCount giảm dần), không theo lượt tải mới nhất
+  // Top 3 phổ biến nhất: sắp xếp hoàn toàn theo lượt xem (viewCount giảm dần) trên toàn catalog
   const top3Audios = useMemo(() => {
-    if (!audios || audios.length === 0) return [];
-    return [...audios]
+    const src = catalogAudios.length > 0 ? catalogAudios : audios;
+    if (!src || src.length === 0) return [];
+    return [...src]
       .sort(
         (a, b) =>
           (b.viewCount || 0) - (a.viewCount || 0) ||
           (b.totalDurationSeconds || 0) - (a.totalDurationSeconds || 0)
       )
       .slice(0, 3);
-  }, [audios]);
+  }, [catalogAudios, audios]);
 
   useEffect(() => {
     if (heroIndex >= top3Audios.length && top3Audios.length > 0) {
@@ -99,6 +117,7 @@ export const HomePage: React.FC = () => {
   useEffect(() => {
     if (top3Audios.length <= 1 || isHovered) return;
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       setHeroIndex((prev) => (prev + 1) % top3Audios.length);
     }, 5000);
     return () => clearInterval(interval);
@@ -117,8 +136,9 @@ export const HomePage: React.FC = () => {
     return list;
   }, [audios, selectedCategory, homeTab]);
 
-  // Tự động gộp tất cả các bộ truyện nhiều phần có tên / tác giả trùng nhau
-  const groupedSeries = useMemo(() => groupAudiosIntoSeries(audios), [audios]);
+  // Tự động gộp tất cả các bộ truyện nhiều phần có tên (>10 ký tự có nghĩa) & tác giả trùng nhau trên toàn bộ catalog
+  const seriesSourceAudios = catalogAudios.length > 0 ? catalogAudios : audios;
+  const groupedSeries = useMemo(() => groupAudiosIntoSeries(seriesSourceAudios), [seriesSourceAudios]);
 
   useEffect(() => {
     setVisibleSeriesCount(SERIES_BATCH_SIZE);
@@ -142,13 +162,13 @@ export const HomePage: React.FC = () => {
 
   // Cày Xuyên Đêm: chọn các bộ có tổng thời lượng dài nhất, hiển thị hàng ngang lướt qua
   const marathonPicks = useMemo(() => {
-    if (!audios || audios.length === 0) return [];
-    const leadHeroId = audios.length > 3 ? top3Audios[0]?.id : undefined;
-    return [...audios]
+    if (!seriesSourceAudios || seriesSourceAudios.length === 0) return [];
+    const leadHeroId = seriesSourceAudios.length > 3 ? top3Audios[0]?.id : undefined;
+    return [...seriesSourceAudios]
       .filter((a) => (a.totalDurationSeconds || 0) > 0 && a.id !== leadHeroId)
       .sort((a, b) => (b.totalDurationSeconds || 0) - (a.totalDurationSeconds || 0))
       .slice(0, 12);
-  }, [audios, top3Audios]);
+  }, [seriesSourceAudios, top3Audios]);
 
   // Tổng hợp Tag phổ biến từ hook tags + tags thực tế gắn trong danh sách truyện
   const discoveryTags = useMemo(() => {
@@ -168,7 +188,7 @@ export const HomePage: React.FC = () => {
     return list.slice(0, 20);
   }, [tags, audios]);
 
-  const topAuthors = useMemo(() => groupTopAuthors(audios, 15), [audios]);
+  const topAuthors = useMemo(() => groupTopAuthors(seriesSourceAudios, 15), [seriesSourceAudios]);
 
   const isWaitingForInitialData = audios.length === 0 && (audiosLoading || statsLoading);
   const showSkeletonFallback = useDelayedFallback(isWaitingForInitialData, 180);
@@ -347,65 +367,67 @@ export const HomePage: React.FC = () => {
                   };
 
                   return (
-                    <div key={audio.id} className="w-full shrink-0 p-4 flex flex-col gap-3">
-                      <div className="flex gap-3.5">
-                        <div
-                          className="relative w-24 h-28 sm:w-28 sm:h-32 rounded-xl border-2 border-[var(--border-ink)] overflow-hidden shrink-0 bg-[#111113] shadow-comic-sm cursor-pointer group"
-                          onClick={() => navigate(`/player/${audio.id}`)}
+                    <div key={audio.id} className="w-full shrink-0 p-3.5 sm:p-4 flex flex-col gap-3">
+                      <div
+                        className="relative w-full aspect-[16/9] sm:aspect-[21/9] rounded-xl border-2 border-[var(--border-ink)] overflow-hidden bg-[#111113] shadow-comic-sm cursor-pointer group"
+                        onClick={() => navigate(`/player/${audio.id}`)}
+                      >
+                        <img
+                          src={audio.thumbnailUrl || '/wavelink-icon.png'}
+                          alt={audio.title}
+                          loading="eager"
+                          decoding="async"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+
+                        <span
+                          className={`absolute top-2 left-2 badge-comic ${
+                            idx === 0
+                              ? 'badge-comic-yellow'
+                              : idx === 1
+                                ? 'badge-comic-blue'
+                                : 'badge-comic-red'
+                          } text-[10px] py-0.5 px-2 font-black`}
                         >
-                          <img
-                            src={audio.thumbnailUrl || '/wavelink-icon.png'}
-                            alt={audio.title}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                          />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                          TOP #{idx + 1}
+                        </span>
 
-                          <span
-                            className={`absolute top-1.5 left-1.5 badge-comic ${
-                              idx === 0
-                                ? 'badge-comic-yellow'
-                                : idx === 1
-                                  ? 'badge-comic-blue'
-                                  : 'badge-comic-red'
-                            } text-[9px] py-0 px-1.5 font-black`}
-                          >
-                            TOP #{idx + 1}
+                        <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                          <span className="badge-comic badge-comic-purple text-[9px] py-0.5 px-2 font-bold flex items-center gap-1">
+                            <Eye className="w-2.5 h-2.5" strokeWidth={2.5} />
+                            {(audio.viewCount || 0).toLocaleString()} lượt nghe
                           </span>
+                          {(audio.isVIPOnly || audio.isVipOnly) && (
+                            <span className="badge-comic badge-comic-red text-[9px] py-0.5 px-2 font-bold">
+                              VIP
+                            </span>
+                          )}
+                        </div>
 
-                          <span className="absolute bottom-1.5 left-1.5 badge-comic badge-comic-white text-[8px] py-0 px-1.5 font-black">
+                        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between gap-2">
+                          <span className="badge-comic badge-comic-blue text-[9px] py-0.5 px-2 font-bold">
+                            {audio.categoryName || 'Chung'}
+                          </span>
+                          <span className="badge-comic badge-comic-white text-[9px] py-0.5 px-2 font-black">
                             TẬP {String(activeEp?.episodeNumber || 1).padStart(2, '0')}
                           </span>
                         </div>
+                      </div>
 
-                        <div className="flex flex-col justify-between min-w-0 flex-1">
-                          <div className="flex flex-col">
-                            <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
-                              <span className="badge-comic badge-comic-blue text-[9px] py-0 px-1.5 font-bold">
-                                {audio.categoryName || 'Chung'}
-                              </span>
-                              <span className="badge-comic badge-comic-purple text-[9px] py-0 px-1.5 font-bold flex items-center gap-1">
-                                <Eye className="w-2.5 h-2.5" strokeWidth={2.5} />
-                                {(audio.viewCount || 0).toLocaleString()} lượt nghe
-                              </span>
-                              {(audio.isVIPOnly || audio.isVipOnly) && (
-                                <span className="badge-comic badge-comic-red text-[9px] py-0 px-1.5 font-bold">
-                                  VIP
-                                </span>
-                              )}
-                            </div>
+                      <div className="flex flex-col gap-1.5 min-w-0">
+                        <h3
+                          className="font-extrabold text-sm sm:text-base text-[var(--ink-primary)] line-clamp-2 cursor-pointer hover:text-[#3A86FF] transition-colors leading-snug"
+                          onClick={() => navigate(`/player/${audio.id}`)}
+                        >
+                          {audio.title}
+                        </h3>
 
-                            <h3
-                              className="font-extrabold text-sm sm:text-base text-[var(--ink-primary)] line-clamp-2 cursor-pointer hover:text-[#3A86FF] transition-colors leading-snug"
-                              onClick={() => navigate(`/player/${audio.id}`)}
-                            >
-                              {audio.title}
-                            </h3>
-                            <span className="text-xs font-semibold text-[var(--ink-secondary)] truncate mt-1">
-                              Tác giả: {audio.author || 'Đang cập nhật'}
-                            </span>
-                          </div>
-
-                          <div className="flex items-center justify-between text-xs font-mono font-bold text-[var(--ink-secondary)] pt-1.5">
+                        <div className="flex items-center justify-between gap-2 text-xs text-[var(--ink-secondary)]">
+                          <span className="font-semibold truncate">
+                            Tác giả: {audio.author || 'Đang cập nhật'}
+                          </span>
+                          <div className="flex items-center gap-2 font-mono font-bold shrink-0">
                             <span>{progressPercent > 0 ? formattedPos : 'Khởi đầu'}</span>
                             {progressPercent > 0 && (
                               <span className="badge-comic badge-comic-yellow text-[9px] py-0 px-1.5 font-mono">
@@ -612,6 +634,8 @@ export const HomePage: React.FC = () => {
                   <img
                     src={audio.thumbnailUrl || '/wavelink-icon.png'}
                     alt={audio.title}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
@@ -662,6 +686,21 @@ export const HomePage: React.FC = () => {
             ))}
           </div>
         )}
+        {(stats?.totalAudios ?? 0) > audios.length && audios.length >= audioBatchLimit && (
+          <div className="flex justify-center pt-1">
+            <button
+              type="button"
+              data-testid="home-load-more-audios-btn"
+              onClick={() => setAudioBatchLimit((prev) => prev + HOME_AUDIO_BATCH_STEP)}
+              className="btn-comic text-xs py-2 px-4 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" strokeWidth={2.5} />
+              <span>
+                Tải thêm truyện ({audios.length}/{stats?.totalAudios})
+              </span>
+            </button>
+          </div>
+        )}
       </section>
 
       {/* 5. BỘ TRUYỆN NHIỀU PHẦN (Lấy tất cả bộ truyện cùng tên/tác giả, lướt ngang load 10 thẻ cùng lúc) */}
@@ -695,50 +734,50 @@ export const HomePage: React.FC = () => {
                     navigate(`/library?search=${encodeURIComponent(series.searchQuery)}`);
                   }
                 }}
-                className="w-[276px] sm:w-[300px] shrink-0 card-comic p-3 flex flex-col gap-2.5 card-comic-interactive cursor-pointer group bg-[var(--surface-card)]"
+                className="w-40 sm:w-44 shrink-0 flex flex-col gap-2 cursor-pointer group"
               >
-                <div className="flex gap-3 items-start">
-                  <div className="relative shrink-0 pr-1.5 pb-1.5">
-                    <div
-                      aria-hidden="true"
-                      className="absolute top-1.5 left-1.5 right-0 bottom-0 rounded-xl border-2 border-[var(--border-ink)] bg-[#FFE600]"
-                    />
+                <div className="relative pr-1.5 pb-1.5">
+                  <div
+                    aria-hidden="true"
+                    className="absolute top-1.5 left-1.5 right-0 bottom-0 rounded-2xl border-2 border-[var(--border-ink)] bg-[#FFE600]"
+                  />
+                  <div className="card-comic w-full aspect-[3/4] overflow-hidden relative card-comic-interactive">
                     <img
                       src={series.thumbnailUrl}
                       alt={series.seriesTitle}
-                      className="relative w-16 h-20 rounded-xl object-cover border-2 border-[var(--border-ink)] bg-[#111113] group-hover:-translate-y-0.5 transition-transform"
+                      loading="lazy"
+                      decoding="async"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
-                  </div>
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
 
-                  <div className="flex flex-col flex-1 min-w-0 gap-1">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="badge-comic badge-comic-purple text-[9px] py-0 px-1.5 font-black">
-                        {series.partCount} PHẦN
-                      </span>
-                      <span className="badge-comic badge-comic-yellow text-[9px] py-0 px-1.5 font-black">
-                        {series.totalEpisodes} TẬP
-                      </span>
-                    </div>
-                    <h3 className="font-extrabold text-xs sm:text-[13px] text-[var(--ink-primary)] line-clamp-2 leading-snug group-hover:text-[#3A86FF] transition-colors">
-                      {series.seriesTitle}
-                    </h3>
-                    <span className="text-[11px] font-semibold text-[var(--ink-muted)] truncate">
-                      {series.author}
+                    <span className="absolute top-1.5 left-1.5 badge-comic badge-comic-purple text-[8px] py-0 px-1.5 font-black">
+                      {series.partCount} PHẦN
+                    </span>
+
+                    <span className="absolute top-1.5 right-1.5 badge-comic badge-comic-yellow text-[8px] py-0 px-1.5 font-black text-[#111113]">
+                      {series.totalEpisodes} TẬP
+                    </span>
+
+                    <span className="absolute bottom-1.5 left-1.5 right-1.5 badge-comic badge-comic-blue text-[8px] py-0 px-1.5 truncate font-bold text-center justify-center">
+                      {series.totalDurationSeconds > 0
+                        ? formatTime(series.totalDurationSeconds)
+                        : series.categoryName || 'Chung'}
                     </span>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-[var(--border-ink)]/15 text-[11px]">
-                  <span className="font-mono font-bold text-[var(--ink-secondary)] flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-[#2A9D8F]" strokeWidth={2.5} />
-                    {series.totalDurationSeconds > 0
-                      ? formatTime(series.totalDurationSeconds)
-                      : `${series.totalEpisodes} tập`}
-                  </span>
-                  <span className="font-extrabold text-[#3A86FF] flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
-                    <span>Xem trọn bộ</span>
-                    <ChevronRight className="w-3.5 h-3.5" strokeWidth={2.5} />
-                  </span>
+                <div className="flex flex-col">
+                  <h3 className="font-extrabold text-xs sm:text-[13px] text-[var(--ink-primary)] line-clamp-2 leading-tight group-hover:text-[#3A86FF] transition-colors">
+                    {series.seriesTitle}
+                  </h3>
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-[var(--ink-muted)] truncate mt-0.5">
+                    <span className="truncate">{series.author}</span>
+                    <span className="text-[10px] font-extrabold text-[#3A86FF] shrink-0 ml-1 flex items-center">
+                      <span>Trọn bộ</span>
+                      <ChevronRight className="w-3 h-3" strokeWidth={2.5} />
+                    </span>
+                  </div>
                 </div>
               </div>
             ))}
@@ -815,36 +854,40 @@ export const HomePage: React.FC = () => {
               <div
                 key={`marathon-${audio.id}`}
                 onClick={() => navigate(`/player/${audio.id}`)}
-                className="w-[285px] sm:w-[320px] shrink-0 card-comic p-3 flex items-center gap-3 card-comic-interactive cursor-pointer group"
+                className="w-40 sm:w-44 shrink-0 flex flex-col gap-2 cursor-pointer group"
               >
-                <div className="relative w-20 h-20 rounded-xl border-2 border-[var(--border-ink)] overflow-hidden shrink-0 bg-[#111113]">
+                <div className="card-comic w-full aspect-[3/4] overflow-hidden relative card-comic-interactive">
                   <img
                     src={audio.thumbnailUrl || '/wavelink-icon.png'}
                     alt={audio.title}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
-                  <span className="absolute bottom-1 left-1 right-1 badge-comic badge-comic-yellow text-[8px] py-0 px-1 justify-center font-black">
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+
+                  <span className="absolute top-1.5 left-1.5 badge-comic badge-comic-green text-[8px] py-0 px-1.5 font-mono font-black flex items-center gap-0.5">
+                    <Clock className="w-2.5 h-2.5" strokeWidth={2.5} />
+                    {audio.formattedDuration || formatTime(audio.totalDurationSeconds || 0)}
+                  </span>
+
+                  <span className="absolute top-1.5 right-1.5 badge-comic badge-comic-yellow text-[8px] py-0 px-1.5 font-black text-[#111113]">
                     {audio.totalEpisodes || audio.episodes?.length || 1} TẬP
+                  </span>
+
+                  <span className="absolute bottom-1.5 left-1.5 right-1.5 badge-comic badge-comic-blue text-[8px] py-0 px-1.5 truncate font-bold text-center justify-center">
+                    {audio.categoryName || 'Chung'}
                   </span>
                 </div>
 
-                <div className="flex flex-col flex-1 min-w-0 gap-1">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="badge-comic badge-comic-green text-[9px] py-0 px-1.5 font-mono font-black">
-                      <Clock className="w-2.5 h-2.5" strokeWidth={2.5} />
-                      {audio.formattedDuration || formatTime(audio.totalDurationSeconds || 0)}
-                    </span>
-                    <span className="text-[10px] font-bold text-[var(--ink-muted)] truncate">
-                      {audio.categoryName || 'Chung'}
-                    </span>
-                  </div>
-                  <h3 className="font-extrabold text-xs sm:text-[13px] text-[var(--ink-primary)] line-clamp-2 leading-snug group-hover:text-[#3A86FF] transition-colors">
+                <div className="flex flex-col">
+                  <h3 className="font-extrabold text-xs sm:text-[13px] text-[var(--ink-primary)] line-clamp-2 leading-tight group-hover:text-[#3A86FF] transition-colors">
                     {audio.title}
                   </h3>
-                  <div className="flex items-center justify-between text-[11px] text-[var(--ink-secondary)]">
-                    <span className="truncate font-semibold">{audio.author || 'Official'}</span>
-                    <span className="font-mono font-bold text-[10px] shrink-0 flex items-center gap-1">
-                      <Eye className="w-3 h-3 text-[#8338EC]" strokeWidth={2.5} />
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-[var(--ink-muted)] truncate mt-0.5">
+                    <span className="truncate">{audio.author || 'Official'}</span>
+                    <span className="text-[10px] font-extrabold text-[var(--ink-secondary)] shrink-0 ml-1 flex items-center gap-0.5">
+                      <Eye className="w-2.5 h-2.5 text-[#8338EC]" strokeWidth={2.5} />
                       {(audio.viewCount || 0).toLocaleString()}
                     </span>
                   </div>
@@ -879,6 +922,8 @@ export const HomePage: React.FC = () => {
                 <img
                   src={author.sampleThumbnail}
                   alt={author.name}
+                  loading="lazy"
+                  decoding="async"
                   className="w-11 h-11 rounded-xl object-cover border-2 border-[var(--border-ink)] shrink-0"
                 />
                 <div className="flex flex-col min-w-0 flex-1">
@@ -933,34 +978,51 @@ export const HomePage: React.FC = () => {
         </div>
 
         {history && history.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
             {(showAllHistory ? history : history.slice(0, 3)).map((item) => (
               <div
                 key={`${item.audioId}-${item.episodeId}`}
-                className="card-comic-sm p-3 flex items-center justify-between gap-2.5 hover:bg-[var(--surface-elevated)] transition-all cursor-pointer"
+                className="flex flex-col gap-2 cursor-pointer group"
                 onClick={() => navigate(`/player/${item.audioId}`)}
               >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-9 h-9 rounded-lg border-2 border-[#111113] bg-[#FFE600] flex items-center justify-center text-[#111113] shrink-0 shadow-comic-sm">
-                    <History className="w-4 h-4" strokeWidth={2.5} />
-                  </div>
-                  <div className="flex flex-col min-w-0">
-                    <span className="font-extrabold text-xs text-[var(--ink-primary)] truncate leading-tight">
-                      {item.title || 'Truyện Audio'}
-                    </span>
-                    <span className="text-[11px] font-semibold text-[var(--ink-secondary)] truncate mt-0.5">
-                      {item.currentEpisodeTitle || item.episodeTitle || 'Tập 1'} · Mốc:{' '}
-                      {item.formattedPosition || '00:00:00'}
-                    </span>
-                  </div>
+                <div className="card-comic w-full aspect-[3/4] overflow-hidden relative card-comic-interactive">
+                  <img
+                    src={item.thumbnailUrl || '/wavelink-icon.png'}
+                    alt={item.title || 'Truyện Audio'}
+                    loading="lazy"
+                    decoding="async"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src = '/wavelink-icon.png';
+                    }}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+
+                  <span className="absolute top-1.5 left-1.5 badge-comic badge-comic-yellow text-[8px] py-0 px-1.5 font-black text-[#111113]">
+                    {item.currentEpisodeTitle || item.episodeTitle || 'Tập 1'}
+                  </span>
+
+                  <button
+                    type="button"
+                    className="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg border-2 border-[#111113] bg-[#3A86FF] text-white flex items-center justify-center shadow-comic-sm group-hover:scale-105 cursor-pointer"
+                    aria-label="Phát"
+                  >
+                    <Play className="w-3 h-3 fill-current ml-0.5" strokeWidth={2.5} />
+                  </button>
+
+                  <span className="absolute bottom-1.5 left-1.5 right-1.5 badge-comic badge-comic-blue text-[8px] py-0 px-1.5 truncate font-mono font-bold text-center justify-center">
+                    Mốc: {item.formattedPosition || '00:00:00'}
+                  </span>
                 </div>
-                <button
-                  type="button"
-                  className="w-8 h-8 rounded-lg border-2 border-[#111113] bg-[#3A86FF] text-white flex items-center justify-center shadow-comic-sm hover:scale-105 shrink-0 cursor-pointer"
-                  aria-label="Phát"
-                >
-                  <Play className="w-3.5 h-3.5 fill-current ml-0.5" strokeWidth={2.5} />
-                </button>
+
+                <div className="flex flex-col">
+                  <h3 className="font-extrabold text-xs sm:text-[13px] text-[var(--ink-primary)] line-clamp-2 leading-tight group-hover:text-[#3A86FF] transition-colors">
+                    {item.title || 'Truyện Audio'}
+                  </h3>
+                  <span className="text-[11px] font-semibold text-[var(--ink-secondary)] truncate mt-0.5">
+                    {item.currentEpisodeTitle || item.episodeTitle || 'Tập 1'} · {item.formattedPosition || '00:00:00'}
+                  </span>
+                </div>
               </div>
             ))}
           </div>

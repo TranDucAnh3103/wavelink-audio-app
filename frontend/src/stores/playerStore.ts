@@ -48,6 +48,7 @@ let currentPlayerUserId: number | string | null = null;
 let isAdvancingEpisode = false;
 let lastLocalSaveTs = 0;
 let lastStreamMediaSessionTs = 0;
+let lastHtmlTimeUiUpdateAt = 0;
 let ytTrackSwitchUntil = 0;
 
 export function setCurrentPlayerUserId(userId?: number | string | null) {
@@ -367,7 +368,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         playbackRate: state.playbackRate || 1.0,
       });
       startPolling();
-      startBackgroundAudio();
+      startBackgroundAudio({ engine: get().activeEngine === 'stream' ? 'stream' : 'youtube' });
       startMediaSessionKeeper(onWorkerMediaTick);
     }
   },
@@ -574,7 +575,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
       startPolling();
       startHeartbeat();
-      startBackgroundAudio();
+      startBackgroundAudio({ engine: get().activeEngine === 'stream' ? 'stream' : 'youtube' });
       startMediaSessionKeeper(onWorkerMediaTick);
     }
 
@@ -626,7 +627,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (nextPlaying) {
       startPolling();
       startHeartbeat();
-      startBackgroundAudio();
+      startBackgroundAudio({ engine: get().activeEngine === 'stream' ? 'stream' : 'youtube' });
       startMediaSessionKeeper(onWorkerMediaTick);
     } else {
       saveCurrentProgress();
@@ -687,7 +688,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ isPlaying: true, isExplicitlyPaused: false });
     startPolling();
     startHeartbeat();
-    startBackgroundAudio();
+    startBackgroundAudio({ engine: get().activeEngine === 'stream' ? 'stream' : 'youtube' });
     startMediaSessionKeeper(onWorkerMediaTick);
     updateMediaSession(true, get().currentAudio, get().currentEpisode, get().currentTime, get().duration, get().playbackRate);
   },
@@ -1072,11 +1073,18 @@ htmlAudioEngine.on('time', (absTime, mediaDur) => {
 
   if (!store.isSeeking) {
     const epPos = Math.max(0, Math.round(absTime - startSec));
-    if (epPos !== store.currentTime) {
+    const now = Date.now();
+    const isTabHidden = typeof document !== 'undefined' && document.hidden;
+
+    if (
+      !isTabHidden &&
+      epPos !== store.currentTime &&
+      (now - lastHtmlTimeUiUpdateAt >= 500 || Math.abs(epPos - store.currentTime) >= 2)
+    ) {
+      lastHtmlTimeUiUpdateAt = now;
       usePlayerStore.setState({ currentTime: epPos });
     }
 
-    const now = Date.now();
     if (now - lastLocalSaveTs >= 5000) {
       lastLocalSaveTs = now;
       saveLocalSnapshot(store.currentAudio, ep, epPos, store.duration);
@@ -1434,8 +1442,11 @@ function saveProgressFor(audio: AudioItem, episode: Episode, currentTime: number
   }
 
   try {
+    const isTabHidden = typeof document !== 'undefined' && document.hidden;
     queryClient.invalidateQueries({ queryKey: ['audios'] });
-    queryClient.invalidateQueries({ queryKey: ['audio'] });
+    if (!isTabHidden) {
+      queryClient.invalidateQueries({ queryKey: ['audio'] });
+    }
     queryClient.invalidateQueries({ queryKey: ['history'] });
     queryClient.invalidateQueries({ queryKey: ['recent-history'] });
   } catch {}

@@ -27,7 +27,7 @@ var upgrader = websocket.Upgrader{
 
 // WSMessage định dạng gói tin trao đổi qua WebSocket
 type WSMessage struct {
-	Type    string      `json:"type"`              // "new_message", "online_count", "ping", "pong"
+	Type    string      `json:"type"` // "new_message", "online_count", "ping", "pong"
 	Data    interface{} `json:"data,omitempty"`
 	Count   int         `json:"count,omitempty"`
 	Message string      `json:"message,omitempty"`

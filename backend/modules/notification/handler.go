@@ -2,6 +2,7 @@ package notification
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"audio-app-backend/core/domain"
@@ -13,11 +14,14 @@ import (
 )
 
 type Handler struct {
-	db *gorm.DB
+	db  *gorm.DB
+	hub *Hub
 }
 
 func NewHandler(db *gorm.DB) *Handler {
-	return &Handler{db: db}
+	h := NewHub()
+	setDefaultHub(h)
+	return &Handler{db: db, hub: h}
 }
 
 type UpdatePreferencesRequest struct {
@@ -35,6 +39,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	notifs := rg.Group("/notifications")
 	notifs.Use(middleware.RequireAuth())
 	{
+		notifs.GET("/ws", h.HandleWebSocket)
 		notifs.GET("", h.GetNotifications)
 		notifs.GET("/unread-count", h.GetUnreadCount)
 		notifs.PUT("/:id/read", h.MarkAsRead)
@@ -69,7 +74,7 @@ func CreateSafeNotification(db *gorm.DB, notif domain.Notification) (bool, error
 			if !pref.NovelUpdates {
 				return false, nil
 			}
-		case "VIP", "MEMBERSHIP", "PROMOTION":
+		case "VIP", "VIP_EXPIRED", "MEMBERSHIP", "PROMOTION":
 			if !pref.PromotionAlerts {
 				return false, nil
 			}
@@ -92,27 +97,41 @@ func CreateSafeNotification(db *gorm.DB, notif domain.Notification) (bool, error
 	}
 
 	err := db.Create(&notif).Error
+	if err == nil {
+		if hub := getDefaultHub(); hub != nil {
+			hub.PushToUser(notif.UserID, notif)
+		}
+	}
 	return err == nil, err
 }
 
 func (h *Handler) GetNotifications(c *gin.Context) {
 	userID := middleware.GetCurrentUserID(c)
+	filter := strings.ToLower(strings.TrimSpace(c.Query("filter")))
+	kind := strings.ToUpper(strings.TrimSpace(c.Query("type")))
+	limit := 100
+	if l, err := strconv.Atoi(strings.TrimSpace(c.Query("limit"))); err == nil && l > 0 {
+		limit = l
+		if limit > 200 {
+			limit = 200
+		}
+	}
 
-	var list []domain.Notification
-	h.db.Where("user_id = ?", userID).Order("created_at DESC").Limit(100).Find(&list)
+	var totalForSeed int64
+	h.db.Model(&domain.Notification{}).Where("user_id = ?", userID).Count(&totalForSeed)
 
 	var pref domain.NotificationPreference
 	prefErr := h.db.First(&pref, "user_id = ?", userID).Error
 
 	// Nếu user chưa có thông báo nào và chưa từng seed, tạo thông báo chào mừng & hướng dẫn 1 lần duy nhất
-	if len(list) == 0 && (prefErr != nil || !pref.WelcomeSeeded) {
+	if totalForSeed == 0 && (prefErr != nil || !pref.WelcomeSeeded) {
 		welcomeNotifs := []domain.Notification{
 			{
 				UserID:    userID,
 				Title:     "Chào mừng đến với WaveLink! 🎧",
 				Message:   "Trải nghiệm nghe truyện Manga & Audiobook YouTube đỉnh cao với Virtual Audio Engine 0% quảng cáo gián đoạn trên WaveLink.",
 				Type:      "SYSTEM",
-				Link:      "#/home",
+				Link:      "/home",
 				IsRead:    false,
 				CreatedAt: time.Now().UTC().Add(-2 * time.Hour),
 			},
@@ -121,7 +140,7 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 				Title:     "Tính năng chia tập 4 giờ tự động ⚡",
 				Message:   "Nhập video dài hơn 20 tiếng, hệ thống sẽ tự động bóc tách thành các tập 4 giờ liên tục không ngắt quãng.",
 				Type:      "SYSTEM",
-				Link:      "#/upload",
+				Link:      "/upload",
 				IsRead:    false,
 				CreatedAt: time.Now().UTC().Add(-1 * time.Hour),
 			},
@@ -130,7 +149,7 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 				Title:     "Mở khóa VIP Member không giới hạn 👑",
 				Message:   "Trở thành Hội viên VIP để nghe trọn bộ truyện độc quyền và cày truyện không giới hạn lượt import.",
 				Type:      "VIP",
-				Link:      "#/membership",
+				Link:      "/membership",
 				IsRead:    false,
 				CreatedAt: time.Now().UTC(),
 			},
@@ -138,7 +157,6 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 		for i := range welcomeNotifs {
 			h.db.Create(&welcomeNotifs[i])
 		}
-		list = welcomeNotifs
 
 		if prefErr != nil {
 			pref = domain.NotificationPreference{
@@ -156,6 +174,24 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 			h.db.Model(&pref).Update("welcome_seeded", true)
 		}
 	}
+
+	q := h.db.Where("user_id = ?", userID)
+	if filter == "unread" {
+		q = q.Where("is_read = ?", false)
+	}
+	if kind != "" && kind != "ALL" {
+		switch kind {
+		case "VIP":
+			q = q.Where("type IN ?", []string{"VIP", "VIP_EXPIRED", "MEMBERSHIP", "PROMOTION"})
+		case "NEW_EPISODE", "AUDIO":
+			q = q.Where("type IN ?", []string{"NEW_EPISODE", "NOVEL_UPDATE", "AUDIO"})
+		default:
+			q = q.Where("type = ?", kind)
+		}
+	}
+
+	var list []domain.Notification
+	q.Order("created_at DESC").Limit(limit).Find(&list)
 
 	response.OK(c, list, nil)
 }

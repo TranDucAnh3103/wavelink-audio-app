@@ -194,11 +194,12 @@ describe('Community Features & Integration', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('Quản Trị Cộng Đồng & Phòng Chat')).toBeInTheDocument();
-        expect(screen.getByText('Gửi Thông Báo')).toBeInTheDocument();
-        expect(screen.getByText('Dọn Dẹp Chat')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Cộng đồng' })).toBeInTheDocument();
+        expect(screen.getByText('Phát thông báo')).toBeInTheDocument();
+        expect(screen.getByLabelText('Dọn sạch phòng chat')).toBeInTheDocument();
         expect(screen.getByText('SpamUser')).toBeInTheDocument();
         expect(screen.getByText('Bình luận spam cần xóa')).toBeInTheDocument();
+        expect(screen.getByText('Khóa người gửi')).toBeInTheDocument();
       });
     });
   });

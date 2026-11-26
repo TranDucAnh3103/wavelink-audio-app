@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { getNotificationPageSize } from '@/config/pagination';
 import { notificationService } from '@/services/notificationService';
-import { externalNotificationService } from '@/services/externalNotificationService';
+import {
+  externalNotificationService,
+  normalizeNotificationPath,
+} from '@/services/externalNotificationService';
 
 describe('Notification Enhancements & Requirements', () => {
   beforeEach(() => {
@@ -151,6 +154,14 @@ describe('Notification Enhancements & Requirements', () => {
         tag: 'tag-ep-2',
       });
       expect(second).toBe(false);
+    });
+
+    it('normalizes legacy hash notification links to BrowserRouter routes', () => {
+      expect(normalizeNotificationPath('#/player?audioId=42')).toBe('/player/42');
+      expect(normalizeNotificationPath('/#/player?id=99')).toBe('/player/99');
+      expect(normalizeNotificationPath('#/notifications')).toBe('/notifications');
+      expect(normalizeNotificationPath('/membership')).toBe('/membership');
+      expect(normalizeNotificationPath(undefined)).toBe('/notifications');
     });
   });
 });

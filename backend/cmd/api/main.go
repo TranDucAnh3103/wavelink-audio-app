@@ -13,6 +13,7 @@ import (
 	"audio-app-backend/config"
 	infraDB "audio-app-backend/infra/db"
 	"audio-app-backend/infra/external"
+	"audio-app-backend/modules/membership"
 	"audio-app-backend/modules/stream"
 	"audio-app-backend/server"
 )
@@ -75,6 +76,8 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	membership.StartExpirationSweeper(ctx, db, cfg, 60*time.Second)
 
 	go func() {
 		slog.Info(fmt.Sprintf("Máy chủ đang lắng nghe tại: http://localhost:%s", cfg.Port))

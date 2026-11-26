@@ -35,6 +35,7 @@ import {
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { usePlayerStore } from '@/stores/playerStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useMyMembership } from '@/hooks/useMembership';
 import { useDelayedFallback } from '@/hooks/useDelayedFallback';
 import { AdminTabs } from '@/pages/admin/AdminTabs';
@@ -56,7 +57,12 @@ export const SettingsPage: React.FC = () => {
   const navigate = useNavigate();
   const { user, isLive, logout, refreshUser, isLoading, isInitialized } = useAuthStore();
   const { theme, setTheme } = useThemeStore();
-  const { playbackRate, setPlaybackRate } = usePlayerStore();
+  const { playbackRate, setPlaybackRate } = usePlayerStore(
+    useShallow((s) => ({
+      playbackRate: s.playbackRate,
+      setPlaybackRate: s.setPlaybackRate,
+    }))
+  );
   const { data: myMembership } = useMyMembership();
 
   const [isEditNameOpen, setIsEditNameOpen] = useState(false);

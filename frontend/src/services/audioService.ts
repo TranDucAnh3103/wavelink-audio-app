@@ -1,9 +1,24 @@
+import axios from 'axios';
 import { axiosClient } from '@/lib/axiosClient';
 import { AudioItem, AudioFilter, YouTubePreviewData, ImportYouTubePayload, ImportResult, ImportQuota, User, StreamTokenResponse } from '@/types';
 import { localDb, isMockAudio } from './localDb';
 import { extractYouTubeId, formatTime, formatDuration } from '@/lib/utils';
 import { guestSessionService } from './guestSessionService';
 import { useAuthStore } from '@/stores/authStore';
+
+export interface AudioListPaginationMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+const audioListMetaMap = new WeakMap<AudioItem[], AudioListPaginationMeta>();
+
+export function getAudioListMeta(list: AudioItem[] | undefined | null): AudioListPaginationMeta | undefined {
+  if (!list) return undefined;
+  return audioListMetaMap.get(list);
+}
 
 export const audioService = {
   async getAudios(filter: AudioFilter = {}, isLive = true, currentUserId?: number): Promise<AudioItem[]> {
@@ -15,13 +30,16 @@ export const audioService = {
     if (isLive) {
       try {
         const params = new URLSearchParams();
-        params.append('fields', 'lite');
+        params.append('fields', filter.fields || 'lite');
         if (normalizedSearch) params.append('search', normalizedSearch);
         if (filter.categoryId) params.append('categoryId', String(filter.categoryId));
         if (filter.status) params.append('status', filter.status);
         if (filter.tag) params.append('tag', filter.tag);
-        if (filter.page) params.append('page', String(filter.page));
-        if (filter.limit || filter.pageSize) {
+        if (filter.page && !filter.all) params.append('page', String(filter.page));
+        if (filter.all) {
+          params.append('all', 'true');
+          params.append('limit', '0');
+        } else if (filter.limit || filter.pageSize) {
           params.append('limit', String(filter.limit || filter.pageSize));
         } else if (!filter.page) {
           // Khi lấy toàn bộ danh sách để client-side phân trang (hoặc thư viện):
@@ -34,7 +52,11 @@ export const audioService = {
         else if (filter.createdBy) params.append('createdBy', String(filter.createdBy));
         if (filter.sort) params.append('sort', filter.sort);
 
-        const res = await axiosClient.get<{ success: boolean; data: AudioItem[] }>(`/audios?${params.toString()}`);
+        const res = await axiosClient.get<{
+          success: boolean;
+          data: AudioItem[];
+          meta?: AudioListPaginationMeta;
+        }>(`/audios?${params.toString()}`);
         if (res.data.success && Array.isArray(res.data.data)) {
           const map = new Map<number | string, AudioItem>();
           for (const item of res.data.data) {
@@ -50,6 +72,10 @@ export const audioService = {
             } else if (filter.status === 'completed') {
               list = list.filter((a) => (a.progressPercent || 0) >= 95);
             }
+          }
+
+          if (res.data.meta) {
+            audioListMetaMap.set(list, res.data.meta);
           }
 
           return list;
@@ -134,6 +160,8 @@ export const audioService = {
       return audioItem;
     };
 
+    let transientError: unknown = null;
+
     if (isLive) {
       try {
         const res = await axiosClient.get<{ success: boolean; data: AudioItem }>(`/audios/${id}`);
@@ -145,6 +173,10 @@ export const audioService = {
           return enrichAudioEpisodes(item);
         }
       } catch (err) {
+        const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+        if (status !== 404) {
+          transientError = err;
+        }
         console.warn('getAudioById live API failed, fallback to local', err);
       }
     }
@@ -154,10 +186,17 @@ export const audioService = {
     if (item && isMockAudio(item)) {
       return null;
     }
-    if (item && !token) {
-      item = guestSessionService.applyGuestProgressToAudio(item);
+    if (item) {
+      if (!token) {
+        item = guestSessionService.applyGuestProgressToAudio(item);
+      }
+      return enrichAudioEpisodes(item);
     }
-    return item ? enrichAudioEpisodes(item) : null;
+
+    if (transientError) {
+      throw transientError;
+    }
+    return null;
   },
 
   async updateAudio(id: number | string, data: Partial<AudioItem>, isLive = true): Promise<AudioItem | null> {

@@ -23,7 +23,7 @@ export interface AuthorHighlight {
 }
 
 const LEADING_PART_RE =
-  /^\s*(?:\[(?:full|trọn\s*bộ|bản\s*full|audio(?:\s*truyện)?|(?:tập|chương|phần|quyển|hồi|ep(?:isode)?|part|vol(?:ume)?|p\.?)\s*[\d\s\-–~→đếnvà,./]+)\]|\((?:full|trọn\s*bộ|bản\s*full|(?:tập|chương|phần|quyển|hồi|ep(?:isode)?|part|vol(?:ume)?|p\.?)\s*[\d\s\-–~→đếnvà,./]+)\)|(?:full(?:\s*\d+\s*(?:tập|chương|phần|quyển|hồi))?|trọn\s*bộ(?:\s*\d+\s*(?:tập|chương|phần))?)|(?:(?:tập|chương|phần|quyển|hồi|part|ep(?:isode)?|vol(?:ume)?)\s*\.?\s*\d+(?:\s*[-–~→đếnvà,./]+\s*\d+)*(?:\s*(?:cuối|end|hết|full))?\s*[-:|•–—]+))\s*[-:|•–—]*\s*/iu;
+  /^\s*(?:\[(?:full|trọn\s*bộ|bản\s*full|audio(?:\s*truyện)?|(?:tập|chương|phần|quyển|hồi|ep(?:isode)?|part|vol(?:ume)?|p\.?)\s*[\d\s\-–~→đếnvà,./]*)\]|\((?:full|trọn\s*bộ|bản\s*full|(?:tập|chương|phần|quyển|hồi|ep(?:isode)?|part|vol(?:ume)?|p\.?)\s*[\d\s\-–~→đếnvà,./]*)\)|(?:full(?:\s*(?:truyện|bộ|audio))?(?:\s*\d+\s*(?:tập|chương|phần|quyển|hồi))?|trọn\s*bộ(?:\s*\d+\s*(?:tập|chương|phần))?|truyện\s*audio)\s*[-:|•–—]*\s*|(?:(?:tập|chương|phần|quyển|hồi|part|ep(?:isode)?|vol(?:ume)?|p)\s*\.?\s*\d+(?:\s*[-–~→đếnvà,./]+\s*\d+)*(?:\s*(?:cuối|end|hết|full))?\s*[-:|•–—]*))\s*[-:|•–—]*\s*/iu;
 
 const BRACKETED_PART_RE =
   /\s*[\[(]\s*(?:tập|phần|chương|quyển|hồi|part|ep(?:isode)?|vol(?:ume)?|p\.?|full|trọn\s*bộ|bản\s*full|#)\s*\.?\s*[\d\s\-–~→đếnvà,./]*(?:cuối|end|hết|mới)?\s*[\])]\s*$/iu;
@@ -36,6 +36,50 @@ const TRAILING_BARE_PART_RE =
 
 const INLINE_SEGMENT_PART_RE =
   /\s*[-|–—:/•]+\s*(?:tập|phần|chương|quyển|hồi|part|ep(?:isode)?|vol(?:ume)?)\s*\.?\s*\d+(?:\s*[-–~→đếnvà,./]+\s*\d+)*(?=\s*[|\-–—:/•(\[])/iu;
+
+const BOILERPLATE_WORDS = new Set([
+  'full',
+  'tron',
+  'trọn',
+  'bo',
+  'bộ',
+  'truyen',
+  'truyện',
+  'audio',
+  'tap',
+  'tập',
+  'phan',
+  'phần',
+  'chuong',
+  'chương',
+  'quyen',
+  'quyển',
+  'hoi',
+  'hồi',
+  'part',
+  'ep',
+  'episode',
+  'vol',
+  'volume',
+  'review',
+  'tom',
+  'tóm',
+  'tat',
+  'tắt',
+  'p',
+  'va',
+  'và',
+  'den',
+  'đến',
+  'tapcuoi',
+  'cuoi',
+  'cuối',
+  'end',
+  'het',
+  'hết',
+  'moi',
+  'mới',
+]);
 
 /**
  * Strips episode/part/full markers from a story title so separate uploads of the same series match.
@@ -53,6 +97,7 @@ export function extractSeriesBaseTitle(rawTitle: string): string {
     clean = clean.replace(TRAILING_BARE_PART_RE, '').trim();
     clean = clean.replace(INLINE_SEGMENT_PART_RE, '').trim();
     clean = clean.replace(/[\s\-|–—:/•,]+$/g, '').trim();
+    clean = clean.replace(/^[\s\-|–—:/•,]+/g, '').trim();
     if (clean === prev) break;
   }
 
@@ -68,50 +113,116 @@ function normalizeSeriesKey(text: string): string {
     .trim();
 }
 
-function findLongestCommonWordPrefix(titles: string[]): string {
-  if (titles.length === 0) return '';
-  const wordLists = titles.map((t) => t.replace(/\s+/g, ' ').trim().split(' '));
-  const minLen = Math.min(...wordLists.map((w) => w.length));
-  const common: string[] = [];
+function normalizeAuthorKey(audio: AudioItem): string {
+  const raw = (audio.author || audio.channel || '').normalize('NFC').toLowerCase().trim();
+  return raw.replace(/\s+/g, ' ');
+}
 
-  for (let i = 0; i < minLen; i++) {
-    const first = wordLists[0][i];
-    if (wordLists.every((w) => w[i].toLowerCase() === first.toLowerCase())) {
-      common.push(first);
-    } else {
-      break;
+function extractMeaningfulTokens(phrase: string): string[] {
+  const normalized = normalizeSeriesKey(phrase);
+  if (!normalized) return [];
+  return normalized.split(' ').filter((w) => w.length > 0 && !/^\d+$/.test(w) && !BOILERPLATE_WORDS.has(w));
+}
+
+/**
+ * Counts meaningful Unicode alphanumeric characters after excluding generic boilerplate tokens & numbers.
+ */
+export function countMeaningfulChars(phrase: string): number {
+  return extractMeaningfulTokens(phrase).join('').length;
+}
+
+function splitCleanWords(text: string): string[] {
+  return text
+    .normalize('NFC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+    .filter(Boolean);
+}
+
+/**
+ * Finds the longest contiguous sequence of matching words anywhere across two cleaned titles.
+ */
+function findLongestCommonWordPhrase(titleA: string, titleB: string): string {
+  const wordsA = splitCleanWords(titleA);
+  const wordsB = splitCleanWords(titleB);
+  if (wordsA.length === 0 || wordsB.length === 0) return '';
+
+  const lowerA = wordsA.map((w) => w.toLowerCase());
+  const lowerB = wordsB.map((w) => w.toLowerCase());
+
+  let bestLen = 0;
+  let bestEndIdx = 0;
+  const prevRow = new Array<number>(wordsB.length + 1).fill(0);
+
+  for (let i = 1; i <= lowerA.length; i++) {
+    for (let j = lowerB.length; j >= 1; j--) {
+      if (lowerA[i - 1] === lowerB[j - 1]) {
+        const len = prevRow[j - 1] + 1;
+        prevRow[j] = len;
+        if (len > bestLen) {
+          bestLen = len;
+          bestEndIdx = i;
+        }
+      } else {
+        prevRow[j] = 0;
+      }
     }
   }
 
-  return common
+  if (bestLen === 0) return '';
+  return wordsA
+    .slice(bestEndIdx - bestLen, bestEndIdx)
     .join(' ')
     .replace(/[\s\-|–—:/•,(\[]+$/g, '')
     .trim();
 }
 
+function computeSharedGroupTitle(items: AudioItem[]): string {
+  if (items.length === 0) return '';
+  const bases = items.map((a) => extractSeriesBaseTitle(a.title));
+  let shared = bases[0];
+  for (let i = 1; i < bases.length; i++) {
+    const common = findLongestCommonWordPhrase(shared, bases[i]);
+    if (countMeaningfulChars(common) > 10) {
+      shared = common;
+    }
+  }
+  const cleaned = extractSeriesBaseTitle(shared) || shared;
+  if (countMeaningfulChars(cleaned) > 10) {
+    return cleaned;
+  }
+  return [...bases].sort((a, b) => a.length - b.length)[0] || items[0].title;
+}
+
 function computeVerifiedSearchQuery(baseTitle: string, items: AudioItem[]): string {
   const candidate = baseTitle.trim();
   if (
-    candidate.length >= 3 &&
+    countMeaningfulChars(candidate) > 10 &&
     items.every((a) => a.title.toLowerCase().includes(candidate.toLowerCase()))
   ) {
     return candidate;
   }
 
-  const commonPrefix = findLongestCommonWordPrefix(items.map((a) => a.title));
+  let shared = extractSeriesBaseTitle(items[0]?.title || candidate);
+  for (let i = 1; i < items.length; i++) {
+    const common = findLongestCommonWordPhrase(shared, items[i].title);
+    if (common) shared = common;
+  }
   if (
-    commonPrefix.length >= 3 &&
-    items.every((a) => a.title.toLowerCase().includes(commonPrefix.toLowerCase()))
+    countMeaningfulChars(shared) > 10 &&
+    items.every((a) => a.title.toLowerCase().includes(shared.toLowerCase()))
   ) {
-    return commonPrefix;
+    return shared;
   }
 
-  // Shortest shared normalized words fallback
-  const words = candidate.split(/\s+/).filter(Boolean);
+  // Shortest shared contiguous word slice still present in every member's title
+  const words = splitCleanWords(candidate);
   for (let len = words.length; len >= 2; len--) {
     const slice = words.slice(0, len).join(' ').replace(/[\s\-|–—:/•,]+$/g, '');
     if (
-      slice.length >= 3 &&
+      slice.length >= 6 &&
       items.every((a) => a.title.toLowerCase().includes(slice.toLowerCase()))
     ) {
       return slice;
@@ -137,85 +248,82 @@ function sortItemsInSeriesOrder(items: AudioItem[]): AudioItem[] {
 }
 
 /**
- * Automatically groups multi-part audiobook uploads with matching titles into clickable Series collections.
- * Only groups with at least 2 parts are returned.
+ * Automatically groups multi-part audiobook uploads that belong to the same author
+ * and share a meaningful title phrase (>10 non-boilerplate characters) into Series collections.
  */
 export function groupAudiosIntoSeries(audios: AudioItem[]): SeriesGroup[] {
   if (!audios || audios.length < 2) return [];
 
-  const buckets = new Map<string, { displayTitle: string; items: AudioItem[] }>();
-
-  // Pass 1: exact normalized base-title grouping
+  // Bucket by normalized author first: series parts MUST share the same author/channel
+  const byAuthor = new Map<string, AudioItem[]>();
   for (const audio of audios) {
     if (!audio?.title) continue;
-    const base = extractSeriesBaseTitle(audio.title);
-    const key = normalizeSeriesKey(base);
-    if (key.length < 4) continue;
-
-    const existing = buckets.get(key);
-    if (existing) {
-      existing.items.push(audio);
-      if (base.length > 0 && base.length < existing.displayTitle.length) {
-        existing.displayTitle = base;
-      }
-    } else {
-      buckets.set(key, { displayTitle: base, items: [audio] });
-    }
+    const authorKey = normalizeAuthorKey(audio);
+    if (!authorKey) continue;
+    const list = byAuthor.get(authorKey);
+    if (list) list.push(audio);
+    else byAuthor.set(authorKey, [audio]);
   }
 
-  const singletons: AudioItem[] = [];
   const multiPartGroups: Array<{ key: string; displayTitle: string; items: AudioItem[] }> = [];
 
-  for (const [key, bucket] of buckets.entries()) {
-    if (bucket.items.length >= 2) {
-      multiPartGroups.push({ key, ...bucket });
-    } else {
-      singletons.push(bucket.items[0]);
-    }
-  }
+  for (const [authorKey, authorItems] of byAuthor.entries()) {
+    if (authorItems.length < 2) continue;
 
-  // Pass 2: group remaining singletons sharing a distinctive common base title prefix
-  // (relaxed threshold when uploaded by the same author/channel)
-  if (singletons.length >= 2) {
-    const used = new Set<number | string>();
-    for (let i = 0; i < singletons.length; i++) {
-      const a = singletons[i];
-      if (used.has(a.id)) continue;
+    const n = authorItems.length;
+    const bases = authorItems.map((a) => extractSeriesBaseTitle(a.title));
+    const normKeys = bases.map((b) => normalizeSeriesKey(b));
+    const meaningfulCharCounts = bases.map((b) => countMeaningfulChars(b));
 
-      const baseA = extractSeriesBaseTitle(a.title);
-      const authorA = (a.author || '').trim().toLowerCase();
-      const matched: AudioItem[] = [a];
-      let sharedPrefix = baseA;
+    const parent = Array.from({ length: n }, (_, idx) => idx);
+    const find = (x: number): number => {
+      while (parent[x] !== x) {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+      }
+      return x;
+    };
+    const unite = (a: number, b: number) => {
+      const ra = find(a);
+      const rb = find(b);
+      if (ra !== rb) parent[rb] = ra;
+    };
 
-      for (let j = i + 1; j < singletons.length; j++) {
-        const b = singletons[j];
-        if (used.has(b.id)) continue;
-        const baseB = extractSeriesBaseTitle(b.title);
-        const authorB = (b.author || '').trim().toLowerCase();
-        const sameAuthor = Boolean(authorA && authorB && authorA === authorB);
+    for (let i = 0; i < n; i++) {
+      if (meaningfulCharCounts[i] <= 10) continue;
+      for (let j = i + 1; j < n; j++) {
+        if (meaningfulCharCounts[j] <= 10) continue;
 
-        const prefix = findLongestCommonWordPrefix([baseA, baseB]);
-        const prefixWords = prefix.split(/\s+/).filter(Boolean);
-        const minWords = sameAuthor ? 3 : 4;
-        const minChars = sameAuthor ? 14 : 20;
+        if (normKeys[i] && normKeys[i] === normKeys[j]) {
+          unite(i, j);
+          continue;
+        }
 
-        if (prefixWords.length >= minWords && prefix.length >= minChars) {
-          matched.push(b);
-          if (prefix.length < sharedPrefix.length) {
-            sharedPrefix = prefix;
-          }
+        const commonPhrase = findLongestCommonWordPhrase(bases[i], bases[j]);
+        const meaningfulTokens = extractMeaningfulTokens(commonPhrase);
+        if (meaningfulTokens.length >= 2 && meaningfulTokens.join('').length > 10) {
+          unite(i, j);
         }
       }
+    }
 
-      if (matched.length >= 2) {
-        matched.forEach((m) => used.add(m.id));
-        const cleanPrefix = extractSeriesBaseTitle(sharedPrefix) || sharedPrefix;
-        multiPartGroups.push({
-          key: `prefix:${normalizeSeriesKey(cleanPrefix)}`,
-          displayTitle: cleanPrefix,
-          items: matched,
-        });
-      }
+    const clusters = new Map<number, AudioItem[]>();
+    for (let i = 0; i < n; i++) {
+      const root = find(i);
+      const bucket = clusters.get(root);
+      if (bucket) bucket.push(authorItems[i]);
+      else clusters.set(root, [authorItems[i]]);
+    }
+
+    for (const clusterItems of clusters.values()) {
+      if (clusterItems.length < 2) continue;
+      const displayTitle = computeSharedGroupTitle(clusterItems);
+      if (countMeaningfulChars(displayTitle) <= 10) continue;
+      multiPartGroups.push({
+        key: `${authorKey}::${normalizeSeriesKey(displayTitle)}`,
+        displayTitle,
+        items: clusterItems,
+      });
     }
   }
 
@@ -248,37 +356,36 @@ export function groupAudiosIntoSeries(audios: AudioItem[]): SeriesGroup[] {
 }
 
 /**
- * Aggregates top authors/channels across the catalog for quick author discovery on HomePage.
+ * Computes top authors / YouTube channels with aggregated series count and episodes.
  */
-export function groupTopAuthors(audios: AudioItem[], limit: number = 6): AuthorHighlight[] {
-  if (!audios || audios.length === 0) return [];
-
+export function groupTopAuthors(audios: AudioItem[], limit = 15): AuthorHighlight[] {
   const map = new Map<string, AuthorHighlight>();
-  for (const audio of audios) {
-    const rawAuthor = (audio.author || '').trim();
-    if (!rawAuthor || rawAuthor.toLowerCase() === 'chưa rõ') continue;
-
-    const key = rawAuthor.toLowerCase();
+  for (const a of audios) {
+    const rawName = (a.author || a.channel || '').trim();
+    if (!rawName) continue;
+    const key = rawName.toLowerCase();
+    const eps = a.totalEpisodes || a.episodes?.length || 1;
+    const views = a.viewCount || 0;
     const existing = map.get(key);
-    const eps = audio.totalEpisodes || audio.episodes?.length || 1;
-    const views = audio.viewCount || 0;
-
     if (existing) {
       existing.audioCount += 1;
       existing.totalEpisodes += eps;
       existing.totalViews += views;
+      if (!existing.sampleThumbnail && a.thumbnailUrl) {
+        existing.sampleThumbnail = a.thumbnailUrl;
+      }
     } else {
       map.set(key, {
-        name: rawAuthor,
+        name: rawName,
         audioCount: 1,
         totalEpisodes: eps,
         totalViews: views,
-        sampleThumbnail: audio.thumbnailUrl || '/wavelink-icon.png',
+        sampleThumbnail: a.thumbnailUrl || '/wavelink-icon.png',
       });
     }
   }
 
-  return Array.from(map.values())
-    .sort((a, b) => b.totalViews - a.totalViews || b.audioCount - a.audioCount)
+  return [...map.values()]
+    .sort((a, b) => b.audioCount - a.audioCount || b.totalViews - a.totalViews)
     .slice(0, limit);
 }

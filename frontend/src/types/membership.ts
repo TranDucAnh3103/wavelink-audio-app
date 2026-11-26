@@ -31,6 +31,10 @@ export interface MyMembership {
   vipExpiresAt?: string | null;
   daysRemaining?: number;
   latestOrder?: MembershipOrder | null;
+  activePendingOrder?: MembershipOrder | null;
+  latestPaidOrder?: MembershipOrder | null;
+  paidOrdersCount?: number;
+  token?: string;
 }
 
 export interface MembershipOrder {
@@ -55,6 +59,11 @@ export interface MembershipOrder {
   qrCodeUrl: string;
   status: string;
   expiresAt?: string;
+  remainingSeconds?: number;
+  reused?: boolean;
+  deleted?: boolean;
+  alreadyPaid?: boolean;
+  message?: string;
   paidAt?: string | null;
   createdAt?: string;
   token?: string;
@@ -65,4 +74,23 @@ export interface MembershipOrder {
     membership?: string;
     vipExpiresAt?: string | null;
   };
+}
+
+export interface MembershipOrdersResponse {
+  orders: MembershipOrder[];
+  activePendingOrder: MembershipOrder | null;
+  paidCount: number;
+  token?: string;
+  user?: MembershipOrder['user'];
+}
+
+export interface CancelOrderResult {
+  success: boolean;
+  orderCode?: string;
+  status?: string;
+  deleted?: boolean;
+  alreadyPaid?: boolean;
+  message?: string;
+  token?: string;
+  user?: MembershipOrder['user'];
 }

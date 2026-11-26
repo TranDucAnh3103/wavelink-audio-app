@@ -82,20 +82,48 @@ export function useMyMembership() {
   });
 }
 
+export function useMembershipOrders() {
+  const { user } = useAuthStore();
+  const isAuthenticatedMember = Boolean(user && !user.isGuest && user.role !== 'GUEST');
+  return useQuery({
+    queryKey: ['membership-orders', user?.id],
+    queryFn: () => {
+      const { isLive } = useAuthStore.getState();
+      return api.membership.getMyOrders(isLive);
+    },
+    enabled: isAuthenticatedMember,
+    staleTime: 15000,
+  });
+}
+
 export function useCreateMembershipOrder() {
+  const queryClient = useQueryClient();
+
   return useMutation({
     mutationFn: (packageId: string) => {
       const { isLive } = useAuthStore.getState();
       return api.membership.createOrder(packageId, isLive);
     },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-membership'] });
+      queryClient.invalidateQueries({ queryKey: ['membership-orders'] });
+    },
   });
 }
 
 export function useCancelMembershipOrder() {
+  const queryClient = useQueryClient();
+
   return useMutation({
     mutationFn: (orderCode: string) => {
       const { isLive } = useAuthStore.getState();
       return api.membership.cancelOrder(orderCode, isLive);
+    },
+    onSuccess: async () => {
+      await useAuthStore.getState().refreshUser();
+      queryClient.invalidateQueries({ queryKey: ['my-membership'] });
+      queryClient.invalidateQueries({ queryKey: ['membership-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['membership-packages'] });
     },
   });
 }
@@ -112,6 +140,7 @@ export function useSimulatePayment() {
     onSuccess: async () => {
       await refreshUser();
       queryClient.invalidateQueries({ queryKey: ['my-membership'] });
+      queryClient.invalidateQueries({ queryKey: ['membership-orders'] });
       queryClient.invalidateQueries({ queryKey: ['membership-packages'] });
       queryClient.invalidateQueries({ queryKey: ['stats'] });
       queryClient.invalidateQueries({ queryKey: ['import-quota'] });

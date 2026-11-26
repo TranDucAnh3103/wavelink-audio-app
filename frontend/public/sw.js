@@ -5,7 +5,7 @@
  * - Cache API assets để app load nhanh hơn khi mạng chậm
  */
 
-const CACHE_NAME = 'wavelink-v2.2';
+const CACHE_NAME = 'wavelink-v2.3';
 const AUDIO_KEEPALIVE_CHANNEL = 'wavelink-audio-keepalive';
 
 const PRECACHE_ASSETS = [
@@ -119,10 +119,20 @@ self.addEventListener('message', (event) => {
 
 // ─── Notification Click ────────────────────────────────────────────────────
 
+function normalizeAppPath(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return '/notifications';
+  var target = rawUrl.trim();
+  if (target.startsWith('/#/')) target = target.slice(2);
+  else if (target.startsWith('#/')) target = target.slice(1);
+  var match = target.match(/^\/player\?(?:audioId|id)=(\d+)/i);
+  if (match) return '/player/' + match[1];
+  return target || '/notifications';
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/#/notifications';
+  const targetUrl = normalizeAppPath(event.notification.data && event.notification.data.url);
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
@@ -149,7 +159,7 @@ self.addEventListener('push', (event) => {
   let payload = {
     title: 'WaveLink - Thông Báo Mới 🎧',
     body: 'Có nội dung và tập truyện mới trên WaveLink!',
-    url: '/#/notifications',
+    url: '/notifications',
     tag: 'wavelink-push-notification',
   };
 

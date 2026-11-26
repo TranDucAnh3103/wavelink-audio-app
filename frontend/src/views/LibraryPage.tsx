@@ -16,18 +16,32 @@ import { useCategories } from '@/hooks/useCategories';
 import { useTags } from '@/hooks/useTags';
 import { useDelayedFallback } from '@/hooks/useDelayedFallback';
 import { usePlayerStore } from '@/stores/playerStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '@/stores/authStore';
 import { LibraryListSkeleton } from '@/components/common/Skeletons';
 import { EmptyState } from '@/components/common/EmptyState';
 import { toast } from '@/components/ui/Toast';
 import { Pagination } from '@/components/ui/Pagination';
 import { DEFAULT_PAGE_SIZE } from '@/config/pagination';
+import { getAudioListMeta } from '@/services/audioService';
+import {
+  clearLibraryReturnState,
+  peekLibraryReturnState,
+  saveLibraryReturnState,
+} from '@/lib/libraryNavigationState';
 
 export const LibraryPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuthStore();
-  const { currentAudio, isPlaying, play, togglePlay } = usePlayerStore();
+  const { currentAudio, isPlaying, play, togglePlay } = usePlayerStore(
+    useShallow((s) => ({
+      currentAudio: s.currentAudio,
+      isPlaying: s.isPlaying,
+      play: s.play,
+      togglePlay: s.togglePlay,
+    }))
+  );
   const toggleFavoriteMutation = useToggleFavorite();
 
   const urlCategory = searchParams.get('categoryId')
@@ -66,6 +80,32 @@ export const LibraryPage: React.FC = () => {
     urlUserId && (!user?.id || String(user.id) !== String(urlUserId))
   );
 
+  const [currentPage, setCurrentPage] = useState<number>(() => {
+    const urlPage = Number(searchParams.get('page'));
+    if (urlPage >= 1 && Number.isFinite(urlPage)) {
+      return Math.floor(urlPage);
+    }
+    const saved = peekLibraryReturnState();
+    if (
+      saved &&
+      saved.search === urlSearch &&
+      saved.categoryId === urlCategory &&
+      saved.status === urlStatus &&
+      saved.userId === urlUserId &&
+      saved.page >= 1
+    ) {
+      return saved.page;
+    }
+    return 1;
+  });
+  const [highlightedAudioId, setHighlightedAudioId] = useState<string | null>(null);
+  const pageSize = DEFAULT_PAGE_SIZE;
+
+  const isGuestClientStatusFilter = Boolean(
+    (!user || user.isGuest) &&
+      (activeStatus === 'listening' || activeStatus === 'completed')
+  );
+
   const { data: audios = [], isLoading } = useAudios({
     search: searchQuery,
     categoryId: activeCategory,
@@ -75,7 +115,11 @@ export const LibraryPage: React.FC = () => {
         ? null
         : activeStatus,
     userId: urlUserId || undefined,
+    page: isGuestClientStatusFilter ? undefined : currentPage,
+    limit: isGuestClientStatusFilter ? undefined : pageSize,
   });
+
+  const serverMeta = getAudioListMeta(audios);
 
   const uniqueAudios = React.useMemo(() => {
     const seen = new Set<number | string>();
@@ -88,38 +132,130 @@ export const LibraryPage: React.FC = () => {
 
   const showSkeletonFallback = useDelayedFallback(isLoading && uniqueAudios.length === 0, 180);
 
-  const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = DEFAULT_PAGE_SIZE;
+  const prevFiltersRef = useRef({
+    search: searchQuery,
+    category: activeCategory,
+    status: activeStatus,
+    userId: urlUserId,
+  });
 
-  useEffect(() => {
-    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
-      window.scrollTo(0, 0);
+  const syncPageToUrl = (targetPage: number) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (targetPage > 1) {
+      nextParams.set('page', String(targetPage));
+    } else {
+      nextParams.delete('page');
     }
-  }, []);
+    setSearchParams(nextParams, { replace: true });
+  };
 
   useEffect(() => {
-    setCurrentPage(1);
-  }, [searchQuery, activeCategory, activeStatus]);
+    const urlPage = Number(searchParams.get('page'));
+    if (urlPage >= 1 && Number.isFinite(urlPage) && Math.floor(urlPage) !== currentPage) {
+      setCurrentPage(Math.floor(urlPage));
+    }
+    // Only react to external URL page changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
-  const totalPages = Math.max(1, Math.ceil(uniqueAudios.length / pageSize));
+  useEffect(() => {
+    const prev = prevFiltersRef.current;
+    const filtersChanged =
+      prev.search !== searchQuery ||
+      prev.category !== activeCategory ||
+      prev.status !== activeStatus ||
+      prev.userId !== urlUserId;
+
+    if (filtersChanged) {
+      prevFiltersRef.current = {
+        search: searchQuery,
+        category: activeCategory,
+        status: activeStatus,
+        userId: urlUserId,
+      };
+      clearLibraryReturnState();
+      setCurrentPage(1);
+      syncPageToUrl(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, activeCategory, activeStatus, urlUserId]);
+
+  const totalItems = serverMeta ? serverMeta.total : uniqueAudios.length;
+  const totalPages = serverMeta
+    ? Math.max(1, serverMeta.totalPages)
+    : Math.max(1, Math.ceil(uniqueAudios.length / pageSize));
   const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
-      window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
-    }
-  }, [safeCurrentPage, activeCategory, activeStatus, searchQuery, urlSearch, urlUserId]);
-
-  useEffect(() => {
-    if (currentPage > totalPages) {
+    if (!isLoading && currentPage > totalPages) {
       setCurrentPage(totalPages);
+      syncPageToUrl(totalPages);
     }
-  }, [currentPage, totalPages]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, currentPage, totalPages]);
 
   const paginatedAudios = React.useMemo(() => {
+    if (serverMeta) return uniqueAudios;
     const start = (safeCurrentPage - 1) * pageSize;
     return uniqueAudios.slice(start, start + pageSize);
-  }, [uniqueAudios, safeCurrentPage, pageSize]);
+  }, [serverMeta, uniqueAudios, safeCurrentPage, pageSize]);
+
+  // Khôi phục đúng vị trí cuộn / card audio vừa xem khi quay lại từ PlayerPage
+  useEffect(() => {
+    if (isLoading || paginatedAudios.length === 0) return;
+    const saved = peekLibraryReturnState();
+    if (!saved) return;
+
+    const sameFilters =
+      saved.search === searchQuery &&
+      saved.categoryId === activeCategory &&
+      saved.status === activeStatus &&
+      saved.userId === urlUserId;
+
+    if (!sameFilters || saved.page !== safeCurrentPage) return;
+
+    clearLibraryReturnState();
+    setHighlightedAudioId(saved.audioId);
+
+    const raf = requestAnimationFrame(() => {
+      try {
+        const cardEl = document.querySelector<HTMLElement>(
+          `[data-library-audio-id="${saved.audioId}"]`
+        );
+        if (cardEl && typeof cardEl.scrollIntoView === 'function') {
+          cardEl.scrollIntoView({ block: 'center', behavior: 'auto' });
+        } else if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+          window.scrollTo(0, saved.scrollY || 0);
+        }
+      } catch {
+        // Ignore non-implemented scroll mocks in jsdom
+      }
+    });
+
+    const timer = setTimeout(() => {
+      setHighlightedAudioId(null);
+    }, 2200);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+  }, [isLoading, paginatedAudios, searchQuery, activeCategory, activeStatus, urlUserId, safeCurrentPage]);
+
+  const handleOpenAudioDetail = (audioId: number | string) => {
+    const scrollY = typeof window !== 'undefined' ? window.scrollY || 0 : 0;
+    saveLibraryReturnState({
+      page: safeCurrentPage,
+      scrollY,
+      audioId: String(audioId),
+      search: searchQuery,
+      categoryId: activeCategory,
+      status: activeStatus,
+      userId: urlUserId,
+      savedAt: Date.now(),
+    });
+    navigate(`/player/${audioId}`);
+  };
 
   const handleSearchChange = (val: string) => {
     setSearchQuery(val);
@@ -366,16 +502,23 @@ export const LibraryPage: React.FC = () => {
             return (
               <div
                 key={a.id}
-                className="card-comic p-3.5 flex flex-col justify-between gap-3 relative group"
+                data-library-audio-id={String(a.id)}
+                className={`card-comic p-3.5 flex flex-col justify-between gap-3 relative group transition-shadow ${
+                  highlightedAudioId === String(a.id)
+                    ? 'ring-4 ring-[#FFE600] ring-offset-2'
+                    : ''
+                }`}
               >
                 <div className="flex items-start gap-3">
                   <div
                     className="relative w-20 h-24 rounded-xl border-2 border-[var(--border-ink)] overflow-hidden shrink-0 bg-[#111113] shadow-comic-sm cursor-pointer"
-                    onClick={() => navigate(`/player/${a.id}`)}
+                    onClick={() => handleOpenAudioDetail(a.id)}
                   >
                     <img
                       src={a.thumbnailUrl || '/wavelink-icon.png'}
                       alt={a.title}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                     {isCurrentlyPlaying && (
@@ -431,7 +574,7 @@ export const LibraryPage: React.FC = () => {
                       </div>
                       <h3
                         className="font-extrabold text-xs md:text-sm text-[var(--ink-primary)] truncate cursor-pointer hover:text-[#3A86FF] transition-colors mt-1"
-                        onClick={() => navigate(`/player/${a.id}`)}
+                        onClick={() => handleOpenAudioDetail(a.id)}
                       >
                         {a.title}
                       </h3>
@@ -472,7 +615,7 @@ export const LibraryPage: React.FC = () => {
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
-                      onClick={() => navigate(`/player/${a.id}`)}
+                      onClick={() => handleOpenAudioDetail(a.id)}
                       className="btn-comic text-[11px] py-1 px-2.5"
                     >
                       <ListMusic className="w-3.5 h-3.5" strokeWidth={2.25} />
@@ -524,11 +667,15 @@ export const LibraryPage: React.FC = () => {
         <Pagination
           currentPage={safeCurrentPage}
           totalPages={totalPages}
-          totalItems={uniqueAudios.length}
+          totalItems={totalItems}
           pageSize={pageSize}
           onPageChange={(p) => {
+            clearLibraryReturnState();
             setCurrentPage(p);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            syncPageToUrl(p);
+            try {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            } catch {}
           }}
         />
       )}

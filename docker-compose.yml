@@ -23,12 +23,15 @@ services:
   # Nhẹ, siêu tốc, tiêu thụ chỉ ~25MB - 50MB RAM
   # ============================================================================
   backend:
-    image: ${BACKEND_IMAGE:-ghcr.io/tranducanh3103/wavelink-backend:latest}
+    image: ${BACKEND_IMAGE:-ghcr.io/tranducanh3103/wavelink-audio-app-backend:latest}
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: wavelink-backend
     restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=wavelink"
     ports:
       - "${BACKEND_PORT:-8080}:8080"
     environment:
@@ -67,6 +70,8 @@ services:
       - STREAM_BASE_URL=${STREAM_BASE_URL:-}
       - YTDLP_COOKIES_FILE=${YTDLP_COOKIES_FILE:-}
       - TRUSTED_PROXIES=${TRUSTED_PROXIES:-}
+      - GOMEMLIMIT=${GOMEMLIMIT:-128MiB}
+      - GOGC=${GOGC:-75}
     networks:
       - wavelink-net
     healthcheck:
@@ -148,7 +153,7 @@ services:
       - fullstack
       - frontend
       - all
-    image: ${FRONTEND_IMAGE:-ghcr.io/tranducanh3103/wavelink-frontend:latest}
+    image: ${FRONTEND_IMAGE:-ghcr.io/tranducanh3103/wavelink-audio-app-frontend:latest}
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -183,12 +188,15 @@ services:
     profiles:
       - streamer
       - all
-    image: ${BACKEND_IMAGE:-ghcr.io/tranducanh3103/wavelink-backend:latest}
+    image: ${BACKEND_IMAGE:-ghcr.io/tranducanh3103/wavelink-audio-app-backend:latest}
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: wavelink-streamer
     restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=wavelink"
     entrypoint: ["/app/wavelink-stream"]
     ports:
       - "${STREAM_BIND_IP:-127.0.0.1}:${STREAM_PORT:-8081}:8081"
@@ -204,6 +212,8 @@ services:
       - STREAM_CHUNK_SIZE_BYTES=${STREAM_CHUNK_SIZE_BYTES:-10485760}
       - STREAM_AUDIO_FORMAT=${STREAM_AUDIO_FORMAT:-bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio}
       - YTDLP_COOKIES_FILE=${YTDLP_COOKIES_FILE:-}
+      - GOMEMLIMIT=${GOMEMLIMIT:-128MiB}
+      - GOGC=${GOGC:-75}
     networks:
       - wavelink-net
     healthcheck:
@@ -245,6 +255,42 @@ services:
       driver: "json-file"
       options:
         max-size: "10m"
+        max-file: "2"
+
+  # ============================================================================
+  # 6. WATCHTOWER (Optional Auto-CD for Home Server / VPS)
+  # Profile: watchtower, all
+  # ============================================================================
+  watchtower:
+    profiles:
+      - watchtower
+      - all
+    image: containrrr/watchtower:latest
+    container_name: wavelink-watchtower
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.scope=wavelink"
+    environment:
+      - DOCKER_API_VERSION=1.44
+      - WATCHTOWER_SCOPE=wavelink
+      - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=${WATCHTOWER_POLL_INTERVAL:-120}
+      - WATCHTOWER_INCLUDE_RESTARTING=true
+      - TZ=${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 64M
+        reservations:
+          memory: 16M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
         max-file: "2"
 
 volumes:

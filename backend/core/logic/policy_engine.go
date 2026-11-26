@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"fmt"
 	"time"
 
 	"audio-app-backend/core/domain"
@@ -9,6 +10,17 @@ import (
 const (
 	MaxFreeImportsPerDay = 5
 )
+
+// DefaultSiteConfig returns fallback runtime operational defaults.
+func DefaultSiteConfig() domain.SiteConfig {
+	return domain.SiteConfig{
+		FreeImportDailyLimit: MaxFreeImportsPerDay,
+		AllowUserImport:      true,
+		AllowGuestChat:       true,
+		MaintenanceMode:      false,
+		MaintenanceMessage:   "",
+	}
+}
 
 // IsActiveVIPOrAdmin kiểm tra quyền Admin hoặc VIP đang còn hạn sử dụng
 func IsActiveVIPOrAdmin(user domain.User) bool {
@@ -26,6 +38,11 @@ func IsActiveVIPOrAdmin(user domain.User) bool {
 
 // CanImportYouTube kiểm tra quyền nhập link YouTube theo cấp bậc người dùng
 func CanImportYouTube(user domain.User, todayImportCount int) (bool, string) {
+	return CanImportYouTubeWithConfig(user, todayImportCount, DefaultSiteConfig())
+}
+
+// CanImportYouTubeWithConfig kiểm tra quyền nhập link YouTube theo cấu hình hệ thống động
+func CanImportYouTubeWithConfig(user domain.User, todayImportCount int, cfg domain.SiteConfig) (bool, string) {
 	if IsActiveVIPOrAdmin(user) {
 		return true, ""
 	}
@@ -34,9 +51,18 @@ func CanImportYouTube(user domain.User, todayImportCount int) (bool, string) {
 		return false, "Khách vãng lai không thể nhập link. Vui lòng đăng nhập hoặc nâng cấp tài khoản."
 	}
 
+	if !cfg.AllowUserImport {
+		return false, "Tính năng tự nhập link YouTube hiện đang tạm đóng đối với tài khoản thường."
+	}
+
+	limit := cfg.FreeImportDailyLimit
+	if limit <= 0 {
+		limit = MaxFreeImportsPerDay
+	}
+
 	// Tài khoản thường (FREE)
-	if todayImportCount >= MaxFreeImportsPerDay {
-		return false, "Bạn đã dùng hết lượt nhập link miễn phí hôm nay (5 lượt/ngày). Vui lòng nâng cấp VIP để không giới hạn."
+	if todayImportCount >= limit {
+		return false, fmt.Sprintf("Bạn đã dùng hết lượt nhập link miễn phí hôm nay (%d lượt/ngày). Vui lòng nâng cấp VIP để không giới hạn.", limit)
 	}
 
 	return true, ""

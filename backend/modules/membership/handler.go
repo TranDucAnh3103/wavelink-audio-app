@@ -2,6 +2,7 @@ package membership
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -218,6 +219,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		mem.GET("/payment-info", h.GetPaymentInfo)
 		mem.POST("/payos/webhook", h.PayOSWebhook)
 		mem.GET("/me", middleware.RequireAuth(), h.GetMyMembership)
+		mem.GET("/orders", middleware.RequireAuth(), h.GetMyOrders)
 		mem.POST("/orders", middleware.RequireAuth(), h.CreateOrder)
 		mem.GET("/orders/:orderCode", middleware.RequireAuth(), h.GetOrder)
 		mem.POST("/orders/:orderCode/cancel", middleware.RequireAuth(), h.CancelOrder)
@@ -242,6 +244,7 @@ func (h *Handler) GetPackages(c *gin.Context) {
 	userID := middleware.GetCurrentUserID(c)
 
 	if userID > 0 {
+		h.reconcileUserOrders(userID)
 		var u domain.User
 		if err := h.db.First(&u, userID).Error; err == nil {
 			isVip := (u.Role == domain.RoleVIP || u.Membership == domain.MembershipVIP) &&
@@ -354,8 +357,157 @@ func (h *Handler) AdminResetPackages(c *gin.Context) {
 	response.OK(c, AvailablePackages, nil)
 }
 
+func (h *Handler) buildAuthSyncUser(u *domain.User) gin.H {
+	if u == nil {
+		return nil
+	}
+	return gin.H{
+		"id":           u.ID,
+		"username":     u.Username,
+		"role":         u.Role,
+		"membership":   u.Membership,
+		"vipExpiresAt": u.VipExpiresAt,
+	}
+}
+
+func (h *Handler) generateRefreshedToken(u *domain.User) string {
+	if u == nil || h.cfg == nil || h.cfg.JWTSecret == "" {
+		return ""
+	}
+	if tok, err := middleware.GenerateToken(*u, h.cfg.JWTSecret); err == nil {
+		return tok
+	}
+	return ""
+}
+
+// reconcilePendingOrder safely checks live PayOS state before deleting any expired/cancelled unpaid order.
+// Paid orders are NEVER deleted; if PayOS confirms PAID, the user is upgraded and the PAID record is preserved.
+func (h *Handler) reconcilePendingOrder(order *domain.MembershipOrder) (deleted bool, finalStatus string, updatedUser *domain.User, refreshedToken string) {
+	if order == nil {
+		return false, "", nil, ""
+	}
+	if order.Status == "PAID" {
+		return false, "PAID", nil, ""
+	}
+	if order.Status == "EXPIRED" || order.Status == "CANCELLED" || order.Status == "FAILED" {
+		status := order.Status
+		h.db.Delete(order)
+		return true, status, nil, ""
+	}
+
+	if order.Status == "PENDING" {
+		if order.Provider == "PAYOS" && h.payos != nil && h.payos.IsConfigured() && order.PayOSOrderCode > 0 {
+			if info, err := h.payos.GetPaymentLinkInfo(order.PayOSOrderCode); err == nil && info != nil {
+				statusUpper := strings.ToUpper(info.Status)
+				switch statusUpper {
+				case "PAID":
+					if info.AmountPaid == 0 || info.AmountPaid >= order.Amount {
+						if u, _, upErr := h.completeOrderAndUpgradeVIP(order); upErr == nil && u != nil {
+							tok := h.generateRefreshedToken(u)
+							return false, "PAID", u, tok
+						}
+					}
+				case "CANCELLED", "EXPIRED":
+					h.db.Delete(order)
+					return true, statusUpper, nil, ""
+				}
+			}
+		}
+
+		if order.Status == "PENDING" && time.Now().UTC().After(order.ExpiresAt) {
+			if order.Provider == "PAYOS" && h.payos != nil && h.payos.IsConfigured() && order.PayOSOrderCode > 0 {
+				if cancelErr := h.payos.CancelPaymentLink(order.PayOSOrderCode, "Đơn hàng quá hạn thanh toán QR"); cancelErr != nil {
+					slog.Warn("payOS auto-cancel expired order failed", "orderCode", order.OrderCode, "error", cancelErr)
+				}
+			}
+			h.db.Delete(order)
+			return true, "EXPIRED", nil, ""
+		}
+	}
+
+	return false, order.Status, nil, ""
+}
+
+func (h *Handler) reconcileUserOrders(userID uint) (*domain.User, string) {
+	if userID == 0 {
+		return nil, ""
+	}
+	h.db.Where("user_id = ? AND status IN ?", userID, []string{"EXPIRED", "CANCELLED", "FAILED"}).
+		Delete(&domain.MembershipOrder{})
+
+	var pending []domain.MembershipOrder
+	if err := h.db.Where("user_id = ? AND status = ?", userID, "PENDING").
+		Order("created_at DESC").
+		Find(&pending).Error; err != nil {
+		return nil, ""
+	}
+
+	var latestUser *domain.User
+	var latestToken string
+	for i := range pending {
+		_, _, u, tok := h.reconcilePendingOrder(&pending[i])
+		if u != nil {
+			latestUser = u
+		}
+		if tok != "" {
+			latestToken = tok
+		}
+	}
+	return latestUser, latestToken
+}
+
+// CleanupExpiredOrders deletes stale unpaid orders and safely reconciles/cancels expired PENDING orders.
+func (h *Handler) CleanupExpiredOrders() int {
+	cleaned := 0
+	if res := h.db.Where("status IN ?", []string{"EXPIRED", "CANCELLED", "FAILED"}).
+		Delete(&domain.MembershipOrder{}); res.Error == nil {
+		cleaned += int(res.RowsAffected)
+	}
+
+	var expiredPending []domain.MembershipOrder
+	now := time.Now().UTC()
+	if err := h.db.Where("status = ? AND expires_at < ?", "PENDING", now).
+		Find(&expiredPending).Error; err != nil {
+		return cleaned
+	}
+
+	for i := range expiredPending {
+		deleted, _, _, _ := h.reconcilePendingOrder(&expiredPending[i])
+		if deleted {
+			cleaned++
+		}
+	}
+	return cleaned
+}
+
+// StartExpirationSweeper periodically sweeps expired unpaid VIP orders until ctx is cancelled.
+func StartExpirationSweeper(ctx context.Context, db *gorm.DB, cfg *config.Config, interval time.Duration) {
+	if db == nil || interval <= 0 {
+		return
+	}
+	h := NewHandler(db, cfg)
+	go func() {
+		if n := h.CleanupExpiredOrders(); n > 0 {
+			slog.Info("Cleaned up expired VIP orders on startup", "count", n)
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if n := h.CleanupExpiredOrders(); n > 0 {
+					slog.Info("Swept expired unpaid VIP orders", "count", n)
+				}
+			}
+		}
+	}()
+}
+
 func (h *Handler) GetMyMembership(c *gin.Context) {
 	userID := middleware.GetCurrentUserID(c)
+	_, refreshedToken := h.reconcileUserOrders(userID)
 
 	var u domain.User
 	if err := h.db.First(&u, userID).Error; err != nil {
@@ -381,23 +533,90 @@ func (h *Handler) GetMyMembership(c *gin.Context) {
 		daysRemaining = int(math.Ceil(u.VipExpiresAt.Sub(now).Hours() / 24.0))
 	}
 
-	// Lấy đơn hàng gần nhất
-	var latestOrder domain.MembershipOrder
-	var latestOrderPtr *domain.MembershipOrder
-	if err := h.db.Where("user_id = ?", userID).Order("created_at DESC").First(&latestOrder).Error; err == nil {
-		latestOrderPtr = &latestOrder
+	payInfo := h.GetPaymentSettings()
+
+	var pendingOrder domain.MembershipOrder
+	var activePendingResp gin.H
+	if err := h.db.Where("user_id = ? AND status = ? AND expires_at > ?", userID, "PENDING", now).
+		Order("created_at DESC").First(&pendingOrder).Error; err == nil {
+		activePendingResp = h.buildOrderResponse(pendingOrder, payInfo)
 	}
 
-	response.OK(c, gin.H{
-		"userId":        u.ID,
-		"username":      u.Username,
-		"role":          u.Role,
-		"membership":    u.Membership,
-		"isVip":         isVip,
-		"vipExpiresAt":  u.VipExpiresAt,
-		"daysRemaining": daysRemaining,
-		"latestOrder":   latestOrderPtr,
-	}, nil)
+	var paidOrder domain.MembershipOrder
+	var latestPaidResp gin.H
+	if err := h.db.Where("user_id = ? AND status = ?", userID, "PAID").
+		Order("paid_at DESC, created_at DESC").First(&paidOrder).Error; err == nil {
+		latestPaidResp = h.buildOrderResponse(paidOrder, payInfo)
+	}
+
+	var paidOrdersCount int64
+	h.db.Model(&domain.MembershipOrder{}).Where("user_id = ? AND status = ?", userID, "PAID").Count(&paidOrdersCount)
+
+	latestOrderResp := activePendingResp
+	if latestOrderResp == nil {
+		latestOrderResp = latestPaidResp
+	}
+
+	payload := gin.H{
+		"userId":             u.ID,
+		"username":           u.Username,
+		"role":               u.Role,
+		"membership":         u.Membership,
+		"isVip":              isVip,
+		"vipExpiresAt":       u.VipExpiresAt,
+		"daysRemaining":      daysRemaining,
+		"latestOrder":        latestOrderResp,
+		"activePendingOrder": activePendingResp,
+		"latestPaidOrder":    latestPaidResp,
+		"paidOrdersCount":    paidOrdersCount,
+	}
+	if refreshedToken != "" {
+		payload["token"] = refreshedToken
+	}
+
+	response.OK(c, payload, nil)
+}
+
+func (h *Handler) GetMyOrders(c *gin.Context) {
+	userID := middleware.GetCurrentUserID(c)
+	updatedUser, refreshedToken := h.reconcileUserOrders(userID)
+
+	var orders []domain.MembershipOrder
+	if err := h.db.Where("user_id = ? AND status IN ?", userID, []string{"PENDING", "PAID"}).
+		Order("CASE WHEN status = 'PENDING' THEN 0 ELSE 1 END ASC, COALESCE(paid_at, created_at) DESC, created_at DESC").
+		Find(&orders).Error; err != nil {
+		response.Internal(c, "Không thể tải danh sách đơn hàng VIP")
+		return
+	}
+
+	payInfo := h.GetPaymentSettings()
+	items := make([]gin.H, 0, len(orders))
+	var activePendingOrder gin.H
+	paidCount := 0
+	for _, o := range orders {
+		item := h.buildOrderResponse(o, payInfo)
+		items = append(items, item)
+		if o.Status == "PENDING" && activePendingOrder == nil {
+			activePendingOrder = item
+		}
+		if o.Status == "PAID" {
+			paidCount++
+		}
+	}
+
+	payload := gin.H{
+		"orders":             items,
+		"activePendingOrder": activePendingOrder,
+		"paidCount":          paidCount,
+	}
+	if updatedUser != nil {
+		payload["user"] = h.buildAuthSyncUser(updatedUser)
+		if refreshedToken != "" {
+			payload["token"] = refreshedToken
+		}
+	}
+
+	response.OK(c, payload, nil)
 }
 
 func generateNumericOrderCode() int64 {
@@ -425,35 +644,44 @@ func (h *Handler) buildOrderResponse(order domain.MembershipOrder, payInfo Payme
 		transferContent = order.OrderCode
 	}
 
+	remainingSeconds := 0
+	if order.Status == "PENDING" {
+		if sec := int(time.Until(order.ExpiresAt).Seconds()); sec > 0 {
+			remainingSeconds = sec
+		}
+	}
+
 	return gin.H{
-		"id":              order.ID,
-		"orderCode":       order.OrderCode,
-		"payosOrderCode":  order.PayOSOrderCode,
-		"paymentLinkId":   order.PaymentLinkID,
-		"checkoutUrl":     order.CheckoutURL,
-		"qrCode":          order.QRCodeData,
-		"qrCodeUrl":       order.QRCodeURL,
-		"provider":        order.Provider,
-		"userId":          order.UserID,
-		"packageId":       order.PackageID,
-		"packageName":     order.PackageName,
-		"amount":          order.Amount,
-		"priceVND":        order.Amount,
-		"durationDays":    order.DurationDays,
-		"status":          order.Status,
-		"bankBin":         order.BankBIN,
-		"bankName":        bankName,
-		"accountNumber":   accountNumber,
-		"accountName":     accountName,
-		"transferContent": transferContent,
-		"expiresAt":       order.ExpiresAt,
-		"paidAt":          order.PaidAt,
-		"createdAt":       order.CreatedAt,
+		"id":               order.ID,
+		"orderCode":        order.OrderCode,
+		"payosOrderCode":   order.PayOSOrderCode,
+		"paymentLinkId":    order.PaymentLinkID,
+		"checkoutUrl":      order.CheckoutURL,
+		"qrCode":           order.QRCodeData,
+		"qrCodeUrl":        order.QRCodeURL,
+		"provider":         order.Provider,
+		"userId":           order.UserID,
+		"packageId":        order.PackageID,
+		"packageName":      order.PackageName,
+		"amount":           order.Amount,
+		"priceVND":         order.Amount,
+		"durationDays":     order.DurationDays,
+		"status":           order.Status,
+		"bankBin":          order.BankBIN,
+		"bankName":         bankName,
+		"accountNumber":    accountNumber,
+		"accountName":      accountName,
+		"transferContent":  transferContent,
+		"expiresAt":        order.ExpiresAt,
+		"remainingSeconds": remainingSeconds,
+		"paidAt":           order.PaidAt,
+		"createdAt":        order.CreatedAt,
 	}
 }
 
 func (h *Handler) CreateOrder(c *gin.Context) {
 	userID := middleware.GetCurrentUserID(c)
+	h.reconcileUserOrders(userID)
 
 	var req CreateOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -505,9 +733,29 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	}
 
 	payInfo := h.GetPaymentSettings()
+	now := time.Now().UTC()
+
+	// Reuse existing unexpired PENDING order for same package (> 2m left), or clean up superseded pending orders
+	var existingPending []domain.MembershipOrder
+	if err := h.db.Where("user_id = ? AND status = ?", userID, "PENDING").Order("created_at DESC").Find(&existingPending).Error; err == nil {
+		for i := range existingPending {
+			existing := existingPending[i]
+			if existing.PackageID == pkg.ID && existing.Amount == amount && existing.ExpiresAt.Sub(now) > 2*time.Minute {
+				resp := h.buildOrderResponse(existing, payInfo)
+				resp["reused"] = true
+				response.Created(c, resp)
+				return
+			}
+			if existing.Provider == "PAYOS" && h.payos != nil && h.payos.IsConfigured() && existing.PayOSOrderCode > 0 {
+				_ = h.payos.CancelPaymentLink(existing.PayOSOrderCode, "Người dùng tạo đơn thanh toán mới")
+			}
+			h.db.Delete(&existing)
+		}
+	}
+
 	numericCode := generateNumericOrderCode()
 	orderCode := strconv.FormatInt(numericCode, 10)
-	expiresAt := time.Now().UTC().Add(15 * time.Minute)
+	expiresAt := now.Add(15 * time.Minute)
 
 	shortPkg := strings.ReplaceAll(pkg.ID, "_", "")
 	description := external.SanitizePayOSDescription(fmt.Sprintf("WL %s U%d", shortPkg, userID))
@@ -624,6 +872,7 @@ func (h *Handler) completeOrderAndUpgradeVIP(order *domain.MembershipOrder) (*do
 	upgraded := false
 	var updatedUser domain.User
 
+	var pendingNotif *domain.Notification
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&domain.MembershipOrder{}).
 			Where("id = ? AND status = ?", order.ID, "PENDING").
@@ -666,7 +915,7 @@ func (h *Handler) completeOrderAndUpgradeVIP(order *domain.MembershipOrder) (*do
 			return err
 		}
 
-		notif := domain.Notification{
+		pendingNotif = &domain.Notification{
 			UserID:    order.UserID,
 			Title:     "Chúc mừng bạn đã nâng cấp VIP thành công!",
 			Message:   fmt.Sprintf("Đơn hàng #%s (%s) đã được xác nhận qua payOS. Thời hạn VIP tới %s.", order.OrderCode, order.PackageName, newExpiry.Format("02/01/2006")),
@@ -675,15 +924,14 @@ func (h *Handler) completeOrderAndUpgradeVIP(order *domain.MembershipOrder) (*do
 			IsRead:    false,
 			CreatedAt: now,
 		}
-		if err := tx.Create(&notif).Error; err != nil {
-			return err
-		}
-
 		return nil
 	})
 
 	if err != nil {
 		return nil, false, err
+	}
+	if pendingNotif != nil {
+		_, _ = notification.CreateSafeNotification(h.db, *pendingNotif)
 	}
 
 	_ = h.db.First(order, order.ID)
@@ -707,48 +955,21 @@ func (h *Handler) GetOrder(c *gin.Context) {
 		return
 	}
 
-	var updatedUser *domain.User
-	var refreshedToken string
-
-	// Live sync with PayOS API while PENDING (handles instant confirmation even without public webhook URL)
-	if order.Status == "PENDING" && order.Provider == "PAYOS" && h.payos != nil && h.payos.IsConfigured() && order.PayOSOrderCode > 0 {
-		if info, err := h.payos.GetPaymentLinkInfo(order.PayOSOrderCode); err == nil && info != nil {
-			switch strings.ToUpper(info.Status) {
-			case "PAID":
-				if u, _, upErr := h.completeOrderAndUpgradeVIP(&order); upErr == nil && u != nil {
-					updatedUser = u
-					if h.cfg != nil && h.cfg.JWTSecret != "" {
-						if tok, tokErr := middleware.GenerateToken(*u, h.cfg.JWTSecret); tokErr == nil {
-							refreshedToken = tok
-						}
-					}
-				}
-			case "CANCELLED":
-				h.db.Model(&order).Update("status", "CANCELLED")
-				order.Status = "CANCELLED"
-			case "EXPIRED":
-				h.db.Model(&order).Update("status", "EXPIRED")
-				order.Status = "EXPIRED"
-			}
-		}
-	}
-
-	// Kiểm tra nếu quá 15 phút chưa thanh toán thì đánh dấu EXPIRED
-	if order.Status == "PENDING" && time.Now().UTC().After(order.ExpiresAt) {
-		h.db.Model(&order).Update("status", "EXPIRED")
-		order.Status = "EXPIRED"
+	deleted, finalStatus, updatedUser, refreshedToken := h.reconcilePendingOrder(&order)
+	if deleted {
+		response.OK(c, gin.H{
+			"orderCode": order.OrderCode,
+			"status":    finalStatus,
+			"deleted":   true,
+			"message":   "Đơn hàng đã hết hạn hoặc bị hủy và đã được xóa khỏi lịch sử",
+		}, nil)
+		return
 	}
 
 	payInfo := h.GetPaymentSettings()
 	orderData := h.buildOrderResponse(order, payInfo)
 	if updatedUser != nil {
-		orderData["user"] = gin.H{
-			"id":           updatedUser.ID,
-			"username":     updatedUser.Username,
-			"role":         updatedUser.Role,
-			"membership":   updatedUser.Membership,
-			"vipExpiresAt": updatedUser.VipExpiresAt,
-		}
+		orderData["user"] = h.buildAuthSyncUser(updatedUser)
 		if refreshedToken != "" {
 			orderData["token"] = refreshedToken
 		}
@@ -767,22 +988,45 @@ func (h *Handler) CancelOrder(c *gin.Context) {
 		return
 	}
 
-	if order.Status == "PAID" {
-		response.BadRequest(c, "Đơn hàng đã thanh toán thành công, không thể hủy")
+	// Always reconcile live status first so a just-paid order is NEVER cancelled or deleted
+	deleted, finalStatus, updatedUser, refreshedToken := h.reconcilePendingOrder(&order)
+	if finalStatus == "PAID" {
+		payload := gin.H{
+			"message":     "Đơn hàng đã thanh toán thành công, tài khoản VIP đã được kích hoạt!",
+			"orderCode":   order.OrderCode,
+			"status":      "PAID",
+			"alreadyPaid": true,
+		}
+		if updatedUser != nil {
+			payload["user"] = h.buildAuthSyncUser(updatedUser)
+			if refreshedToken != "" {
+				payload["token"] = refreshedToken
+			}
+		}
+		response.OK(c, payload, nil)
+		return
+	}
+	if deleted {
+		response.OK(c, gin.H{
+			"message":   "Đơn hàng đã hết hạn và được xóa khỏi lịch sử",
+			"orderCode": order.OrderCode,
+			"status":    finalStatus,
+			"deleted":   true,
+		}, nil)
 		return
 	}
 
 	if order.Provider == "PAYOS" && h.payos != nil && h.payos.IsConfigured() && order.PayOSOrderCode > 0 {
-		_ = h.payos.CancelPaymentLink(order.PayOSOrderCode, "Người dùng hủy đơn hàng")
+		_ = h.payos.CancelPaymentLink(order.PayOSOrderCode, "Người dùng hủy đơn thanh toán")
 	}
 
-	h.db.Model(&order).Update("status", "CANCELLED")
-	order.Status = "CANCELLED"
+	h.db.Delete(&order)
 
 	response.OK(c, gin.H{
-		"message":   "Đã hủy đơn hàng thanh toán",
+		"message":   "Đã hủy và xóa đơn hàng chưa thanh toán",
 		"orderCode": order.OrderCode,
-		"status":    order.Status,
+		"status":    "CANCELLED",
+		"deleted":   true,
 	}, nil)
 }
 
@@ -843,15 +1087,21 @@ func (h *Handler) PayOSWebhook(c *gin.Context) {
 		return
 	}
 
-	if payload.Code != "00" || !payload.Success {
-		c.JSON(http.StatusOK, gin.H{"success": true, "message": "ignored non-success webhook"})
-		return
-	}
-
 	var order domain.MembershipOrder
 	if err := h.db.Where("payos_order_code = ? OR order_code = ?", payosOrderCode, strconv.FormatInt(payosOrderCode, 10)).First(&order).Error; err != nil {
 		slog.Warn("payOS webhook order not found", "payosOrderCode", payosOrderCode)
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": "order not found"})
+		return
+	}
+
+	if payload.Code != "00" || !payload.Success {
+		if statusStr, ok := payload.Data["status"].(string); ok {
+			st := strings.ToUpper(statusStr)
+			if order.Status == "PENDING" && (st == "CANCELLED" || st == "EXPIRED") {
+				h.db.Delete(&order)
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "ignored non-success webhook"})
 		return
 	}
 
@@ -918,12 +1168,13 @@ func (h *Handler) SimulatePayment(c *gin.Context) {
 	}
 
 	if req.Status == "FAILED" {
-		h.db.Model(&order).Update("status", "FAILED")
-		order.Status = "FAILED"
+		h.db.Delete(&order)
 		response.OK(c, gin.H{
-			"success": false,
-			"message": "Giao dịch mô phỏng thất bại hoặc đã bị người dùng hủy",
-			"order":   order,
+			"success":   false,
+			"deleted":   true,
+			"orderCode": order.OrderCode,
+			"status":    "FAILED",
+			"message":   "Giao dịch mô phỏng thất bại, đơn hàng đã bị hủy và xóa khỏi lịch sử",
 		}, nil)
 		return
 	}
@@ -1038,6 +1289,21 @@ func (h *Handler) RequestRefund(c *gin.Context) {
 	_ = h.db.First(&u, userID)
 
 	now := time.Now().UTC()
+	ticket := domain.SupportTicket{
+		UserID:    userID,
+		Username:  u.Username,
+		Kind:      "REFUND",
+		Category:  "Hoàn tiền",
+		OrderCode: strings.TrimSpace(req.OrderCode),
+		BankInfo:  strings.TrimSpace(req.BankInfo),
+		Subject:   fmt.Sprintf("Yêu cầu hoàn tiền đơn %s", strings.TrimSpace(req.OrderCode)),
+		Content:   strings.TrimSpace(req.Reason),
+		Status:    "PENDING",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	_ = h.db.Create(&ticket).Error
+
 	notif := domain.Notification{
 		UserID:    userID,
 		Title:     "Yêu cầu hoàn tiền đã được tiếp nhận",
@@ -1053,7 +1319,7 @@ func (h *Handler) RequestRefund(c *gin.Context) {
 	h.notifyAdmins(
 		fmt.Sprintf("[Hoàn tiền] Yêu cầu từ %s (Đơn: %s)", u.Username, req.OrderCode),
 		fmt.Sprintf("Người dùng #%d (%s) yêu cầu hoàn tiền đơn '%s'. Lý do: %s. Thông tin nhận hoàn: %s", userID, u.Username, req.OrderCode, req.Reason, req.BankInfo),
-		"/admin/vip",
+		"/admin/tickets",
 	)
 
 	response.OK(c, gin.H{
@@ -1079,6 +1345,19 @@ func (h *Handler) SubmitComplaint(c *gin.Context) {
 	_ = h.db.First(&u, userID)
 
 	now := time.Now().UTC()
+	ticket := domain.SupportTicket{
+		UserID:    userID,
+		Username:  u.Username,
+		Kind:      "COMPLAINT",
+		Category:  category,
+		Subject:   strings.TrimSpace(req.Subject),
+		Content:   strings.TrimSpace(req.Content),
+		Status:    "PENDING",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	_ = h.db.Create(&ticket).Error
+
 	notif := domain.Notification{
 		UserID:    userID,
 		Title:     fmt.Sprintf("Đã tiếp nhận góp ý/khiếu nại [%s]", category),
@@ -1094,7 +1373,7 @@ func (h *Handler) SubmitComplaint(c *gin.Context) {
 	h.notifyAdmins(
 		fmt.Sprintf("[Khiếu nại - %s] %s", category, req.Subject),
 		fmt.Sprintf("Từ %s (#%d): %s", u.Username, userID, req.Content),
-		"/admin/community",
+		"/admin/tickets",
 	)
 
 	response.OK(c, gin.H{

@@ -58,6 +58,8 @@ export interface AudioFilter {
   userId?: number | string;
   createdBy?: number | string;
   sort?: string;
+  fields?: 'lite' | 'catalog';
+  all?: boolean;
 }
 
 export interface YouTubePreviewData {

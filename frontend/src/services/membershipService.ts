@@ -1,6 +1,144 @@
 import { axiosClient } from '@/lib/axiosClient';
-import { MembershipPackage, MembershipOrder, MyMembership, PaymentInfo } from '@/types';
+import {
+  MembershipPackage,
+  MembershipOrder,
+  MembershipOrdersResponse,
+  CancelOrderResult,
+  MyMembership,
+  PaymentInfo,
+} from '@/types';
 import { useAuthStore } from '@/stores/authStore';
+
+const LOCAL_ORDERS_PREFIX = 'wavelink_vip_orders_';
+
+function getLocalOrdersKey(userId?: number | string): string {
+  return `${LOCAL_ORDERS_PREFIX}${userId ?? 'guest'}`;
+}
+
+function isOrderExpired(order: MembershipOrder): boolean {
+  if (order.status !== 'PENDING' || !order.expiresAt) return false;
+  const expMs = new Date(order.expiresAt).getTime();
+  return !Number.isNaN(expMs) && expMs <= Date.now();
+}
+
+function normalizeOrder(order: MembershipOrder): MembershipOrder {
+  const remainingSeconds =
+    order.status === 'PENDING' && order.expiresAt
+      ? Math.max(0, Math.floor((new Date(order.expiresAt).getTime() - Date.now()) / 1000))
+      : 0;
+  return {
+    ...order,
+    priceVND: order.priceVND || order.amount || 0,
+    amount: order.amount || order.priceVND || 0,
+    bankName: order.bankName || 'VietQR / payOS',
+    accountNumber: order.accountNumber || '',
+    accountName: order.accountName || '',
+    transferContent: order.transferContent || order.orderCode,
+    remainingSeconds: order.remainingSeconds ?? remainingSeconds,
+  };
+}
+
+function syncAuthFromPaymentPayload(payload?: {
+  token?: string;
+  user?: MembershipOrder['user'];
+}): void {
+  if (!payload) return;
+  if (payload.token && typeof localStorage !== 'undefined') {
+    localStorage.setItem('auth_token', payload.token);
+  }
+  if (payload.user) {
+    useAuthStore.getState().updateUser({
+      role: payload.user.role,
+      membership: payload.user.membership as 'FREE' | 'VIP' | undefined,
+      vipExpiresAt: payload.user.vipExpiresAt || undefined,
+    });
+  }
+}
+
+function sortLocalOrders(orders: MembershipOrder[]): MembershipOrder[] {
+  return [...orders].sort((a, b) => {
+    if (a.status === 'PENDING' && b.status !== 'PENDING') return -1;
+    if (a.status !== 'PENDING' && b.status === 'PENDING') return 1;
+    const tA = new Date(a.paidAt || a.createdAt || 0).getTime();
+    const tB = new Date(b.paidAt || b.createdAt || 0).getTime();
+    return tB - tA;
+  });
+}
+
+function readAndCleanLocalOrders(userId?: number | string): {
+  orders: MembershipOrder[];
+  prunedOrderCodes: string[];
+} {
+  if (typeof localStorage === 'undefined') {
+    return { orders: [], prunedOrderCodes: [] };
+  }
+  const key = getLocalOrdersKey(userId);
+  let rawList: MembershipOrder[] = [];
+  const raw = localStorage.getItem(key);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) rawList = parsed;
+    } catch {}
+  }
+
+  // Also absorb legacy active_membership_order if missing from list
+  const legacyRaw = localStorage.getItem('active_membership_order');
+  if (legacyRaw) {
+    try {
+      const legacy = JSON.parse(legacyRaw) as MembershipOrder;
+      if (
+        legacy &&
+        legacy.orderCode &&
+        (!userId || !legacy.userId || String(legacy.userId) === String(userId)) &&
+        !rawList.some((o) => o.orderCode === legacy.orderCode)
+      ) {
+        rawList.unshift(legacy);
+      }
+    } catch {}
+  }
+
+  const kept: MembershipOrder[] = [];
+  const prunedOrderCodes: string[] = [];
+  for (const item of rawList) {
+    if (!item || !item.orderCode) continue;
+    if (item.status === 'EXPIRED' || item.status === 'CANCELLED' || item.status === 'FAILED') {
+      prunedOrderCodes.push(item.orderCode);
+      continue;
+    }
+    if (isOrderExpired(item)) {
+      prunedOrderCodes.push(item.orderCode);
+      continue;
+    }
+    if (item.status === 'PENDING' || item.status === 'PAID') {
+      kept.push(normalizeOrder(item));
+    }
+  }
+
+  const sorted = sortLocalOrders(kept);
+  if (prunedOrderCodes.length > 0 || (raw === null && sorted.length > 0)) {
+    try {
+      localStorage.setItem(key, JSON.stringify(sorted));
+    } catch {}
+  }
+  if (legacyRaw) {
+    try {
+      const legacy = JSON.parse(legacyRaw) as MembershipOrder;
+      if (legacy && prunedOrderCodes.includes(legacy.orderCode)) {
+        localStorage.removeItem('active_membership_order');
+      }
+    } catch {}
+  }
+
+  return { orders: sorted, prunedOrderCodes };
+}
+
+function writeLocalOrders(userId: number | string | undefined, orders: MembershipOrder[]): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(getLocalOrdersKey(userId), JSON.stringify(sortLocalOrders(orders)));
+  } catch {}
+}
 
 const FALLBACK_PAYMENT_INFO: PaymentInfo = {
   bankName: 'MB Bank (Quân Đội)',
@@ -236,7 +374,28 @@ export const membershipService = {
       try {
         const res = await axiosClient.get<{ success: boolean; data: MyMembership }>('/membership/me');
         if (res.data.success && res.data.data) {
-          return res.data.data;
+          const data = res.data.data;
+          if (data.token || (data.role && data.membership)) {
+            const currentUser = useAuthStore.getState().user;
+            syncAuthFromPaymentPayload({
+              token: data.token,
+              user: currentUser
+                ? {
+                    id: currentUser.id,
+                    username: currentUser.username,
+                    role: data.role as 'ADMIN' | 'VIP' | 'USER' | 'GUEST',
+                    membership: data.membership,
+                    vipExpiresAt: data.vipExpiresAt,
+                  }
+                : undefined,
+            });
+          }
+          return {
+            ...data,
+            activePendingOrder: data.activePendingOrder ? normalizeOrder(data.activePendingOrder) : null,
+            latestPaidOrder: data.latestPaidOrder ? normalizeOrder(data.latestPaidOrder) : null,
+            latestOrder: data.latestOrder ? normalizeOrder(data.latestOrder) : null,
+          };
         }
       } catch (err) {
         console.warn('getMyMembership failed:', err);
@@ -245,6 +404,12 @@ export const membershipService = {
 
     // Local / Offline fallback
     const user = useAuthStore.getState().user;
+    const { orders } = readAndCleanLocalOrders(user?.id);
+    const activePendingOrder = orders.find((o) => o.status === 'PENDING') || null;
+    const paidOrders = orders.filter((o) => o.status === 'PAID');
+    const latestPaidOrder = paidOrders[0] || null;
+    const latestOrder = activePendingOrder || latestPaidOrder;
+
     if (user && (user.role === 'VIP' || user.role === 'ADMIN' || user.membership === 'VIP')) {
       let daysRemaining = 30;
       if (user.vipExpiresAt) {
@@ -259,10 +424,60 @@ export const membershipService = {
         isVip: true,
         vipExpiresAt: user.vipExpiresAt,
         daysRemaining,
+        activePendingOrder,
+        latestPaidOrder,
+        latestOrder,
+        paidOrdersCount: paidOrders.length,
       };
     }
 
-    return { role: user?.role || 'GUEST', isVip: false };
+    return {
+      role: user?.role || 'GUEST',
+      isVip: false,
+      activePendingOrder,
+      latestPaidOrder,
+      latestOrder,
+      paidOrdersCount: paidOrders.length,
+    };
+  },
+
+  async getMyOrders(isLive = true): Promise<MembershipOrdersResponse> {
+    if (isLive) {
+      try {
+        const res = await axiosClient.get<{ success: boolean; data: MembershipOrdersResponse }>('/membership/orders');
+        if (res.data.success && res.data.data) {
+          const data = res.data.data;
+          syncAuthFromPaymentPayload({ token: data.token, user: data.user });
+          const orders = Array.isArray(data.orders) ? data.orders.map(normalizeOrder) : [];
+          const activePendingOrder = data.activePendingOrder
+            ? normalizeOrder(data.activePendingOrder)
+            : orders.find((o) => o.status === 'PENDING') || null;
+          const paidCount =
+            typeof data.paidCount === 'number'
+              ? data.paidCount
+              : orders.filter((o) => o.status === 'PAID').length;
+          return {
+            orders,
+            activePendingOrder,
+            paidCount,
+            token: data.token,
+            user: data.user,
+          };
+        }
+      } catch (err) {
+        console.warn('getMyOrders live failed, fallback to local:', err);
+      }
+    }
+
+    const user = useAuthStore.getState().user;
+    const { orders } = readAndCleanLocalOrders(user?.id);
+    const activePendingOrder = orders.find((o) => o.status === 'PENDING') || null;
+    const paidCount = orders.filter((o) => o.status === 'PAID').length;
+    return {
+      orders,
+      activePendingOrder,
+      paidCount,
+    };
   },
 
   async createOrder(packageId: string, isLive = true): Promise<MembershipOrder> {
@@ -272,16 +487,7 @@ export const membershipService = {
         { packageId }
       );
       if (res.data.success && res.data.data) {
-        const order = res.data.data;
-        return {
-          ...order,
-          priceVND: order.priceVND || order.amount,
-          amount: order.amount || order.priceVND || 0,
-          bankName: order.bankName || 'VietQR / payOS',
-          accountNumber: order.accountNumber || '',
-          accountName: order.accountName || '',
-          transferContent: order.transferContent || order.orderCode,
-        };
+        return normalizeOrder(res.data.data);
       }
       throw new Error(res.data.error?.message || 'Không thể khởi tạo đơn thanh toán payOS');
     }
@@ -303,22 +509,37 @@ export const membershipService = {
       throw new Error('Bạn đã đăng ký gói này và gói hiện đang bị khóa. Vui lòng chọn nâng cấp lên các gói cao hơn để cộng dồn thời hạn VIP!');
     }
 
+    const amount = pkg.priceVND || pkg.amount || 0;
+    const { orders } = readAndCleanLocalOrders(user?.id);
+    const existingSame = orders.find(
+      (o) =>
+        o.status === 'PENDING' &&
+        o.packageId === pkg.id &&
+        o.amount === amount &&
+        o.expiresAt &&
+        new Date(o.expiresAt).getTime() - Date.now() > 2 * 60 * 1000
+    );
+    if (existingSame) {
+      return { ...normalizeOrder(existingSame), reused: true };
+    }
+
     const payInfo = await this.getPaymentInfo(false);
     const randNum = Math.floor(100000 + Math.random() * 900000);
     const prefix = payInfo.notePrefix || 'VIP';
     const orderCode = `${prefix}-${user?.id || 1}-${randNum}`;
-    const amount = pkg.priceVND || pkg.amount || 0;
     const qrDescription = encodeURIComponent(`Thanh toan don ${orderCode}`);
     const encodedAccName = encodeURIComponent(payInfo.accountName);
     const qrCodeUrl = `https://img.vietqr.io/image/970422-${payInfo.accountNumber}-compact2.png?amount=${amount}&addInfo=${qrDescription}&accountName=${encodedAccName}`;
 
-    const mockOrder: MembershipOrder = {
+    const mockOrder: MembershipOrder = normalizeOrder({
       orderCode,
+      userId: user?.id,
       packageId: pkg.id,
       packageName: pkg.name,
       amount,
       priceVND: amount,
       durationDays: pkg.durationDays,
+      provider: 'VIETQR_DEV',
       bankName: payInfo.bankName,
       accountNumber: payInfo.accountNumber,
       accountName: payInfo.accountName,
@@ -327,8 +548,11 @@ export const membershipService = {
       status: 'PENDING',
       expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       createdAt: new Date().toISOString(),
-    };
+    });
 
+    // Replace any old superseded PENDING order while preserving all PAID orders
+    const nextOrders = [mockOrder, ...orders.filter((o) => o.status !== 'PENDING')];
+    writeLocalOrders(user?.id, nextOrders);
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('active_membership_order', JSON.stringify(mockOrder));
     }
@@ -338,77 +562,130 @@ export const membershipService = {
 
   async getOrder(orderCode: string, isLive = true): Promise<MembershipOrder | null> {
     if (isLive) {
-      const res = await axiosClient.get<{ success: boolean; data: MembershipOrder }>(
-        `/membership/orders/${encodeURIComponent(orderCode)}`
-      );
-      if (res.data.success && res.data.data) {
-        const order = res.data.data;
-        return {
-          ...order,
-          priceVND: order.priceVND || order.amount,
-          amount: order.amount || order.priceVND || 0,
-          bankName: order.bankName || 'VietQR / payOS',
-          accountNumber: order.accountNumber || '',
-          accountName: order.accountName || '',
-          transferContent: order.transferContent || order.orderCode,
-        };
+      try {
+        const res = await axiosClient.get<{ success: boolean; data: MembershipOrder }>(
+          `/membership/orders/${encodeURIComponent(orderCode)}`
+        );
+        if (res.data.success && res.data.data) {
+          const data = res.data.data;
+          syncAuthFromPaymentPayload({ token: data.token, user: data.user });
+          return normalizeOrder(data);
+        }
+        return null;
+      } catch (err: unknown) {
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        if (status === 404) {
+          return null;
+        }
+        throw err;
       }
-      return null;
     }
 
-    if (typeof localStorage !== 'undefined') {
-      const saved = localStorage.getItem('active_membership_order');
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if (parsed && parsed.orderCode === orderCode) return parsed;
-        } catch {}
-      }
+    const user = useAuthStore.getState().user;
+    const { orders, prunedOrderCodes } = readAndCleanLocalOrders(user?.id);
+    if (prunedOrderCodes.includes(orderCode)) {
+      return {
+        orderCode,
+        packageId: '',
+        amount: 0,
+        bankName: '',
+        accountNumber: '',
+        accountName: '',
+        transferContent: orderCode,
+        qrCodeUrl: '',
+        status: 'EXPIRED',
+        deleted: true,
+        message: 'Đơn hàng đã quá hạn thanh toán QR và đã được xóa khỏi lịch sử',
+      };
     }
-    return null;
+    const found = orders.find((o) => o.orderCode === orderCode);
+    return found ? normalizeOrder(found) : null;
   },
 
-  async cancelOrder(orderCode: string, isLive = true): Promise<boolean> {
+  async cancelOrder(orderCode: string, isLive = true): Promise<CancelOrderResult> {
     if (isLive) {
-      const res = await axiosClient.post<{ success: boolean }>(
+      const res = await axiosClient.post<{ success: boolean; data?: CancelOrderResult }>(
         `/membership/orders/${encodeURIComponent(orderCode)}/cancel`
       );
-      return Boolean(res.data.success);
+      const data = res.data.data;
+      if (data) {
+        syncAuthFromPaymentPayload({ token: data.token, user: data.user });
+      }
+      return {
+        success: Boolean(res.data.success),
+        orderCode: data?.orderCode || orderCode,
+        status: data?.status || 'CANCELLED',
+        deleted: data?.deleted ?? true,
+        alreadyPaid: data?.alreadyPaid,
+        message: data?.message,
+        token: data?.token,
+        user: data?.user,
+      };
     }
+
+    const user = useAuthStore.getState().user;
+    const { orders } = readAndCleanLocalOrders(user?.id);
+    const existing = orders.find((o) => o.orderCode === orderCode);
+    if (existing?.status === 'PAID') {
+      return {
+        success: true,
+        orderCode,
+        status: 'PAID',
+        deleted: false,
+        alreadyPaid: true,
+        message: 'Đơn hàng đã thanh toán thành công, không thể hủy',
+      };
+    }
+
+    const nextOrders = orders.filter((o) => o.orderCode !== orderCode);
+    writeLocalOrders(user?.id, nextOrders);
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('active_membership_order');
     }
-    return true;
+    return {
+      success: true,
+      orderCode,
+      status: 'CANCELLED',
+      deleted: true,
+      message: 'Đã hủy và xóa đơn hàng chưa thanh toán',
+    };
   },
 
   async simulatePayment(orderCode: string, status: 'SUCCESS' | 'FAILED' = 'SUCCESS', isLive = true): Promise<unknown> {
     if (isLive) {
-      const res = await axiosClient.post<{ success: boolean; data: unknown; error?: { message?: string } }>(
+      const res = await axiosClient.post<{ success: boolean; data: { token?: string; user?: MembershipOrder['user'] }; error?: { message?: string } }>(
         `/membership/orders/${encodeURIComponent(orderCode)}/simulate`,
         { status }
       );
       if (res.data.success) {
+        syncAuthFromPaymentPayload(res.data.data);
         return res.data.data;
       }
       throw new Error(res.data.error?.message || 'Không được phép mô phỏng thanh toán');
     }
 
     // Local simulation
+    const currentUser = useAuthStore.getState().user;
+    const { orders } = readAndCleanLocalOrders(currentUser?.id);
+    let targetOrder = orders.find((o) => o.orderCode === orderCode);
+    if (!targetOrder) {
+      targetOrder = orders.find((o) => o.status === 'PENDING');
+    }
+
     if (status === 'SUCCESS') {
-      let durationDays = 30;
-      let pkgId = 'VIP_1M';
-      if (typeof localStorage !== 'undefined') {
+      let durationDays = targetOrder?.durationDays || 30;
+      let pkgId = targetOrder?.packageId || 'VIP_1M';
+      if (!targetOrder && typeof localStorage !== 'undefined') {
         const saved = localStorage.getItem('active_membership_order');
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
-            if (parsed && parsed.durationDays) durationDays = parsed.durationDays;
-            if (parsed && parsed.packageId) pkgId = parsed.packageId;
+            if (parsed?.durationDays) durationDays = parsed.durationDays;
+            if (parsed?.packageId) pkgId = parsed.packageId;
           } catch {}
         }
       }
 
-      const currentUser = useAuthStore.getState().user;
       let newExpiry: Date;
       if (currentUser?.vipExpiresAt && new Date(currentUser.vipExpiresAt).getTime() > Date.now()) {
         newExpiry = new Date(new Date(currentUser.vipExpiresAt).getTime() + durationDays * 86400000);
@@ -423,11 +700,25 @@ export const membershipService = {
         vipExpiresAt: newExpiry.toISOString(),
       });
 
-      if (typeof localStorage !== 'undefined' && currentUser) {
-        localStorage.setItem(
-          `paid_vip_order_${currentUser.id}`,
-          JSON.stringify({ packageId: pkgId, durationDays, paidAt: new Date().toISOString() })
-        );
+      const paidAt = new Date().toISOString();
+      if (targetOrder) {
+        const paidOrder: MembershipOrder = normalizeOrder({
+          ...targetOrder,
+          status: 'PAID',
+          paidAt,
+        });
+        const nextOrders = orders.map((o) => (o.orderCode === targetOrder!.orderCode ? paidOrder : o));
+        writeLocalOrders(currentUser?.id, nextOrders);
+      }
+
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('active_membership_order');
+        if (currentUser) {
+          localStorage.setItem(
+            `paid_vip_order_${currentUser.id}`,
+            JSON.stringify({ packageId: pkgId, durationDays, paidAt })
+          );
+        }
       }
 
       return {
@@ -436,9 +727,21 @@ export const membershipService = {
       };
     }
 
+    // FAILED simulation -> remove unpaid pending order
+    if (targetOrder) {
+      writeLocalOrders(
+        currentUser?.id,
+        orders.filter((o) => o.orderCode !== targetOrder!.orderCode)
+      );
+    }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('active_membership_order');
+    }
+
     return {
       success: false,
-      message: 'Giao dịch mô phỏng thất bại hoặc đã bị người dùng hủy',
+      deleted: true,
+      message: 'Giao dịch mô phỏng thất bại, đơn hàng đã bị hủy và xóa khỏi lịch sử',
     };
   },
 

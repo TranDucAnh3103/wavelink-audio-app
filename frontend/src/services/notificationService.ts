@@ -1,4 +1,4 @@
-import { axiosClient } from '@/lib/axiosClient';
+import { axiosClient, API_BASE } from '@/lib/axiosClient';
 import { NotificationItem, NotificationPreferences } from '@/types';
 
 const LOCAL_STORAGE_NOTIFS_KEY = 'wavelink_local_notifications';
@@ -25,13 +25,21 @@ export const notificationService = {
     } catch {}
   },
 
-  async getNotifications(isLive = true): Promise<NotificationItem[]> {
+  async getNotifications(
+    isLive = true,
+    opts?: { filter?: string; type?: string }
+  ): Promise<NotificationItem[]> {
     if (isLive) {
       try {
         if (typeof localStorage !== 'undefined') {
           localStorage.removeItem(LOCAL_STORAGE_NOTIFS_KEY);
         }
-        const res = await axiosClient.get<{ success: boolean; data: NotificationItem[] }>('/notifications');
+        const params: Record<string, string> = {};
+        if (opts?.filter && opts.filter !== 'all') params.filter = opts.filter;
+        if (opts?.type && opts.type !== 'ALL') params.type = opts.type;
+        const res = await axiosClient.get<{ success: boolean; data: NotificationItem[] }>('/notifications', {
+          params: Object.keys(params).length ? params : undefined,
+        });
         if (res.data.success && Array.isArray(res.data.data)) {
           return res.data.data;
         }
@@ -188,5 +196,76 @@ export const notificationService = {
       }
     }
     return true;
+  },
+
+  connectWebSocket(onNotification: (item: NotificationItem) => void): () => void {
+    if (typeof window === 'undefined' || !window.WebSocket) {
+      return () => {};
+    }
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    if (!token) return () => {};
+
+    let socket: WebSocket | null = null;
+    let pingInterval: ReturnType<typeof setInterval> | null = null;
+    let closed = false;
+
+    const connect = () => {
+      try {
+        let protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        let host = window.location.host;
+        if (API_BASE.startsWith('http://') || API_BASE.startsWith('https://')) {
+          try {
+            const parsed = new URL(API_BASE);
+            host = parsed.host;
+            protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+          } catch {}
+        } else if (API_BASE.includes('8080') || host.includes('5173') || host.includes('3000')) {
+          host = window.location.hostname + ':8080';
+        }
+
+        const wsUrl = `${protocol}//${host}/api/v1/notifications/ws?token=${encodeURIComponent(token)}`;
+        socket = new WebSocket(wsUrl);
+
+        socket.onopen = () => {
+          pingInterval = setInterval(() => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({ type: 'ping' }));
+            }
+          }, 25000);
+        };
+
+        socket.onmessage = (event) => {
+          const raw = typeof event.data === 'string' ? event.data : '';
+          for (const line of raw.split('\n')) {
+            if (!line.trim()) continue;
+            try {
+              const pkt = JSON.parse(line) as { type?: string; data?: NotificationItem };
+              if (pkt.type === 'notification' && pkt.data) {
+                onNotification(pkt.data);
+              }
+            } catch {}
+          }
+        };
+
+        socket.onclose = () => {
+          if (pingInterval) clearInterval(pingInterval);
+          if (!closed) {
+            setTimeout(() => !closed && connect(), 5000);
+          }
+        };
+
+        socket.onerror = () => {
+          socket?.close();
+        };
+      } catch {}
+    };
+
+    connect();
+
+    return () => {
+      closed = true;
+      if (pingInterval) clearInterval(pingInterval);
+      socket?.close();
+    };
   },
 };

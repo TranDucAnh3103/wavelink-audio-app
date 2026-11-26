@@ -3,10 +3,12 @@ import { Category, CreateCategoryPayload } from '@/types';
 import { localDb } from './localDb';
 
 export const categoryService = {
-  async getCategories(isLive = true): Promise<Category[]> {
+  async getCategories(isLive = true, includeHidden = false): Promise<Category[]> {
     if (isLive) {
       try {
-        const res = await axiosClient.get<{ success: boolean; data: Category[] }>('/categories');
+        const res = await axiosClient.get<{ success: boolean; data: Category[] }>('/categories', {
+          params: includeHidden ? { includeHidden: 'true' } : undefined,
+        });
         if (res.data.success && Array.isArray(res.data.data)) {
           return res.data.data;
         }
@@ -16,6 +18,14 @@ export const categoryService = {
     }
     const db = localDb.get();
     return db.categories || [];
+  },
+
+  async mergeCategories(sourceId: number, targetId: number): Promise<{ movedAudios: number }> {
+    const res = await axiosClient.post<{ success: boolean; data: { movedAudios: number } }>(
+      '/categories/merge',
+      { sourceId, targetId }
+    );
+    return res.data.data;
   },
 
   async createCategory(payload: CreateCategoryPayload, isLive = true): Promise<Category> {

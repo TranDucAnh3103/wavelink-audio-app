@@ -160,4 +160,30 @@ func TestGetRecentHistory_ReturnsAllDistinctAudiosDespiteManyHeartbeats(t *testi
 		}
 		seen[aID] = true
 	}
+
+	// Verify chunked pagination (?page=1&limit=2) returns sliced rows with total=6
+	reqPaged := httptest.NewRequest(http.MethodGet, "/api/v1/history?page=1&limit=2", nil)
+	wPaged := httptest.NewRecorder()
+	r.ServeHTTP(wPaged, reqPaged)
+	if wPaged.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for paged history, got %d", wPaged.Code)
+	}
+
+	var pagedEnv struct {
+		Success bool                     `json:"success"`
+		Data    []map[string]interface{} `json:"data"`
+		Meta    map[string]interface{}   `json:"meta"`
+	}
+	if err := json.Unmarshal(wPaged.Body.Bytes(), &pagedEnv); err != nil {
+		t.Fatalf("invalid paged json response: %v", err)
+	}
+	if len(pagedEnv.Data) != 2 {
+		t.Fatalf("expected 2 history items on page=1&limit=2, got %d", len(pagedEnv.Data))
+	}
+	if total := int(pagedEnv.Meta["total"].(float64)); total != 6 {
+		t.Fatalf("expected meta.total=6, got %d", total)
+	}
+	if totalPages := int(pagedEnv.Meta["totalPages"].(float64)); totalPages != 3 {
+		t.Fatalf("expected meta.totalPages=3, got %d", totalPages)
+	}
 }
