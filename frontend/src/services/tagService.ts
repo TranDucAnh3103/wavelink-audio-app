@@ -42,6 +42,27 @@ export const tagService = {
     return newTag;
   },
 
+  async updateTag(id: number | string, data: Partial<Tag>, isLive = true): Promise<Tag | null> {
+    if (isLive) {
+      const res = await axiosClient.put<{ success: boolean; data: Tag }>(`/tags/${id}`, data);
+      if (res.data.success && res.data.data) return res.data.data;
+    }
+    return null;
+  },
+
+  async mergeTags(sourceIds: number[], targetId: number): Promise<{ merged: number }> {
+    const res = await axiosClient.post<{ success: boolean; data: { merged: number } }>('/tags/merge', {
+      sourceIds,
+      targetId,
+    });
+    return res.data.data;
+  },
+
+  async cleanupUnusedTags(): Promise<{ deleted: number }> {
+    const res = await axiosClient.delete<{ success: boolean; data: { deleted: number } }>('/tags/unused');
+    return res.data.data;
+  },
+
   async deleteTag(id: number | string, isLive = true): Promise<boolean> {
     if (isLive) {
       try {

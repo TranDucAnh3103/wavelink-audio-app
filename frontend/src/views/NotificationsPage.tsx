@@ -31,14 +31,34 @@ import { toast } from '@/components/ui/Toast';
 import { NotificationsSkeleton } from '@/components/common/Skeletons';
 import { Pagination } from '@/components/ui/Pagination';
 import { NOTIFICATION_PAGE_SIZE } from '@/config/pagination';
-import { externalNotificationService } from '@/services/externalNotificationService';
+import {
+  externalNotificationService,
+  normalizeNotificationPath,
+} from '@/services/externalNotificationService';
+
+const NOTIF_FILTERS = [
+  { key: 'all', label: 'Tất cả', filter: 'all', type: 'ALL' },
+  { key: 'unread', label: 'Chưa đọc', filter: 'unread', type: 'ALL' },
+  { key: 'audio', label: 'Audio mới', filter: 'all', type: 'NEW_EPISODE' },
+  { key: 'vip', label: 'VIP', filter: 'all', type: 'VIP' },
+  { key: 'system', label: 'Hệ thống', filter: 'all', type: 'SYSTEM' },
+] as const;
 
 export const NotificationsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { data: notifications = [], isLoading } = useNotifications();
+  const [activeFilterKey, setActiveFilterKey] = useState<(typeof NOTIF_FILTERS)[number]['key']>('all');
+  const activeFilter = NOTIF_FILTERS.find((f) => f.key === activeFilterKey) || NOTIF_FILTERS[0];
+
+  const { data: notifications = [], isLoading } = useNotifications({
+    filter: activeFilter.filter,
+    type: activeFilter.type,
+  });
   const { data: unreadCount = 0 } = useUnreadNotificationCount();
 
   const [currentPage, setCurrentPage] = useState(1);
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeFilterKey]);
   const pageSize = NOTIFICATION_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(notifications.length / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);
@@ -172,13 +192,7 @@ export const NotificationsPage: React.FC = () => {
   const handleNotificationClick = async (id: number | string, link?: string) => {
     await markReadMutation.mutateAsync(id);
     if (link) {
-      let target = link.startsWith('#/') ? link.substring(1) : link;
-      // Rewrite legacy hash/query player links (#/player?audioId=123 or /player?id=123) to /player/123
-      const legacyMatch = target.match(/^\/player\?(?:audioId|id)=(\d+)/i);
-      if (legacyMatch) {
-        target = `/player/${legacyMatch[1]}`;
-      }
-      navigate(target);
+      navigate(normalizeNotificationPath(link));
     }
   };
 
@@ -263,6 +277,28 @@ export const NotificationsPage: React.FC = () => {
           <Settings className="w-4 h-4" strokeWidth={2.25} />
           <span>Cài đặt nhận tin</span>
         </button>
+      </div>
+
+      {/* Filter Chips */}
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+        {NOTIF_FILTERS.map((f) => {
+          const isActive = activeFilterKey === f.key;
+          return (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => setActiveFilterKey(f.key)}
+              className={`btn-comic text-xs py-1.5 px-3 min-h-[36px] whitespace-nowrap shrink-0 ${
+                isActive ? 'btn-comic-yellow' : ''
+              }`}
+            >
+              <span>{f.label}</span>
+              {f.key === 'unread' && unreadCount > 0 && (
+                <span className="font-mono text-[11px] font-black text-[#E63946]">{unreadCount}</span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* Notifications List */}

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { QRCodeSVG } from 'qrcode.react';
@@ -18,12 +18,14 @@ import {
   ExternalLink,
   RefreshCw,
   ShieldCheck,
+  ReceiptText,
   X,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import {
   useMembershipPackages,
   useMyMembership,
+  useMembershipOrders,
   useCreateMembershipOrder,
   useCancelMembershipOrder,
 } from '@/hooks/useMembership';
@@ -42,16 +44,22 @@ export const MembershipPage: React.FC = () => {
   const { user, refreshUser } = useAuthStore();
   const { data: packages = [], isLoading: pkgLoading } = useMembershipPackages();
   const { data: myMembership } = useMyMembership();
+  const { data: ordersData } = useMembershipOrders();
 
   const createOrderMutation = useCreateMembershipOrder();
   const cancelOrderMutation = useCancelMembershipOrder();
 
   const isVip = myMembership?.isVip || user?.role === 'VIP' || user?.role === 'ADMIN';
+  const pendingOrderOnAccount =
+    ordersData?.activePendingOrder || myMembership?.activePendingOrder || null;
+  const paidOrdersCount = ordersData?.paidCount ?? myMembership?.paidOrdersCount ?? 0;
 
   const [selectedPkgId, setSelectedPkgId] = useState<string>('VIP_3M');
   const [activeOrder, setActiveOrder] = useState<MembershipOrder | null>(null);
   const [countdownSec, setCountdownSec] = useState<number>(15 * 60);
+  const [bannerCountdownSec, setBannerCountdownSec] = useState<number>(0);
   const [isCheckingStatus, setIsCheckingStatus] = useState<boolean>(false);
+  const autoExpiredHandledRef = useRef<string | null>(null);
 
   const handlePaymentConfirmed = useCallback(
     async (paidOrder: MembershipOrder) => {
@@ -67,6 +75,7 @@ export const MembershipPage: React.FC = () => {
       }
       await refreshUser();
       queryClient.invalidateQueries({ queryKey: ['my-membership'] });
+      queryClient.invalidateQueries({ queryKey: ['membership-orders'] });
       queryClient.invalidateQueries({ queryKey: ['membership-packages'] });
       queryClient.invalidateQueries({ queryKey: ['stats'] });
       queryClient.invalidateQueries({ queryKey: ['import-quota'] });
@@ -78,7 +87,7 @@ export const MembershipPage: React.FC = () => {
     [queryClient, refreshUser]
   );
 
-  // Kiểm tra trạng thái đơn hàng khi quay về từ trang thanh toán payOS
+  // Kiểm tra trạng thái đơn hàng khi quay về từ PayOS hoặc mở QR từ trang Profile (?orderCode=...)
   useEffect(() => {
     const paymentStatus = searchParams.get('payment');
     const returnedOrderCode = searchParams.get('orderCode');
@@ -108,9 +117,12 @@ export const MembershipPage: React.FC = () => {
         .then((order) => {
           if (order?.status === 'PAID') {
             handlePaymentConfirmed(order);
-          } else if (order && order.status === 'PENDING') {
+          } else if (order && order.status === 'PENDING' && !order.deleted) {
             setActiveOrder(order);
-            toast.info('Đơn hàng đang chờ xác nhận thanh toán từ payOS.');
+          } else {
+            queryClient.invalidateQueries({ queryKey: ['membership-orders'] });
+            queryClient.invalidateQueries({ queryKey: ['my-membership'] });
+            toast.info('Đơn hàng đã hết hạn hoặc bị hủy và đã được xóa khỏi lịch sử.');
           }
         })
         .catch(() => {});
@@ -157,6 +169,55 @@ export const MembershipPage: React.FC = () => {
     };
   }, [activeOrder]);
 
+  // Banner countdown when QR modal is closed but user has a pending order on account
+  useEffect(() => {
+    if (!pendingOrderOnAccount || activeOrder) {
+      setBannerCountdownSec(0);
+      return;
+    }
+    const calcRemaining = () => {
+      if (!pendingOrderOnAccount.expiresAt) return pendingOrderOnAccount.remainingSeconds ?? 0;
+      return Math.max(
+        0,
+        Math.floor((new Date(pendingOrderOnAccount.expiresAt).getTime() - Date.now()) / 1000)
+      );
+    };
+    setBannerCountdownSec(calcRemaining());
+    const timer = setInterval(() => {
+      const next = calcRemaining();
+      setBannerCountdownSec(next);
+      if (next <= 0) clearInterval(timer);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [pendingOrderOnAccount, activeOrder]);
+
+  // Immediately reconcile & auto-purge expired QR order when countdown reaches 0
+  const expiringTarget = activeOrder || pendingOrderOnAccount;
+  const expiringSec = activeOrder ? countdownSec : bannerCountdownSec;
+  useEffect(() => {
+    if (!expiringTarget || expiringTarget.status !== 'PENDING' || expiringSec > 0) return;
+    if (autoExpiredHandledRef.current === expiringTarget.orderCode) return;
+    autoExpiredHandledRef.current = expiringTarget.orderCode;
+
+    const { isLive } = useAuthStore.getState();
+    api.membership
+      .getOrder(expiringTarget.orderCode, isLive)
+      .then(async (latest) => {
+        if (latest?.status === 'PAID') {
+          await handlePaymentConfirmed(latest);
+        } else {
+          setActiveOrder(null);
+          toast.error('Mã QR đã quá hạn thanh toán, đơn hàng đã tự động hủy và xóa khỏi lịch sử.');
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        queryClient.invalidateQueries({ queryKey: ['membership-orders'] });
+        queryClient.invalidateQueries({ queryKey: ['my-membership'] });
+        queryClient.invalidateQueries({ queryKey: ['membership-packages'] });
+      });
+  }, [expiringTarget, expiringSec, handlePaymentConfirmed, queryClient]);
+
   // Auto-poll PayOS payment confirmation every 3 seconds while modal is open
   useEffect(() => {
     if (!activeOrder || activeOrder.status !== 'PENDING') return;
@@ -166,17 +227,22 @@ export const MembershipPage: React.FC = () => {
       try {
         const { isLive } = useAuthStore.getState();
         const latest = await api.membership.getOrder(activeOrder.orderCode, isLive);
-        if (cancelled || !latest) return;
+        if (cancelled) return;
+
+        if (!latest || latest.deleted || latest.status === 'CANCELLED' || latest.status === 'EXPIRED') {
+          setActiveOrder(null);
+          queryClient.invalidateQueries({ queryKey: ['membership-orders'] });
+          queryClient.invalidateQueries({ queryKey: ['my-membership'] });
+          toast.error(
+            latest?.status === 'CANCELLED'
+              ? 'Đơn hàng thanh toán đã bị hủy và xóa khỏi lịch sử.'
+              : 'Mã QR thanh toán đã hết hạn và đơn hàng đã được xóa khỏi lịch sử.'
+          );
+          return;
+        }
 
         if (latest.status === 'PAID') {
           await handlePaymentConfirmed(latest);
-        } else if (latest.status === 'CANCELLED' || latest.status === 'EXPIRED') {
-          setActiveOrder(null);
-          toast.error(
-            latest.status === 'EXPIRED'
-              ? 'Mã QR thanh toán đã hết hạn. Vui lòng tạo đơn mới.'
-              : 'Đơn hàng thanh toán đã bị hủy.'
-          );
         }
       } catch {
         // Ignore transient network errors during polling
@@ -188,7 +254,7 @@ export const MembershipPage: React.FC = () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [activeOrder, handlePaymentConfirmed]);
+  }, [activeOrder, handlePaymentConfirmed, queryClient]);
 
   const getExpiryText = () => {
     if (user?.role === 'ADMIN' && !myMembership?.vipExpiresAt) {
@@ -213,22 +279,26 @@ export const MembershipPage: React.FC = () => {
       toast.info('Đang khởi tạo mã QR thanh toán qua payOS...');
       const order = await createOrderMutation.mutateAsync(selectedPkgId);
       setActiveOrder(order);
+      if (order.reused) {
+        toast.info('Đang mở lại đơn hàng chờ thanh toán hiện tại của bạn.');
+      }
     } catch (err: unknown) {
       toast.error((err as Error).message || 'Lỗi khi tạo đơn hàng payOS');
     }
   };
 
-  const handleManualCheckOrder = async () => {
-    if (!activeOrder) return;
+  const handleCheckOrderByCode = async (targetOrder: MembershipOrder) => {
     setIsCheckingStatus(true);
     try {
       const { isLive } = useAuthStore.getState();
-      const latest = await api.membership.getOrder(activeOrder.orderCode, isLive);
+      const latest = await api.membership.getOrder(targetOrder.orderCode, isLive);
       if (latest?.status === 'PAID') {
         await handlePaymentConfirmed(latest);
-      } else if (latest?.status === 'CANCELLED' || latest?.status === 'EXPIRED') {
+      } else if (!latest || latest.deleted || latest.status === 'CANCELLED' || latest.status === 'EXPIRED') {
         setActiveOrder(null);
-        toast.error('Đơn hàng đã hết hạn hoặc bị hủy.');
+        queryClient.invalidateQueries({ queryKey: ['membership-orders'] });
+        queryClient.invalidateQueries({ queryKey: ['my-membership'] });
+        toast.error('Đơn hàng đã hết hạn hoặc bị hủy và đã được xóa khỏi lịch sử.');
       } else {
         toast.info('Chưa ghi nhận thanh toán từ ngân hàng. Hệ thống sẽ tự kiểm tra mỗi 3 giây.');
       }
@@ -239,15 +309,29 @@ export const MembershipPage: React.FC = () => {
     }
   };
 
-  const handleCancelOrder = async () => {
+  const handleManualCheckOrder = async () => {
     if (!activeOrder) return;
+    await handleCheckOrderByCode(activeOrder);
+  };
+
+  const handleCancelOrderByCode = async (orderCode: string) => {
     try {
-      await cancelOrderMutation.mutateAsync(activeOrder.orderCode);
+      const res = await cancelOrderMutation.mutateAsync(orderCode);
       setActiveOrder(null);
-      toast.info('Đã hủy đơn hàng thanh toán.');
+      if (res.alreadyPaid) {
+        await refreshUser();
+        toast.success(res.message || 'Đơn hàng đã thanh toán thành công, tài khoản VIP đã được kích hoạt!');
+      } else {
+        toast.info('Đã hủy và xóa đơn hàng chưa thanh toán khỏi lịch sử.');
+      }
     } catch {
       setActiveOrder(null);
     }
+  };
+
+  const handleCancelOrder = async () => {
+    if (!activeOrder) return;
+    await handleCancelOrderByCode(activeOrder.orderCode);
   };
 
   const handleCopy = (label: string, value: string) => {
@@ -305,7 +389,80 @@ export const MembershipPage: React.FC = () => {
             ? getExpiryText()
             : 'Mở khóa toàn bộ kho truyện giới hạn, không giới hạn lượt import YouTube và đồng bộ tiến trình đám mây ưu tiên cao nhất!'}
         </p>
+        {paidOrdersCount > 0 && (
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => navigate('/profile')}
+              className="btn-comic bg-white text-[#111113] text-[11px] py-1 px-3 font-black inline-flex items-center gap-1.5"
+            >
+              <ReceiptText className="w-3.5 h-3.5" strokeWidth={2.5} />
+              <span>Xem lịch sử thanh toán ({paidOrdersCount}) tại Trang Cá Nhân</span>
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Pending Order Resume Banner */}
+      {pendingOrderOnAccount && !activeOrder && (
+        <div
+          data-testid="membership-pending-banner"
+          className="card-comic p-4 bg-[#FFF8CC] text-[#111113] border-2 border-[#111113] flex items-center justify-between gap-3 flex-wrap"
+        >
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="badge-comic badge-comic-yellow text-[9px] font-black">
+                ĐƠN CHỜ THANH TOÁN
+              </span>
+              <span className="badge-comic badge-comic-red text-[9px] font-mono font-black inline-flex items-center gap-1">
+                <Timer className="w-3 h-3" strokeWidth={2.5} />
+                <span>Còn {formatTimer(bannerCountdownSec)}</span>
+              </span>
+            </div>
+            <span className="font-extrabold text-sm mt-0.5">
+              {pendingOrderOnAccount.packageName || pendingOrderOnAccount.packageId} ·{' '}
+              <strong className="text-[#E63946]">
+                {formatVND(pendingOrderOnAccount.priceVND || pendingOrderOnAccount.amount || 0)}
+              </strong>
+            </span>
+            <span className="text-[11px] font-mono text-[#111113]/75">
+              Mã đơn: {pendingOrderOnAccount.orderCode}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setActiveOrder(pendingOrderOnAccount)}
+              className="btn-comic btn-comic-yellow text-xs py-1.5 px-3 font-black"
+            >
+              <QrCode className="w-3.5 h-3.5" strokeWidth={2.5} />
+              <span>Mở Lại Mã QR</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleCheckOrderByCode(pendingOrderOnAccount)}
+              disabled={isCheckingStatus}
+              className="btn-comic btn-comic-teal text-xs py-1.5 px-3 font-bold"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${isCheckingStatus ? 'animate-spin' : ''}`}
+                strokeWidth={2.5}
+              />
+              <span>Kiểm Tra</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleCancelOrderByCode(pendingOrderOnAccount.orderCode)}
+              disabled={cancelOrderMutation.isPending}
+              className="btn-comic btn-comic-red text-xs py-1.5 px-3 font-bold"
+            >
+              <X className="w-3.5 h-3.5" strokeWidth={2.5} />
+              <span>Hủy Đơn</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Package Selection Cards (3 Columns on md+) */}
       <div className="card-comic p-4 md:p-5 flex flex-col gap-4">

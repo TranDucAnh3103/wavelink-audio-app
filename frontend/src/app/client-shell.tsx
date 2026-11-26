@@ -10,6 +10,8 @@ import { MiniPlayer } from '@/components/layout/MiniPlayer';
 import { AudioEngineHost } from '@/components/layout/AudioEngineHost';
 import { ToastContainer } from '@/components/ui/Toast';
 import { usePlayerStore } from '@/stores/playerStore';
+import { useShallow } from 'zustand/react/shallow';
+import { peekLibraryReturnState } from '@/lib/libraryNavigationState';
 
 const ScreenLockOverlay = dynamic(
   () => import('@/components/layout/ScreenLockOverlay').then((m) => m.ScreenLockOverlay),
@@ -19,11 +21,22 @@ const ScreenLockOverlay = dynamic(
 function ShellBody({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
   const isAuthPage = pathname === '/login' || pathname === '/register';
-  const { isScreenLocked, setScreenLocked, currentAudio } = usePlayerStore();
+  const { isScreenLocked, setScreenLocked, hasCurrentAudio } = usePlayerStore(
+    useShallow((s) => ({
+      isScreenLocked: s.isScreenLocked,
+      setScreenLocked: s.setScreenLocked,
+      hasCurrentAudio: Boolean(s.currentAudio),
+    }))
+  );
 
   useEffect(() => {
+    if (pathname === '/library' && peekLibraryReturnState()) {
+      return;
+    }
     if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
-      window.scrollTo(0, 0);
+      try {
+        window.scrollTo(0, 0);
+      } catch {}
     }
   }, [pathname]);
 
@@ -53,18 +66,14 @@ function ShellBody({ children }: { children: React.ReactNode }) {
         </Suspense>
       </main>
 
-      {!isAuthPage && (
-        <Suspense fallback={null}>
-          <MiniPlayer />
-        </Suspense>
-      )}
+      {!isAuthPage && <MiniPlayer />}
       {!isAuthPage && (
         <Suspense fallback={null}>
           <Footer />
         </Suspense>
       )}
 
-      {isScreenLocked && currentAudio && (
+      {isScreenLocked && hasCurrentAudio && (
         <ScreenLockOverlay onClose={() => setScreenLocked(false)} />
       )}
 

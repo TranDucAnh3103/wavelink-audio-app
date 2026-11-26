@@ -32,6 +32,7 @@ func (h *Handler) GetStats(c *gin.Context) {
 
 	// Nếu là khách vãng lai, dùng In-memory Cache 60s để tránh Full Table Scan liên tục
 	if userID == 0 {
+		c.Header("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
 		h.cacheMu.RLock()
 		if time.Now().Before(h.cacheExpiry) && h.globalStats != nil {
 			cached := h.globalStats

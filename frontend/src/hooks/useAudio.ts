@@ -3,11 +3,12 @@ import { api } from '@/services/api';
 import { AudioFilter, AudioItem, Episode, ImportYouTubePayload } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 
-export function useAudios(filter: AudioFilter = {}) {
+export function useAudios(filter: AudioFilter = {}, options?: { enabled?: boolean }) {
   const { user } = useAuthStore();
 
   return useQuery({
     queryKey: ['audios', filter, user?.id || 0],
+    enabled: options?.enabled ?? true,
     queryFn: async () => {
       const { isLive, user: latestUser } = useAuthStore.getState();
       const data = await api.audio.getAudios(filter, isLive, latestUser?.id);
@@ -28,6 +29,14 @@ export function useAudio(id: number | string | undefined, initialAudio?: AudioIt
     },
     enabled: Boolean(id),
     initialData: initialAudio ?? undefined,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    retry: (failureCount, error) => {
+      const status = (error as { response?: { status?: number } } | null)?.response?.status;
+      if (status === 404 || status === 403) return false;
+      return failureCount < 3;
+    },
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
 }
 

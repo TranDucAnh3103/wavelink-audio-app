@@ -3,13 +3,26 @@ import { api } from '@/services/api';
 import { Category, CreateCategoryPayload } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 
-export function useCategories() {
+export function useCategories(includeHidden = false) {
   return useQuery({
-    queryKey: ['categories'],
+    queryKey: ['categories', includeHidden ? 'admin' : 'public'],
     queryFn: async () => {
       const { isLive } = useAuthStore.getState();
-      const data = await api.category.getCategories(isLive);
+      const data = await api.category.getCategories(isLive, includeHidden);
       return data;
+    },
+  });
+}
+
+export function useMergeCategories() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ sourceId, targetId }: { sourceId: number; targetId: number }) =>
+      api.category.mergeCategories(sourceId, targetId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['categories'] });
+      queryClient.invalidateQueries({ queryKey: ['audios'] });
     },
   });
 }

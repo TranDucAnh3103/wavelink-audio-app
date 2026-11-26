@@ -18,6 +18,17 @@ export default defineConfig({
     port: 5173,
     host: true,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'query-vendor': ['@tanstack/react-query', 'axios', 'zustand'],
+          'ui-icons': ['lucide-react'],
+        },
+      },
+    },
+  },
   test: {
     globals: true,
     environment: 'jsdom',

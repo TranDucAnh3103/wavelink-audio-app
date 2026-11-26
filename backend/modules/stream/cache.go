@@ -134,6 +134,15 @@ func (c *URLCache) Len() int {
 	return len(c.entries)
 }
 
+// ClearAll removes all cached stream entries.
+func (c *URLCache) ClearAll() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := len(c.entries)
+	c.entries = make(map[string]*external.AudioStreamInfo)
+	return n
+}
+
 func (c *URLCache) evictIfNeededLocked() {
 	now := time.Now().UTC()
 	for k, v := range c.entries {

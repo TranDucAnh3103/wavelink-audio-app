@@ -1,33 +1,40 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Users,
   MessageSquare,
   Crown,
   UserCheck,
-  Search,
   Radio,
   Trash2,
   RefreshCw,
-  MessageCircle,
   Music2,
   Send,
   ShieldCheck,
-  Headphones,
-  User as UserIcon,
-  Star,
+  Ban,
+  Users,
 } from 'lucide-react';
-import { useDelayedFallback } from '@/hooks/useDelayedFallback';
-import { AdminTabs } from './AdminTabs';
-import { Modal } from '@/components/ui/Modal';
-import { toast } from '@/components/ui/Toast';
 import { api } from '@/services/api';
-import { AdminTableSkeleton } from '@/components/common/Skeletons';
+import { toast } from '@/components/ui/Toast';
+import { Modal } from '@/components/ui/Modal';
 import { Pagination } from '@/components/ui/Pagination';
-import { CommunityMessage, CommunityAdminStats, WSCommunityMessage } from '@/types';
-import { DEFAULT_PAGE_SIZE } from '@/config/pagination';
+import { AdminTableSkeleton } from '@/components/common/Skeletons';
 import { triggerNotificationSync } from '@/hooks/useNotifications';
+import { errMessage, formatDateTime } from '@/lib/adminFormat';
+import { cn } from '@/lib/utils';
+import type { CommunityAdminStats, CommunityMessage, WSCommunityMessage } from '@/types';
+import {
+  AdminPage,
+  Avatar,
+  EmptyBox,
+  Field,
+  PageTitle,
+  SearchInput,
+  Sheet,
+  StatTile,
+} from '@/components/admin/AdminUI';
+
+const PAGE_SIZE = 20;
 
 export const AdminCommunityPage: React.FC = () => {
   const [messages, setMessages] = useState<CommunityMessage[]>([]);
@@ -37,474 +44,253 @@ export const AdminCommunityPage: React.FC = () => {
     vipChatters: 0,
     guestChatters: 0,
   });
-  const [isLoading, setIsLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
 
-  const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = DEFAULT_PAGE_SIZE;
+  const [deletingId, setDeletingId] = useState<number | string | null>(null);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [banTarget, setBanTarget] = useState<CommunityMessage | null>(null);
+  const [banReason, setBanReason] = useState('');
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [announcement, setAnnouncement] = useState('');
+  const [sending, setSending] = useState(false);
 
-  const [deletingMsgId, setDeletingMsgId] = useState<number | string | null>(null);
-  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
-
-  const [isAdminMsgModalOpen, setIsAdminMsgModalOpen] = useState(false);
-  const [adminMsgText, setAdminMsgText] = useState('');
-  const [isSendingAdminMsg, setIsSendingAdminMsg] = useState(false);
-
-  const loadData = async () => {
-    setIsLoading(true);
+  const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const [msgList, statsData] = await Promise.all([
-        api.community.getMessages(),
-        api.community.getStats(),
-      ]);
-      setMessages(msgList);
-      setStats(statsData);
+      const [list, s] = await Promise.all([api.community.getMessages(), api.community.getStats()]);
+      setMessages([...list].reverse());
+      setStats(s);
     } catch {
-      toast.error('Lỗi khi tải dữ liệu cộng đồng');
+      toast.error('Không thể tải dữ liệu cộng đồng');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    loadData();
-
-    const disconnectWs = api.community.connectWebSocket((wsMsg: WSCommunityMessage) => {
-      if (wsMsg.type === 'online_count' && typeof wsMsg.count === 'number') {
-        setStats((prev) => ({ ...prev, onlineCount: wsMsg.count || 0 }));
-      } else if (wsMsg.type === 'new_message' && wsMsg.data) {
-        const newMsg = wsMsg.data as CommunityMessage;
-        setMessages((prev) => [newMsg, ...prev.filter((m) => String(m.id) !== String(newMsg.id))]);
-        setStats((prev) => ({ ...prev, totalMessages: prev.totalMessages + 1 }));
-      } else if (wsMsg.type === 'delete_message' && wsMsg.data) {
-        const deleted = wsMsg.data as { id: number | string };
-        setMessages((prev) => prev.filter((m) => String(m.id) !== String(deleted.id)));
-        setStats((prev) => ({ ...prev, totalMessages: Math.max(0, prev.totalMessages - 1) }));
-      } else if (wsMsg.type === 'clear_messages') {
-        setMessages([]);
-        setStats((prev) => ({ ...prev, totalMessages: 0 }));
-      }
-    });
-
-    return () => {
-      disconnectWs();
-    };
   }, []);
 
-  const showSkeletonFallback = useDelayedFallback(isLoading && messages.length === 0, 180);
+  useEffect(() => {
+    load();
+    const disconnect = api.community.connectWebSocket((ws: WSCommunityMessage) => {
+      if (ws.type === 'online_count' && typeof ws.count === 'number') {
+        setStats((p) => ({ ...p, onlineCount: ws.count || 0 }));
+      } else if (ws.type === 'new_message' && ws.data) {
+        const m = ws.data as CommunityMessage;
+        setMessages((p) => [m, ...p.filter((x) => String(x.id) !== String(m.id))]);
+        setStats((p) => ({ ...p, totalMessages: p.totalMessages + 1 }));
+      } else if (ws.type === 'delete_message' && ws.data) {
+        const d = ws.data as { id: number | string };
+        setMessages((p) => p.filter((x) => String(x.id) !== String(d.id)));
+        setStats((p) => ({ ...p, totalMessages: Math.max(0, p.totalMessages - 1) }));
+      } else if (ws.type === 'clear_messages') {
+        setMessages([]);
+        setStats((p) => ({ ...p, totalMessages: 0 }));
+      }
+    });
+    return () => disconnect();
+  }, [load]);
 
-  const handleDeleteMessage = async () => {
-    if (deletingMsgId === null || deletingMsgId === undefined) return false;
-    const targetId = deletingMsgId;
+  useEffect(() => setPage(1), [query]);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? messages.filter(
+        (m) =>
+          m.username.toLowerCase().includes(q) ||
+          m.message.toLowerCase().includes(q) ||
+          m.sharedAudio?.title?.toLowerCase().includes(q)
+      )
+    : messages;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  const deleteMessage = async () => {
+    if (deletingId === null) return false;
     try {
-      await api.community.deleteMessage(targetId);
-      toast.success('Đã xóa tin nhắn khỏi cộng đồng!');
+      await api.community.deleteMessage(deletingId);
+      setMessages((p) => p.filter((m) => String(m.id) !== String(deletingId)));
+      toast.success('Đã xóa tin nhắn');
+      return true;
     } catch (err) {
-      console.warn('Lỗi gọi API xóa tin nhắn, xóa local', err);
-      toast.info('Đã xóa tin nhắn khỏi danh sách hiển thị');
-    } finally {
-      setMessages((prev) => prev.filter((m) => String(m.id) !== String(targetId)));
-      setDeletingMsgId(null);
+      toast.error(errMessage(err));
+      return false;
     }
-    return true;
   };
 
-  const handleClearAllMessages = async () => {
+  const clearAll = async () => {
     try {
       await api.community.clearAllMessages();
-      toast.success('Đã dọn dẹp sạch toàn bộ phòng chat!');
-    } catch (err) {
-      console.warn('Lỗi gọi API dọn dẹp phòng chat, xóa local', err);
-      toast.info('Đã làm sạch toàn bộ lịch sử phòng chat!');
-    } finally {
       setMessages([]);
-      setIsClearModalOpen(false);
-      setStats((prev) => ({ ...prev, totalMessages: 0 }));
-    }
-    return true;
-  };
-
-  const handleSendAdminAnnouncement = async () => {
-    const text = adminMsgText.trim();
-    if (!text) {
-      toast.error('Vui lòng nhập nội dung thông báo');
+      setStats((p) => ({ ...p, totalMessages: 0 }));
+      toast.success('Đã dọn sạch phòng chat');
+      return true;
+    } catch (err) {
+      toast.error(errMessage(err));
       return false;
     }
+  };
 
-    setIsSendingAdminMsg(true);
+  const banSender = async () => {
+    if (!banTarget) return false;
+    try {
+      await api.admin.ban(banTarget.userId, banReason);
+      toast.success(`Đã khóa ${banTarget.username}`);
+      setBanReason('');
+      return true;
+    } catch (err) {
+      toast.error(errMessage(err));
+      return false;
+    }
+  };
+
+  const sendAnnouncement = async () => {
+    const text = announcement.trim();
+    if (!text) return;
+    setSending(true);
     try {
       await api.community.sendMessage(`[THÔNG BÁO QUẢN TRỊ VIÊN] ${text}`);
-      toast.success('Đã phát thông báo Admin tới toàn thể cộng đồng!');
+      toast.success('Đã phát thông báo');
       triggerNotificationSync(true);
-      setAdminMsgText('');
-      setIsAdminMsgModalOpen(false);
-      loadData();
-      return true;
-    } catch {
-      toast.error('Lỗi khi gửi thông báo');
-      return false;
+      setAnnouncement('');
+      setComposeOpen(false);
+      load();
+    } catch (err) {
+      toast.error(errMessage(err));
     } finally {
-      setIsSendingAdminMsg(false);
-    }
-  };
-
-  const filteredMessages = messages.filter((m) => {
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      m.username.toLowerCase().includes(q) ||
-      m.message.toLowerCase().includes(q) ||
-      m.sharedAudio?.title?.toLowerCase().includes(q)
-    );
-  });
-
-  const totalPages = Math.max(1, Math.ceil(filteredMessages.length / pageSize));
-  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
-
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    }
-  }, [currentPage, totalPages]);
-
-  const pagedMessages = filteredMessages.slice(
-    (safeCurrentPage - 1) * pageSize,
-    safeCurrentPage * pageSize
-  );
-
-  const formatMsgDate = (isoString?: string) => {
-    if (!isoString) return 'Vừa xong';
-    try {
-      const d = new Date(isoString);
-      return d.toLocaleDateString('vi-VN', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      });
-    } catch {
-      return 'Vừa xong';
+      setSending(false);
     }
   };
 
   return (
-    <div className="flex flex-col w-full pb-36 md:pb-28 fade-in-comic">
-      <AdminTabs activeTab="community" />
-
-      <div className="w-full max-w-7xl mx-auto px-4 md:px-6 flex flex-col gap-4">
-        {/* Header Banner */}
-        <div className="card-comic p-4 md:p-5 bg-[#FFE600] text-[#111113] flex items-center justify-between border-2 border-[#111113]">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl border-2 border-[#111113] bg-white flex items-center justify-center shadow-comic-sm shrink-0">
-              <Users className="w-5 h-5 text-[#3A86FF]" strokeWidth={2.5} />
-            </div>
-            <div className="flex flex-col">
-              <h1 className="font-comic font-extrabold text-sm sm:text-base md:text-lg uppercase tracking-tight text-[#111113]">
-                Quản Trị Cộng Đồng & Phòng Chat
-              </h1>
-              <span className="text-xs font-bold text-[#111113]/80">
-                Kiểm duyệt thảo luận, thống kê người online và bảng vàng
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Community Stats Overview Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="card-comic p-3.5 flex flex-col gap-1">
-            <div className="flex items-center justify-between text-[var(--ink-secondary)]">
-              <span className="text-[10px] font-bold uppercase">Tổng Tin Nhắn</span>
-              <MessageSquare className="w-4 h-4 text-[#3A86FF]" />
-            </div>
-            <span className="font-comic text-2xl font-black text-[var(--ink-primary)]">
-              {stats.totalMessages || messages.length}
-            </span>
-            <span className="text-[10px] font-semibold text-[var(--ink-muted)]">
-              Đã lưu trữ trong DB
-            </span>
-          </div>
-
-          <div className="card-comic p-3.5 bg-[var(--surface-accent-soft)] flex flex-col gap-1">
-            <div className="flex items-center justify-between text-[var(--ink-secondary)]">
-              <span className="text-[10px] font-bold uppercase">Đang Trực Tuyến</span>
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping inline-block" />
-            </div>
-            <span className="font-comic text-2xl font-black text-[var(--ink-primary)]">
-              {stats.onlineCount}
-            </span>
-            <span className="text-[10px] font-bold text-[#2A9D8F]">WebSocket kết nối</span>
-          </div>
-
-          <div className="card-comic p-3.5 bg-[#F3E8FF] dark:bg-[#261B38] flex flex-col gap-1">
-            <div className="flex items-center justify-between text-[var(--ink-secondary)]">
-              <span className="text-[10px] font-bold uppercase">Thành Viên VIP</span>
-              <Crown className="w-4 h-4 text-[#8338EC]" />
-            </div>
-            <span className="font-comic text-2xl font-black text-[#8338EC]">
-              {stats.vipChatters}
-            </span>
-            <span className="text-[10px] font-semibold text-[var(--ink-muted)]">Hội viên cao cấp</span>
-          </div>
-
-          <div className="card-comic p-3.5 bg-[var(--surface-elevated)] flex flex-col gap-1">
-            <div className="flex items-center justify-between text-[var(--ink-secondary)]">
-              <span className="text-[10px] font-bold uppercase">Khách Tham Gia</span>
-              <UserCheck className="w-4 h-4 text-[var(--ink-secondary)]" />
-            </div>
-            <span className="font-comic text-2xl font-black text-[var(--ink-primary)]">
-              {stats.guestChatters}
-            </span>
-            <span className="text-[10px] font-semibold text-[var(--ink-muted)]">
-              Độc giả vãng lai
-            </span>
-          </div>
-        </div>
-
-        {/* Action Controls Bar */}
-        <div className="card-comic p-3.5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ink-muted)]" />
-            <input
-              type="text"
-              placeholder="Tìm kiếm theo người gửi, nội dung tin nhắn..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="input-comic text-xs pl-9 pr-3 py-1.5 w-full"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0 flex-wrap">
-            <button
-              type="button"
-              onClick={() => setIsAdminMsgModalOpen(true)}
-              className="btn-comic btn-comic-purple text-xs py-1.5 px-3"
-            >
-              <Radio className="w-3.5 h-3.5 text-[#FFE600]" />
-              <span>Gửi Thông Báo</span>
+    <AdminPage active="community">
+      <PageTitle
+        title="Cộng đồng"
+        action={
+          <div className="flex gap-2">
+            <button type="button" onClick={load} disabled={loading} aria-label="Làm mới" className="btn-comic text-xs py-2 px-2.5 min-h-[40px]">
+              <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />
             </button>
-
-            <button
-              type="button"
-              onClick={() => setIsClearModalOpen(true)}
-              className="btn-comic btn-comic-red text-xs py-1.5 px-3"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Dọn Dẹp Chat</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={loadData}
-              disabled={isLoading}
-              className="btn-comic text-xs py-1.5 px-2.5"
-              title="Làm mới"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <button type="button" onClick={() => setComposeOpen(true)} className="btn-comic btn-comic-purple text-xs py-2 px-3 min-h-[40px]">
+              <Radio className="w-4 h-4" />
+              <span>Phát thông báo</span>
             </button>
           </div>
-        </div>
+        }
+      />
 
-        {/* Messages Moderation Feed */}
-        <div className="card-comic p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between pb-2 border-b-2 border-[var(--border-ink)]">
-            <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
-              Danh Sách Tin Nhắn Kiểm Duyệt ({filteredMessages.length})
-            </span>
-            <span className="badge-comic badge-comic-teal text-[9px] font-black">REALTIME LOG</span>
-          </div>
-
-          {showSkeletonFallback ? (
-            <AdminTableSkeleton rows={4} />
-          ) : pagedMessages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-[var(--ink-muted)] gap-2">
-              <MessageCircle className="w-10 h-10 opacity-40" />
-              <span className="text-xs font-bold text-[var(--ink-secondary)]">
-                {searchQuery
-                  ? 'Không tìm thấy tin nhắn phù hợp với từ khóa'
-                  : 'Phòng chat hiện tại không có tin nhắn nào'}
-              </span>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2.5">
-              {pagedMessages.map((m) => {
-                const isAdmin = m.role === 'ADMIN';
-                const isVip = m.isVip || m.role === 'VIP';
-                const isGuest = m.role === 'GUEST' || m.userId === 0;
-
-                return (
-                  <div
-                    key={m.id}
-                    className="card-comic-sm p-3 bg-[var(--surface-elevated)] flex items-start justify-between gap-3 hover:border-[#3A86FF] transition-all"
-                  >
-                    <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                      <div className="w-8 h-8 rounded-lg border border-[var(--border-ink)] bg-[var(--surface-card)] flex items-center justify-center text-[var(--ink-primary)] shrink-0 mt-0.5">
-                        {isAdmin ? (
-                          <ShieldCheck className="w-4 h-4 text-[#E63946]" />
-                        ) : isVip ? (
-                          <Star className="w-4 h-4 text-[#8338EC]" />
-                        ) : isGuest ? (
-                          <UserIcon className="w-4 h-4 text-[var(--ink-muted)]" />
-                        ) : (
-                          <Headphones className="w-4 h-4 text-[#3A86FF]" />
-                        )}
-                      </div>
-
-                      <div className="flex flex-col min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-extrabold text-xs text-[var(--ink-primary)]">
-                            {m.username}
-                          </span>
-                          {isAdmin ? (
-                            <span className="badge-comic badge-comic-red text-[8px] py-0 px-1">
-                              ADMIN
-                            </span>
-                          ) : isVip ? (
-                            <span className="badge-comic badge-comic-purple text-[8px] py-0 px-1 font-bold">
-                              VIP
-                            </span>
-                          ) : isGuest ? (
-                            <span className="badge-comic badge-comic-white text-[8px] py-0 px-1">
-                              KHÁCH
-                            </span>
-                          ) : (
-                            <span className="badge-comic badge-comic-blue text-[8px] py-0 px-1">
-                              USER
-                            </span>
-                          )}
-                          <span className="text-[10px] text-[var(--ink-muted)] font-mono">
-                            ID: {m.id}
-                          </span>
-                          <span className="text-[10px] text-[var(--ink-muted)] font-semibold ml-auto">
-                            {formatMsgDate(m.createdAt)}
-                          </span>
-                        </div>
-
-                        <p className="text-xs font-semibold text-[var(--ink-primary)] mt-1 whitespace-pre-wrap leading-relaxed">
-                          {m.message}
-                        </p>
-
-                        {(m.sharedAudio || m.sharedAudioId) && (
-                          <div className="mt-1.5 p-1.5 rounded-lg border border-[var(--border-ink)] bg-[var(--surface-accent-soft)] flex items-center gap-2 self-start max-w-full">
-                            <Music2 className="w-3.5 h-3.5 text-[#3A86FF] shrink-0" />
-                            <span className="text-[10px] font-bold text-[var(--ink-primary)] truncate">
-                              Truyện đính kèm:{' '}
-                              <span className="underline">
-                                {m.sharedAudio?.title || `Audio ID #${m.sharedAudioId}`}
-                              </span>
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="shrink-0 flex items-center gap-1 self-start">
-                      <button
-                        type="button"
-                        onClick={() => setDeletingMsgId(m.id)}
-                        className="btn-comic btn-comic-red text-[10px] py-1 px-2.5"
-                        title="Xóa tin nhắn này"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Xóa</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          <Pagination
-            currentPage={safeCurrentPage}
-            totalPages={totalPages}
-            totalItems={filteredMessages.length}
-            pageSize={pageSize}
-            onPageChange={(p) => setCurrentPage(p)}
-          />
-        </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatTile label="Tin nhắn" value={stats.totalMessages || messages.length} icon={MessageSquare} tone="blue" />
+        <StatTile label="Đang online" value={stats.onlineCount} icon={Users} tone="teal" />
+        <StatTile label="Người chat VIP" value={stats.vipChatters} icon={Crown} tone="purple" />
+        <StatTile label="Khách chat" value={stats.guestChatters} icon={UserCheck} tone="yellow" />
       </div>
 
-      {/* Delete Confirmation Modal */}
-      <Modal
-        isOpen={deletingMsgId !== null}
-        onClose={() => setDeletingMsgId(null)}
-        title="XÁC NHẬN XÓA TIN NHẮN"
-        confirmText="Xóa vĩnh viễn"
-        cancelText="Hủy"
-        isDanger
-        onConfirm={handleDeleteMessage}
-        size="sm"
-      >
-        <p className="text-xs text-[var(--ink-secondary)] font-semibold leading-relaxed">
-          Bạn có chắc chắn muốn xóa tin nhắn này khỏi phòng chat cộng đồng không? Tin nhắn sẽ biến mất ngay lập tức trên màn hình của tất cả độc giả đang trực tuyến.
-        </p>
+      <div className="flex gap-2">
+        <SearchInput value={query} onChange={setQuery} placeholder="Tìm theo người gửi hoặc nội dung" />
+        <button type="button" onClick={() => setClearOpen(true)} aria-label="Dọn sạch phòng chat" className="btn-comic btn-comic-red text-xs px-3 min-h-[44px] shrink-0">
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+
+      {loading && messages.length === 0 ? (
+        <AdminTableSkeleton rows={4} />
+      ) : paged.length === 0 ? (
+        <EmptyBox text={q ? 'Không tìm thấy tin nhắn phù hợp' : 'Phòng chat chưa có tin nhắn'} />
+      ) : (
+        <div className="flex flex-col gap-2.5">
+          {paged.map((m) => {
+            const isAdmin = m.role === 'ADMIN';
+            const isGuest = m.role === 'GUEST' || m.userId === 0;
+            const isVip = m.isVip || m.role === 'VIP';
+            return (
+              <div key={m.id} className="card-comic-sm p-3 bg-[var(--surface-card)] flex gap-3">
+                <Avatar name={m.username} src={m.avatarUrl} tone={isAdmin ? 'ADMIN' : isVip ? 'VIP' : 'USER'} size={36} />
+                <div className="flex flex-col min-w-0 flex-1 gap-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-extrabold text-sm text-[var(--ink-primary)]">{m.username}</span>
+                    {isAdmin && (
+                      <span className="badge-comic badge-comic-red text-[10px] py-0 px-1.5">
+                        <ShieldCheck className="w-2.5 h-2.5" /> ADMIN
+                      </span>
+                    )}
+                    {isVip && !isAdmin && <span className="badge-comic badge-comic-purple text-[10px] py-0 px-1.5">VIP</span>}
+                    {isGuest && <span className="badge-comic badge-comic-white text-[10px] py-0 px-1.5">Khách</span>}
+                    <span className="text-[11px] font-semibold text-[var(--ink-muted)] ml-auto">{formatDateTime(m.createdAt)}</span>
+                  </div>
+                  <p className="text-sm font-medium text-[var(--ink-primary)] whitespace-pre-wrap break-words">{m.message}</p>
+                  {(m.sharedAudio || m.sharedAudioId) && (
+                    <span className="text-xs font-bold text-[var(--ink-secondary)] flex items-center gap-1.5 truncate">
+                      <Music2 className="w-3.5 h-3.5 text-[#3A86FF] shrink-0" />
+                      <span className="truncate">{m.sharedAudio?.title || `Audio #${m.sharedAudioId}`}</span>
+                    </span>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <button type="button" onClick={() => setDeletingId(m.id)} className="btn-comic btn-comic-red text-xs py-1 px-2.5 min-h-[34px]">
+                      <Trash2 className="w-3.5 h-3.5" /> Xóa
+                    </button>
+                    {m.userId > 0 && !isAdmin && (
+                      <button type="button" onClick={() => setBanTarget(m)} className="btn-comic text-xs py-1 px-2.5 min-h-[34px]">
+                        <Ban className="w-3.5 h-3.5" /> Khóa người gửi
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Pagination currentPage={safePage} totalPages={totalPages} totalItems={filtered.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
+
+      <Modal isOpen={deletingId !== null} onClose={() => setDeletingId(null)} title="Xóa tin nhắn" confirmText="Xóa" isDanger size="sm" onConfirm={deleteMessage}>
+        <p className="text-sm font-semibold">Tin nhắn sẽ biến mất ngay với mọi người đang online.</p>
       </Modal>
 
-      {/* Clear All Confirmation Modal */}
-      <Modal
-        isOpen={isClearModalOpen}
-        onClose={() => setIsClearModalOpen(false)}
-        title="DỌN DẸP SẠCH PHÒNG CHAT"
-        confirmText="Xác nhận xóa hết"
-        cancelText="Hủy"
-        isDanger
-        onConfirm={handleClearAllMessages}
-        size="sm"
-      >
-        <div className="flex flex-col gap-2">
-          <p className="text-xs text-[#E63946] font-bold leading-relaxed">
-            CẢNH BÁO: Toàn bộ lịch sử tin nhắn trong phòng chat cộng đồng sẽ bị xóa sạch khỏi cơ sở dữ liệu!
-          </p>
-          <p className="text-[11px] text-[var(--ink-secondary)] font-semibold">
-            Thao tác này thường dùng để dọn dẹp tin rác hoặc làm mới phòng chat định kỳ.
-          </p>
-        </div>
+      <Modal isOpen={clearOpen} onClose={() => setClearOpen(false)} title="Dọn sạch phòng chat" confirmText="Xóa toàn bộ" isDanger size="sm" onConfirm={clearAll}>
+        <p className="text-sm font-semibold">Toàn bộ lịch sử tin nhắn sẽ bị xóa vĩnh viễn.</p>
       </Modal>
 
-      {/* Send Admin Announcement Modal */}
       <Modal
-        isOpen={isAdminMsgModalOpen}
-        onClose={() => setIsAdminMsgModalOpen(false)}
-        title="PHÁT THÔNG BÁO QUẢN TRỊ VIÊN"
-        showFooter={false}
-        size="md"
+        isOpen={Boolean(banTarget)}
+        onClose={() => setBanTarget(null)}
+        title="Khóa người gửi"
+        confirmText="Khóa tài khoản"
+        isDanger
+        size="sm"
+        onConfirm={banSender}
       >
-        <div className="flex flex-col gap-3 py-1">
-          <p className="text-xs text-[var(--ink-secondary)] font-semibold leading-relaxed">
-            Tin nhắn sẽ được gắn huy hiệu <strong>ADMIN</strong> và phát sóng trực tiếp tới tất cả độc giả đang kết nối.
-          </p>
-          <textarea
-            value={adminMsgText}
-            onChange={(e) => setAdminMsgText(e.target.value)}
-            rows={3}
-            placeholder="Nhập nội dung thông báo tới toàn thể cộng đồng..."
-            className="input-comic text-xs p-2.5 resize-none font-medium"
-          />
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--border-ink)]/25">
-            <button
-              type="button"
-              onClick={() => setIsAdminMsgModalOpen(false)}
-              className="btn-comic text-xs py-1.5 px-3"
-            >
-              Hủy
-            </button>
-            <button
-              type="button"
-              onClick={handleSendAdminAnnouncement}
-              disabled={isSendingAdminMsg || !adminMsgText.trim()}
-              className="btn-comic btn-comic-purple text-xs py-1.5 px-3.5 disabled:opacity-50"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>Phát Sóng Ngay</span>
-            </button>
-          </div>
-        </div>
+        <p className="text-sm font-semibold">{banTarget?.username} sẽ bị đăng xuất và không thể đăng nhập cho đến khi được mở khóa.</p>
+        <Field label="Lý do (không bắt buộc)">
+          <input value={banReason} onChange={(e) => setBanReason(e.target.value)} maxLength={200} className="input-comic text-sm" />
+        </Field>
       </Modal>
-    </div>
+
+      <Sheet
+        isOpen={composeOpen}
+        onClose={() => setComposeOpen(false)}
+        title="Phát thông báo vào phòng chat"
+        footer={
+          <button
+            type="button"
+            onClick={sendAnnouncement}
+            disabled={sending || !announcement.trim()}
+            className="btn-comic btn-comic-purple w-full justify-center text-sm py-2.5 min-h-[44px]"
+          >
+            <Send className="w-4 h-4" /> {sending ? 'Đang gửi...' : 'Phát ngay'}
+          </button>
+        }
+      >
+        <textarea
+          value={announcement}
+          onChange={(e) => setAnnouncement(e.target.value)}
+          rows={4}
+          maxLength={900}
+          className="input-comic text-sm resize-none"
+          placeholder="Nội dung thông báo"
+        />
+      </Sheet>
+    </AdminPage>
   );
 };

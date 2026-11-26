@@ -19,13 +19,13 @@ import (
 )
 
 type Handler struct {
-	db          *gorm.DB
-	hub         *Hub
-	cacheMu     sync.RWMutex
-	topCache    []domain.TopListener
-	topExpiry   time.Time
-	vipCache    []domain.VipRankingMember
-	vipExpiry   time.Time
+	db        *gorm.DB
+	hub       *Hub
+	cacheMu   sync.RWMutex
+	topCache  []domain.TopListener
+	topExpiry time.Time
+	vipCache  []domain.VipRankingMember
+	vipExpiry time.Time
 }
 
 func NewHandler(db *gorm.DB) *Handler {
@@ -308,6 +308,14 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		senderRole = user.Role
 		isVip = user.Role == domain.RoleVIP || user.Role == domain.RoleAdmin || user.Membership == domain.MembershipVIP
 	} else {
+		var s domain.SystemSetting
+		if err := h.db.Session(&gorm.Session{}).Where("`key` = ?", "site_config").Take(&s).Error; err == nil && s.Value != "" {
+			var cfg domain.SiteConfig
+			if json.Unmarshal([]byte(s.Value), &cfg) == nil && !cfg.AllowGuestChat {
+				response.Forbidden(c, "Phòng chat hiện chỉ mở cho thành viên đã đăng nhập")
+				return
+			}
+		}
 		msgUserID = 0
 		senderUsername = "Khách Nghe Thử"
 		if req.SenderName != "" && (strings.HasPrefix(req.SenderName, "Khách") || strings.EqualFold(req.SenderName, "Khách vãng lai")) {

@@ -9,14 +9,15 @@ import {
   XCircle,
 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '@/stores/authStore';
 import { formatTime } from '@/lib/utils';
 
 const RED_START_PX = 24;
 
-export const MiniPlayer: React.FC = () => {
+export const MiniPlayer: React.FC = React.memo(() => {
   const navigate = useNavigate();
-  const { user } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
   const {
     currentAudio,
     currentEpisode,
@@ -29,7 +30,21 @@ export const MiniPlayer: React.FC = () => {
     cycleSpeed,
     setScreenLocked,
     close,
-  } = usePlayerStore();
+  } = usePlayerStore(
+    useShallow((s) => ({
+      currentAudio: s.currentAudio,
+      currentEpisode: s.currentEpisode,
+      isPlaying: s.isPlaying,
+      currentTime: s.currentTime,
+      duration: s.duration,
+      playbackRate: s.playbackRate,
+      togglePlay: s.togglePlay,
+      seekTo: s.seekTo,
+      cycleSpeed: s.cycleSpeed,
+      setScreenLocked: s.setScreenLocked,
+      close: s.close,
+    }))
+  );
 
   const cardRef = useRef<HTMLDivElement | null>(null);
   const pointerIdRef = useRef<number | null>(null);
@@ -344,4 +359,4 @@ export const MiniPlayer: React.FC = () => {
       </div>
     </aside>
   );
-};
+});

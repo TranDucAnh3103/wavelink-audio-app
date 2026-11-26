@@ -68,6 +68,10 @@ func SessionMiddleware(secret string) gin.HandlerFunc {
 		})
 
 		if err == nil && token.Valid {
+			if IsBanned(claims.UserID) {
+				c.Next()
+				return
+			}
 			c.Set("userID", claims.UserID)
 			c.Set("username", claims.Username)
 			c.Set("userRole", claims.Role)

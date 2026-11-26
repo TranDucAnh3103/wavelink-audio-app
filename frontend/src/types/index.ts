@@ -8,3 +8,4 @@ export * from './history';
 export * from './membership';
 export * from './notification';
 export * from './community';
+export * from './admin';

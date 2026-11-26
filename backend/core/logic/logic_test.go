@@ -404,4 +404,3 @@ func TestFormatSlug(t *testing.T) {
 		})
 	}
 }
-

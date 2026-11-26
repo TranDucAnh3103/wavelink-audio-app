@@ -55,12 +55,9 @@ export const episodeService = {
 
   async updateEpisode(id: number | string, data: Partial<Episode>, isLive = true): Promise<boolean> {
     if (isLive) {
-      try {
-        const res = await axiosClient.put<{ success: boolean }>(`/episodes/${id}`, data);
-        if (res.data.success) return true;
-      } catch (err) {
-        console.warn('updateEpisode live API failed', err);
-      }
+      const res = await axiosClient.put<{ success: boolean }>(`/episodes/${id}`, data);
+      if (res.data.success) return true;
+      throw new Error('Không thể cập nhật tập');
     }
 
     const db = localDb.get();
@@ -78,12 +75,9 @@ export const episodeService = {
 
   async deleteEpisode(id: number | string, isLive = true): Promise<boolean> {
     if (isLive) {
-      try {
-        const res = await axiosClient.delete<{ success: boolean }>(`/episodes/${id}`);
-        if (res.data.success) return true;
-      } catch (err) {
-        console.warn('deleteEpisode live API failed', err);
-      }
+      const res = await axiosClient.delete<{ success: boolean }>(`/episodes/${id}`);
+      if (res.data.success) return true;
+      throw new Error('Không thể xóa tập');
     }
 
     const db = localDb.get();
@@ -100,14 +94,11 @@ export const episodeService = {
 
   async createEpisode(data: Partial<Episode> & { audioId: number }, isLive = true): Promise<Episode | null> {
     if (isLive) {
-      try {
-        const res = await axiosClient.post<{ success: boolean; data: Episode }>('/episodes', data);
-        if (res.data.success && res.data.data) {
-          return res.data.data;
-        }
-      } catch (err) {
-        console.warn('createEpisode live API failed', err);
+      const res = await axiosClient.post<{ success: boolean; data: Episode }>('/episodes', data);
+      if (res.data.success && res.data.data) {
+        return res.data.data;
       }
+      throw new Error('Không thể tạo tập mới');
     }
 
     const db = localDb.get();

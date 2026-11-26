@@ -8,6 +8,7 @@ import (
 
 	"audio-app-backend/config"
 	"audio-app-backend/infra/external"
+	"audio-app-backend/modules/admin"
 	"audio-app-backend/modules/audio"
 	"audio-app-backend/modules/auth"
 	"audio-app-backend/modules/community"
@@ -68,6 +69,7 @@ func SetupRouterWithStream(cfg *config.Config, db *gorm.DB, deps *StreamDeps) *g
 	r.Use(gin.Logger())
 	r.Use(middleware.CORS(cfg.AllowedOrigins))
 	r.Use(middleware.SessionMiddleware(cfg.JWTSecret))
+	r.Use(middleware.Gzip())
 	r.Use(middleware.ETag())
 
 	// Rate Limiters bảo vệ các endpoint công khai
@@ -129,6 +131,7 @@ func SetupRouterWithStream(cfg *config.Config, db *gorm.DB, deps *StreamDeps) *g
 			tokenTTL = 6 * time.Hour
 		}
 		audioHandler.ConfigureStream(streamTokens, streamCache, streamExtractor, cfg.StreamBaseURL, tokenTTL)
+		audioHandler.SetOnTaxonomyChanged(taxonomyHandler.InvalidateCache)
 
 		audioGroup := v1.Group("/audios")
 		{
@@ -176,6 +179,13 @@ func SetupRouterWithStream(cfg *config.Config, db *gorm.DB, deps *StreamDeps) *g
 		// 12. Community Module (Realtime Chat & Leaderboards)
 		communityHandler := community.NewHandler(db)
 		communityHandler.RegisterRoutes(v1)
+
+		// 13. Admin Module (quản trị toàn diện)
+		admin.LoadBanned(db)
+		adminHandler := admin.NewHandler(db)
+		adminHandler.SetStreamDeps(streamCache, streamExtractor)
+		adminHandler.SetOnTaxonomyChanged(taxonomyHandler.InvalidateCache)
+		adminHandler.RegisterRoutes(v1)
 	}
 
 	// Phục vụ Frontend tĩnh (SPA Fallback)

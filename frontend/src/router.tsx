@@ -1,24 +1,61 @@
-import React from 'react';
+import React, { lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { HomePage } from '@/pages/HomePage';
 import { LibraryPage } from '@/pages/LibraryPage';
 import { PlayerPage } from '@/pages/PlayerPage';
-import { UploadPage } from '@/pages/UploadPage';
-import { CommunityPage } from '@/pages/CommunityPage';
-import { ProfilePage } from '@/pages/ProfilePage';
-import { MembershipPage } from '@/pages/MembershipPage';
-import { NotificationsPage } from '@/pages/NotificationsPage';
-import { SettingsPage } from '@/pages/SettingsPage';
-import { AuthPage } from '@/pages/AuthPage';
-import { AdminOverviewPage } from '@/pages/admin/AdminOverviewPage';
-import { AdminAudiosPage } from '@/pages/admin/AdminAudiosPage';
-import { AdminEpisodesPage } from '@/pages/admin/AdminEpisodesPage';
-import { AdminCategoriesPage } from '@/pages/admin/AdminCategoriesPage';
-import { AdminAccountsPage } from '@/pages/admin/AdminAccountsPage';
-import { AdminVipPage } from '@/pages/admin/AdminVipPage';
-import { AdminCommunityPage } from '@/pages/admin/AdminCommunityPage';
 import { AdminGuard } from '@/components/admin/AdminGuard';
+
+const UploadPage = lazy(() => import('@/pages/UploadPage').then((m) => ({ default: m.UploadPage })));
+const CommunityPage = lazy(() =>
+  import('@/pages/CommunityPage').then((m) => ({ default: m.CommunityPage }))
+);
+const ProfilePage = lazy(() =>
+  import('@/pages/ProfilePage').then((m) => ({ default: m.ProfilePage }))
+);
+const MembershipPage = lazy(() =>
+  import('@/pages/MembershipPage').then((m) => ({ default: m.MembershipPage }))
+);
+const NotificationsPage = lazy(() =>
+  import('@/pages/NotificationsPage').then((m) => ({ default: m.NotificationsPage }))
+);
+const SettingsPage = lazy(() =>
+  import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage }))
+);
+const AuthPage = lazy(() => import('@/pages/AuthPage').then((m) => ({ default: m.AuthPage })));
+const AdminOverviewPage = lazy(() =>
+  import('@/pages/admin/AdminOverviewPage').then((m) => ({ default: m.AdminOverviewPage }))
+);
+const AdminAudiosPage = lazy(() =>
+  import('@/pages/admin/AdminAudiosPage').then((m) => ({ default: m.AdminAudiosPage }))
+);
+const AdminEpisodesPage = lazy(() =>
+  import('@/pages/admin/AdminEpisodesPage').then((m) => ({ default: m.AdminEpisodesPage }))
+);
+const AdminCategoriesPage = lazy(() =>
+  import('@/pages/admin/AdminCategoriesPage').then((m) => ({ default: m.AdminCategoriesPage }))
+);
+const AdminAccountsPage = lazy(() =>
+  import('@/pages/admin/AdminAccountsPage').then((m) => ({ default: m.AdminAccountsPage }))
+);
+const AdminVipPage = lazy(() =>
+  import('@/pages/admin/AdminVipPage').then((m) => ({ default: m.AdminVipPage }))
+);
+const AdminCommunityPage = lazy(() =>
+  import('@/pages/admin/AdminCommunityPage').then((m) => ({ default: m.AdminCommunityPage }))
+);
+const AdminOrdersPage = lazy(() =>
+  import('@/pages/admin/AdminOrdersPage').then((m) => ({ default: m.AdminOrdersPage }))
+);
+const AdminNotifyPage = lazy(() =>
+  import('@/pages/admin/AdminNotifyPage').then((m) => ({ default: m.AdminNotifyPage }))
+);
+const AdminTicketsPage = lazy(() =>
+  import('@/pages/admin/AdminTicketsPage').then((m) => ({ default: m.AdminTicketsPage }))
+);
+const AdminSystemPage = lazy(() =>
+  import('@/pages/admin/AdminSystemPage').then((m) => ({ default: m.AdminSystemPage }))
+);
 
 export const AppRoutes: React.FC = () => {
   return (
@@ -44,7 +81,12 @@ export const AppRoutes: React.FC = () => {
           <Route path="/admin/audios" element={<AdminAudiosPage />} />
           <Route path="/admin/episodes" element={<AdminEpisodesPage />} />
           <Route path="/admin/categories" element={<AdminCategoriesPage />} />
-          <Route path="/admin/accounts" element={<AdminAccountsPage />} />
+          <Route path="/admin/users" element={<AdminAccountsPage />} />
+          <Route path="/admin/accounts" element={<Navigate to="/admin/users" replace />} />
+          <Route path="/admin/orders" element={<AdminOrdersPage />} />
+          <Route path="/admin/tickets" element={<AdminTicketsPage />} />
+          <Route path="/admin/notify" element={<AdminNotifyPage />} />
+          <Route path="/admin/system" element={<AdminSystemPage />} />
           <Route path="/admin/vip" element={<AdminVipPage />} />
           <Route path="/admin/community" element={<AdminCommunityPage />} />
         </Route>

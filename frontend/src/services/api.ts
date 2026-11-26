@@ -12,6 +12,7 @@ import { membershipService } from './membershipService';
 import { userService } from './userService';
 import { guestSessionService } from './guestSessionService';
 import { communityService } from './communityService';
+import { adminService } from './adminService';
 
 function purgeLegacyLocalStorageDb(): void {
   if (typeof localStorage === 'undefined') return;
@@ -57,6 +58,7 @@ export const api = {
   user: userService,
   guestSession: guestSessionService,
   community: communityService,
+  admin: adminService,
 
   async init(): Promise<boolean> {
     purgeLegacyLocalStorageDb();

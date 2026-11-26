@@ -160,6 +160,12 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
+	if user.IsBanned {
+		response.Forbidden(c, "Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên.")
+		return
+	}
+	h.touchLastLogin(&user)
+
 	token, err := middleware.GenerateToken(user, h.jwtSecret)
 	if err != nil {
 		response.Internal(c, "Lỗi cấp token đăng nhập")
@@ -170,6 +176,12 @@ func (h *Handler) Login(c *gin.Context) {
 		"token": token,
 		"user":  user,
 	}, nil)
+}
+
+func (h *Handler) touchLastLogin(user *domain.User) {
+	now := time.Now().UTC()
+	user.LastLoginAt = &now
+	h.db.Model(&domain.User{}).Where("id = ?", user.ID).UpdateColumn("last_login_at", now)
 }
 
 func (h *Handler) GetMe(c *gin.Context) {
@@ -361,6 +373,12 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 			return
 		}
 	}
+
+	if user.IsBanned {
+		response.Forbidden(c, "Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên.")
+		return
+	}
+	h.touchLastLogin(&user)
 
 	// 4. Sinh JWT Token WaveLink
 	token, err := middleware.GenerateToken(user, h.jwtSecret)
