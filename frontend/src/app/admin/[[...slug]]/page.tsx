@@ -4,6 +4,7 @@ import { AdminClientWrapper } from './admin-client';
 
 export const metadata: Metadata = {
   title: 'Bảng Điều Khiển Quản Trị | WaveLink',
+  description: 'Trang quản trị hệ thống WaveLink Audio.',
   robots: {
     index: false,
     follow: false,

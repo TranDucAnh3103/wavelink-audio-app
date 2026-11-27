@@ -1,13 +1,12 @@
 'use client';
 
 import React from 'react';
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { Home, Library, Plus, LayoutDashboard, Users, User } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 
 export const Footer: React.FC = React.memo(() => {
   const location = useLocation();
-  const navigate = useNavigate();
   const { user } = useAuthStore();
   const pathname = location.pathname;
 
@@ -42,15 +41,14 @@ export const Footer: React.FC = React.memo(() => {
 
         {/* Center Raised Comic FAB: Nhập link YouTube */}
         <div className="relative flex flex-col items-center justify-end flex-1 pb-1.5">
-          <button
-            type="button"
-            onClick={() => navigate('/upload')}
+          <Link
+            to="/upload"
             aria-label="Nhập link YouTube"
             className="fab-comic"
             title="Nhập link YouTube"
           >
             <Plus className="w-6 h-6" strokeWidth={3} />
-          </button>
+          </Link>
           <span className="text-[10px] font-black uppercase text-[var(--ink-primary)] tracking-tight leading-none -mt-2">
             Nhập Link
           </span>

@@ -637,7 +637,7 @@ export const ProfilePage: React.FC = () => {
                     onClick={() => setShowAllHistory((prev) => !prev)}
                     className="text-[11px] font-extrabold text-[#3A86FF] hover:underline cursor-pointer"
                   >
-                    {showAllHistory ? 'Thu gọn' : `Xem tất cả (${history.length})`}
+                    {showAllHistory ? 'Thu gọn' : 'Xem tất cả'}
                   </button>
                 )}
               </div>
@@ -1070,7 +1070,7 @@ export const ProfilePage: React.FC = () => {
                   onClick={() => setShowAllHistory((prev) => !prev)}
                   className="text-[11px] font-extrabold text-[#3A86FF] hover:underline cursor-pointer"
                 >
-                  {showAllHistory ? 'Thu gọn' : `Xem tất cả (${history.length})`}
+                  {showAllHistory ? 'Thu gọn' : 'Xem tất cả'}
                 </button>
               )}
             </div>

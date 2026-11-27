@@ -4,12 +4,14 @@ import { getSiteUrl } from '@/lib/siteConfig';
 
 const siteUrl = getSiteUrl();
 
+export const dynamic = 'force-dynamic';
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const audios = await fetchServerAllAudios();
 
   const audioEntries: MetadataRoute.Sitemap = audios.map((audio) => ({
     url: `${siteUrl}/player/${audio.id}`,
-    lastModified: new Date(),
+    lastModified: audio.updatedAt ? new Date(audio.updatedAt) : audio.createdAt ? new Date(audio.createdAt) : new Date(),
     changeFrequency: 'weekly',
     priority: 0.9,
   }));
@@ -22,7 +24,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 1.0,
     },
     {
-      url: `${siteUrl}/home`,
+      url: `${siteUrl}/library`,
       lastModified: new Date(),
       changeFrequency: 'daily',
       priority: 0.9,

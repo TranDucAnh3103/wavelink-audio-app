@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Eye, Plus, Sparkles } from 'lucide-react';
 import { useAudios } from '@/hooks/useAudio';
 import {
@@ -9,6 +9,7 @@ import {
   getRelatedAudios,
   RelatedFilterMode,
 } from '@/lib/relatedAudios';
+import { getOptimizedThumbnailUrl } from '@/lib/utils';
 import { AudioItem } from '@/types';
 
 export const RELATED_BATCH_SIZE = 10;
@@ -26,7 +27,6 @@ const FILTER_OPTIONS: Array<{ mode: RelatedFilterMode; label: string }> = [
 ];
 
 export const RelatedAudiosSection: React.FC<RelatedAudiosSectionProps> = ({ currentAudio }) => {
-  const navigate = useNavigate();
   const sectionRef = useRef<HTMLElement | null>(null);
   const triggerRef = useRef<HTMLDivElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -159,8 +159,7 @@ export const RelatedAudiosSection: React.FC<RelatedAudiosSectionProps> = ({ curr
     }
   };
 
-  const handleSelectRelated = (itemId: number | string) => {
-    navigate(`/player/${itemId}`);
+  const handleSelectRelated = () => {
     if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -232,7 +231,7 @@ export const RelatedAudiosSection: React.FC<RelatedAudiosSectionProps> = ({ curr
                     : 'bg-[var(--surface-elevated)] text-[var(--ink-secondary)] border-[var(--border-ink)] hover:bg-[var(--surface-muted)]'
                 }`}
               >
-                {opt.label} ({countsByMode[opt.mode]})
+                {opt.label}
               </button>
             );
           }
@@ -257,24 +256,19 @@ export const RelatedAudiosSection: React.FC<RelatedAudiosSectionProps> = ({ curr
               : 'badge-comic-yellow';
 
           return (
-            <div
+            <Link
               key={item.id}
+              to={`/player/${item.id}`}
               data-testid="related-audio-card"
-              role="button"
-              tabIndex={0}
-              onClick={() => handleSelectRelated(item.id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleSelectRelated(item.id);
-                }
-              }}
+              onClick={handleSelectRelated}
               className="w-44 sm:w-48 shrink-0 card-comic p-2.5 flex flex-col gap-2 card-comic-interactive cursor-pointer group bg-[var(--surface-card)]"
             >
               <div className="relative w-full aspect-[16/10] rounded-lg border-2 border-[var(--border-ink)] overflow-hidden bg-[#111113]">
                 <img
-                  src={item.thumbnailUrl || '/wavelink-icon.png'}
+                  src={getOptimizedThumbnailUrl(item.thumbnailUrl, 'card')}
                   alt={item.title}
+                  width={320}
+                  height={200}
                   loading="lazy"
                   decoding="async"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
@@ -311,7 +305,7 @@ export const RelatedAudiosSection: React.FC<RelatedAudiosSectionProps> = ({ curr
                   </span>
                 </div>
               </div>
-            </div>
+            </Link>
           );
         })}
 
@@ -323,7 +317,7 @@ export const RelatedAudiosSection: React.FC<RelatedAudiosSectionProps> = ({ curr
           >
             <Plus className="w-6 h-6" strokeWidth={2.5} />
             <span className="font-comic font-extrabold text-xs uppercase">
-              Tải thêm 10 audio ({remainingCount} còn lại)
+              Xem thêm
             </span>
           </button>
         )}

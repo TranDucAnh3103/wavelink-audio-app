@@ -252,6 +252,26 @@ describe('HomePage UX & Discovery Sections', () => {
     expect(dest).toContain('/library?search=');
     expect(decodeURIComponent(dest)).toContain('Đấu Phá Thương Khung');
   });
+
+  it('uses clean Xem tất cả link without item counts and does not render Tải thêm truyện button', () => {
+    const qc = createTestClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/home']}>
+          <Routes>
+            <Route path="/home" element={<HomePage />} />
+            <Route path="/library" element={<LocationDisplay />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(screen.queryByText(/Tải thêm truyện/i)).not.toBeInTheDocument();
+    const viewAllLink = screen.getByRole('link', { name: /Xem tất cả audio trong thư viện/i });
+    expect(viewAllLink).toHaveTextContent('Xem tất cả');
+    expect(viewAllLink).not.toHaveTextContent(/\(\d+/);
+    expect(viewAllLink).toHaveAttribute('href', '/library');
+  });
 });
 
 describe('PlayerPage Always-Visible Details, Controls Split & Unlimited Swipe', () => {

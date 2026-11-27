@@ -6,12 +6,16 @@ import { usePathname } from 'next/navigation';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { SidebarNav } from '@/components/layout/SidebarNav';
-import { MiniPlayer } from '@/components/layout/MiniPlayer';
 import { AudioEngineHost } from '@/components/layout/AudioEngineHost';
 import { ToastContainer } from '@/components/ui/Toast';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useShallow } from 'zustand/react/shallow';
 import { peekLibraryReturnState } from '@/lib/libraryNavigationState';
+
+const MiniPlayer = dynamic(
+  () => import('@/components/layout/MiniPlayer').then((m) => m.MiniPlayer),
+  { ssr: false }
+);
 
 const ScreenLockOverlay = dynamic(
   () => import('@/components/layout/ScreenLockOverlay').then((m) => m.ScreenLockOverlay),
@@ -72,7 +76,7 @@ function ShellBody({ children }: { children: React.ReactNode }) {
         </Suspense>
       </main>
 
-      {!isAuthPage && <MiniPlayer />}
+      {!isAuthPage && hasCurrentAudio && <MiniPlayer />}
       {!isAuthPage && (
         <Suspense fallback={null}>
           <Footer />

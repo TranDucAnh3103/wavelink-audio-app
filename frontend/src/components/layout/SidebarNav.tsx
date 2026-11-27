@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import {
   Headphones,
   Home,
@@ -23,7 +23,6 @@ import { useUnreadNotificationCount } from '@/hooks/useNotifications';
 
 export const SidebarNav: React.FC = React.memo(() => {
   const location = useLocation();
-  const navigate = useNavigate();
   const { user, isLive, isInitialized } = useAuthStore();
   const { theme, resolvedTheme, setTheme } = useThemeStore();
   const { data: unreadCount = 0 } = useUnreadNotificationCount();
@@ -102,9 +101,8 @@ export const SidebarNav: React.FC = React.memo(() => {
     >
       {/* Brand Logo */}
       <div className="h-16 px-3 lg:px-4 border-b-2 border-[var(--border-ink)] flex items-center justify-center lg:justify-between shrink-0">
-        <button
-          type="button"
-          onClick={() => navigate('/home')}
+        <Link
+          to="/home"
           className="flex items-center gap-2.5 text-left group cursor-pointer"
           title="Về trang chủ WaveLink"
         >
@@ -124,20 +122,19 @@ export const SidebarNav: React.FC = React.memo(() => {
               {isLive ? 'Trực tuyến' : 'Ngoại tuyến'}
             </span>
           </div>
-        </button>
+        </Link>
       </div>
 
       {/* Primary Upload CTA */}
       <div className="p-3 lg:px-4">
-        <button
-          type="button"
-          onClick={() => navigate('/upload')}
+        <Link
+          to="/upload"
           title="Nhập link YouTube mới"
           className="w-full btn-comic btn-comic-yellow py-2.5 px-0 lg:px-3.5 justify-center font-black text-xs uppercase tracking-wide"
         >
           <Plus className="w-4 h-4 shrink-0" strokeWidth={3} />
           <span className="hidden lg:inline">Nhập Link YouTube</span>
-        </button>
+        </Link>
       </div>
 
       {/* Navigation Links */}
@@ -194,15 +191,14 @@ export const SidebarNav: React.FC = React.memo(() => {
         </button>
 
         {/* User Chip */}
-        <button
-          type="button"
-          onClick={() => navigate(user?.isGuest ? '/login' : '/profile')}
+        <Link
+          to={user?.isGuest ? '/login' : '/profile'}
           title={displayName}
           className="w-full flex items-center justify-center lg:justify-start gap-2.5 p-2 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] hover:bg-[var(--surface-muted)] text-left transition-colors cursor-pointer"
         >
           <div className="w-8 h-8 rounded-lg border-2 border-[#111113] bg-[#3A86FF] text-white flex items-center justify-center font-black text-xs shrink-0 overflow-hidden">
             {user?.avatarUrl ? (
-              <img src={user.avatarUrl} alt={displayName} className="w-full h-full object-cover" />
+              <img src={user.avatarUrl} alt={displayName} width={32} height={32} className="w-full h-full object-cover" />
             ) : (
               displayName.charAt(0).toUpperCase()
             )}
@@ -215,7 +211,7 @@ export const SidebarNav: React.FC = React.memo(() => {
               {isAdmin ? 'Quản trị viên' : isVip ? 'Thành viên VIP' : user?.isGuest ? 'Đăng nhập ngay' : 'Miễn phí'}
             </span>
           </div>
-        </button>
+        </Link>
       </div>
     </aside>
   );

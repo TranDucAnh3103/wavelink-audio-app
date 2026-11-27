@@ -5,14 +5,14 @@
  * - Cache API assets để app load nhanh hơn khi mạng chậm
  */
 
-const CACHE_NAME = 'wavelink-v2.3';
+const CACHE_NAME = 'wavelink-v2.4';
 const AUDIO_KEEPALIVE_CHANNEL = 'wavelink-audio-keepalive';
 
 const PRECACHE_ASSETS = [
   '/',
-  '/index.html',
   '/manifest.json',
   '/silence.mp3',
+  '/icon-192.png',
   '/wavelink-icon.png',
 ];
 

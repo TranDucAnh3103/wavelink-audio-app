@@ -163,3 +163,21 @@ export function extractYouTubeId(url: string): string | null {
   const match = url.trim().match(ytRegex);
   return match ? match[1] : null;
 }
+
+/**
+ * Downsizes oversized YouTube maxresdefault/sddefault thumbnails to hqdefault for small cards
+ * to reduce image payload on listing pages without altering hqdefault/mqdefault URLs.
+ */
+export function getOptimizedThumbnailUrl(
+  url?: string | null,
+  variant: 'card' | 'hero' = 'card'
+): string {
+  if (!url) return '/wavelink-icon.png';
+  if (variant === 'card') {
+    return url.replace(
+      /^(https:\/\/(?:img\.youtube\.com|i\.ytimg\.com)\/vi\/[a-zA-Z0-9_-]{11}\/)(?:maxresdefault|sddefault)\.jpg$/i,
+      '$1hqdefault.jpg'
+    );
+  }
+  return url;
+}

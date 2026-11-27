@@ -27,10 +27,36 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     initAuth();
     primeAudioContextOnFirstGesture();
-    externalNotificationService.initBackgroundWatcher();
     const cleanupBridge = initMobileBridge();
+
+    let idleHandle: number | undefined;
+    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+    const startWatcher = () => {
+      externalNotificationService.initBackgroundWatcher();
+    };
+
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      idleHandle = (window as unknown as {
+        requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number;
+      }).requestIdleCallback(startWatcher, { timeout: 2500 });
+    } else {
+      fallbackTimer = setTimeout(startWatcher, 1500);
+    }
+
     return () => {
       cleanupBridge();
+      if (
+        idleHandle !== undefined &&
+        typeof window !== 'undefined' &&
+        'cancelIdleCallback' in window
+      ) {
+        (window as unknown as { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(
+          idleHandle
+        );
+      }
+      if (fallbackTimer !== undefined) {
+        clearTimeout(fallbackTimer);
+      }
     };
   }, [initAuth]);
 

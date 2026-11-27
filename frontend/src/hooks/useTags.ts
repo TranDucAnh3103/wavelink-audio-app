@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/authStore';
 export function useTags() {
   return useQuery({
     queryKey: ['tags'],
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const { isLive } = useAuthStore.getState();
       const data = await api.tag.getTags(isLive);

@@ -6,6 +6,8 @@ import { PlayerClient } from './player-client';
 
 const siteUrl = getSiteUrl();
 
+export const revalidate = 60;
+
 interface PageProps {
   params: {
     id: string;
@@ -148,6 +150,8 @@ export default async function PlayerRoutePage({ params }: PageProps) {
             description: audio.description || audio.title,
             thumbnailUrl: [thumbnailUrl],
             contentUrl: youtubeUrl,
+            uploadDate: audio.createdAt || '2025-01-01T00:00:00Z',
+            duration: durationISO,
             embedUrl: audio.youtubeVideoId
               ? `https://www.youtube-nocookie.com/embed/${audio.youtubeVideoId}`
               : undefined,
@@ -188,25 +192,7 @@ export default async function PlayerRoutePage({ params }: PageProps) {
         />
       )}
 
-      {/* Semantic SEO pre-rendered content for Search Engines */}
-      {audio && (
-        <article className="sr-only" aria-label={`Nội dung chi tiết Audio ${audio.title}`}>
-          <h1>{audio.title}</h1>
-          <p>Tác giả / Kênh YouTube: {audio.author}</p>
-          <p>Thể loại: {audio.categoryName || 'Âm nhạc / Podcast'}</p>
-          <p>Thời lượng: {durationSeconds > 0 ? `${Math.round(durationSeconds / 60)} phút` : 'Chưa rõ'}</p>
-          <p>Link gốc video YouTube: <a href={youtubeUrl}>{youtubeUrl}</a></p>
-          <div>
-            <h3>Mô tả chi tiết:</h3>
-            <p>{audio.description}</p>
-          </div>
-          {audio.tags && audio.tags.length > 0 && (
-            <p>Từ khóa liên quan: {audio.tags.join(', ')}</p>
-          )}
-        </article>
-      )}
-
-      {/* Interactive WaveLink Player Client Component */}
+      {/* Interactive WaveLink Player Client Component (already SSR-renders visible H1, metadata, description, tags) */}
       <PlayerClient initialAudio={audio} />
     </>
   );

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search,
   X,
@@ -24,6 +24,7 @@ import { toast } from '@/components/ui/Toast';
 import { Pagination } from '@/components/ui/Pagination';
 import { DEFAULT_PAGE_SIZE } from '@/config/pagination';
 import { getAudioListMeta } from '@/services/audioService';
+import { getOptimizedThumbnailUrl } from '@/lib/utils';
 import {
   clearLibraryReturnState,
   peekLibraryReturnState,
@@ -242,7 +243,7 @@ export const LibraryPage: React.FC = () => {
     };
   }, [isLoading, paginatedAudios, searchQuery, activeCategory, activeStatus, urlUserId, safeCurrentPage]);
 
-  const handleOpenAudioDetail = (audioId: number | string) => {
+  const recordLibraryReturn = (audioId: number | string) => {
     const scrollY = typeof window !== 'undefined' ? window.scrollY || 0 : 0;
     saveLibraryReturnState({
       page: safeCurrentPage,
@@ -254,7 +255,6 @@ export const LibraryPage: React.FC = () => {
       userId: urlUserId,
       savedAt: Date.now(),
     });
-    navigate(`/player/${audioId}`);
   };
 
   const handleSearchChange = (val: string) => {
@@ -362,7 +362,7 @@ export const LibraryPage: React.FC = () => {
                   : 'text-[var(--ink-secondary)] hover:bg-[var(--surface-muted)]'
               }`}
             >
-              Tất cả ({uniqueAudios.length})
+              Tất cả
             </button>
             <button
               type="button"
@@ -510,13 +510,17 @@ export const LibraryPage: React.FC = () => {
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <div
+                  <Link
+                    to={`/player/${a.id}`}
                     className="relative w-20 h-24 rounded-xl border-2 border-[var(--border-ink)] overflow-hidden shrink-0 bg-[#111113] shadow-comic-sm cursor-pointer"
-                    onClick={() => handleOpenAudioDetail(a.id)}
+                    onClick={() => recordLibraryReturn(a.id)}
+                    aria-label={`Nghe ${a.title}`}
                   >
                     <img
-                      src={a.thumbnailUrl || '/wavelink-icon.png'}
+                      src={getOptimizedThumbnailUrl(a.thumbnailUrl, 'card')}
                       alt={a.title}
+                      width={160}
+                      height={192}
                       loading="lazy"
                       decoding="async"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
@@ -533,7 +537,7 @@ export const LibraryPage: React.FC = () => {
                     <span className="absolute bottom-1 left-1 badge-comic badge-comic-yellow text-[8px] py-0 px-1 font-black">
                       {a.totalEpisodes || a.episodes?.length || 1} TẬP
                     </span>
-                  </div>
+                  </Link>
 
                   <div className="flex flex-col justify-between min-w-0 flex-1 h-24 py-0.5">
                     <div className="flex flex-col min-w-0">
@@ -561,6 +565,7 @@ export const LibraryPage: React.FC = () => {
                           }}
                           className="w-7 h-7 rounded-lg border border-[var(--border-ink)] bg-[var(--surface-elevated)] flex items-center justify-center shadow-comic-sm hover:bg-[var(--surface-muted)] active:translate-y-0.5 shrink-0 cursor-pointer"
                           title="Yêu thích"
+                          aria-label={`Yêu thích ${a.title}`}
                         >
                           <Heart
                             className={`w-3.5 h-3.5 ${
@@ -572,12 +577,15 @@ export const LibraryPage: React.FC = () => {
                           />
                         </button>
                       </div>
-                      <h3
-                        className="font-extrabold text-xs md:text-sm text-[var(--ink-primary)] truncate cursor-pointer hover:text-[#3A86FF] transition-colors mt-1"
-                        onClick={() => handleOpenAudioDetail(a.id)}
+                      <Link
+                        to={`/player/${a.id}`}
+                        onClick={() => recordLibraryReturn(a.id)}
+                        className="mt-1 block truncate"
                       >
-                        {a.title}
-                      </h3>
+                        <h3 className="font-extrabold text-xs md:text-sm text-[var(--ink-primary)] truncate hover:text-[#3A86FF] transition-colors">
+                          {a.title}
+                        </h3>
+                      </Link>
                       <p className="text-[11px] font-semibold text-[var(--ink-muted)] truncate mt-0.5">
                         Tác giả: {a.author || 'Đang cập nhật'}
                       </p>
@@ -613,14 +621,14 @@ export const LibraryPage: React.FC = () => {
                     />
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAudioDetail(a.id)}
+                    <Link
+                      to={`/player/${a.id}`}
+                      onClick={() => recordLibraryReturn(a.id)}
                       className="btn-comic text-[11px] py-1 px-2.5"
                     >
                       <ListMusic className="w-3.5 h-3.5" strokeWidth={2.25} />
                       <span>Tập</span>
-                    </button>
+                    </Link>
                     <button
                       type="button"
                       onClick={(e) => {
