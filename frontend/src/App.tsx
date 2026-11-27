@@ -15,9 +15,33 @@ export const App: React.FC = () => {
   useEffect(() => {
     initAuth();
     primeAudioContextOnFirstGesture();
-    externalNotificationService.initBackgroundWatcher();
     const cleanup = initMobileBridge();
+
+    let idleHandle: number | null = null;
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    const startWatcher = () => {
+      externalNotificationService.initBackgroundWatcher();
+    };
+
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      idleHandle = (
+        window as Window & {
+          requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number;
+        }
+      ).requestIdleCallback(startWatcher, { timeout: 2500 });
+    } else {
+      fallbackTimer = setTimeout(startWatcher, 1500);
+    }
+
     return () => {
+      if (idleHandle !== null && typeof window !== 'undefined' && 'cancelIdleCallback' in window) {
+        (window as Window & { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(
+          idleHandle
+        );
+      }
+      if (fallbackTimer !== null) {
+        clearTimeout(fallbackTimer);
+      }
       cleanup();
     };
   }, [initAuth]);

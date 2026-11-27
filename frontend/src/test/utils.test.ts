@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { formatTime, formatDuration, formatVND, extractYouTubeId, parseDurationToSec, computeLogicalEpisodes } from '@/lib/utils';
+import {
+  formatTime,
+  formatDuration,
+  formatVND,
+  extractYouTubeId,
+  parseDurationToSec,
+  computeLogicalEpisodes,
+  getOptimizedThumbnailUrl,
+  handleImageFallback,
+} from '@/lib/utils';
 
 describe('Utility Functions', () => {
   describe('formatTime', () => {
@@ -103,6 +112,50 @@ describe('Utility Functions', () => {
     it('formats numbers into Vietnamese currency style', () => {
       const formatted = formatVND(49000);
       expect(formatted).toContain('49.000');
+    });
+  });
+
+  describe('getOptimizedThumbnailUrl', () => {
+    const ytWithQuery =
+      'https://i.ytimg.com/vi/2H8BptZ6PgU/hq720.jpg?sqp=-oaymwEhCK4FEIIDSFryq4qpAxMIARUAAAAAGAElAADIQj0AgKJD&rs=AOn4CLD_G';
+
+    it('rewrites YouTube JPEG URLs (with query params) to vi_webp sizes per variant', () => {
+      expect(getOptimizedThumbnailUrl(ytWithQuery, 'card')).toBe(
+        'https://i.ytimg.com/vi_webp/2H8BptZ6PgU/mqdefault.webp'
+      );
+      expect(getOptimizedThumbnailUrl(ytWithQuery, 'avatar')).toBe(
+        'https://i.ytimg.com/vi_webp/2H8BptZ6PgU/default.webp'
+      );
+      expect(getOptimizedThumbnailUrl(ytWithQuery, 'hero')).toBe(
+        'https://i.ytimg.com/vi_webp/2H8BptZ6PgU/hqdefault.webp'
+      );
+    });
+
+    it('rewrites img.youtube.com URLs cleanly and keeps non-YouTube URLs untouched', () => {
+      expect(
+        getOptimizedThumbnailUrl('https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg', 'card')
+      ).toBe('https://i.ytimg.com/vi_webp/dQw4w9WgXcQ/mqdefault.webp');
+      expect(getOptimizedThumbnailUrl('https://example.com/cover.png', 'card')).toBe(
+        'https://example.com/cover.png'
+      );
+      expect(getOptimizedThumbnailUrl(null, 'card')).toBe('/wavelink-icon.png');
+    });
+  });
+
+  describe('handleImageFallback', () => {
+    it('falls back to original URL first and then to local icon on second failure', () => {
+      const img = {
+        src: 'https://i.ytimg.com/vi_webp/2H8BptZ6PgU/mqdefault.webp',
+        dataset: {} as Record<string, string>,
+      } as unknown as HTMLImageElement;
+
+      handleImageFallback({ currentTarget: img }, 'https://i.ytimg.com/vi/2H8BptZ6PgU/hq720.jpg');
+      expect(img.src).toBe('https://i.ytimg.com/vi/2H8BptZ6PgU/hq720.jpg');
+      expect(img.dataset.fallbackStage).toBe('original');
+
+      handleImageFallback({ currentTarget: img }, 'https://i.ytimg.com/vi/2H8BptZ6PgU/hq720.jpg');
+      expect(img.src).toBe('/wavelink-icon.png');
+      expect(img.dataset.fallbackStage).toBe('icon');
     });
   });
 });

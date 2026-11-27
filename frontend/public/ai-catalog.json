@@ -1,0 +1,55 @@
+{
+  "specVersion": "0.91",
+  "host": "wavelink-audio-app.zhost.education",
+  "entries": [
+    {
+      "identifier": "urn:air:wavelink-audio-app.zhost.education:home",
+      "displayName": "WaveLink Trang Chủ",
+      "type": "webpage",
+      "url": "https://wavelink-audio-app.zhost.education/home",
+      "description": "Trang chủ WaveLink Audio hiển thị Top 3 truyện phổ biến, bộ lọc thể loại, danh sách truyện mới/phổ biến, bộ truyện nhiều phần và lịch sử nghe gần đây.",
+      "representativeQueries": [
+        "nghe sách nói YouTube tắt màn hình",
+        "top truyện audio phổ biến trên WaveLink",
+        "nghe podcast chạy nền miễn phí"
+      ],
+      "trustManifest": "https://wavelink-audio-app.zhost.education/.well-known/ai-catalog.json"
+    },
+    {
+      "identifier": "urn:air:wavelink-audio-app.zhost.education:library",
+      "displayName": "WaveLink Thư Viện Audio",
+      "type": "webpage",
+      "url": "https://wavelink-audio-app.zhost.education/library",
+      "description": "Thư viện tìm kiếm và lọc toàn bộ sách nói, truyện audio nhiều tập theo từ khóa, thể loại và tác giả.",
+      "representativeQueries": [
+        "tìm truyện audio trong thư viện WaveLink",
+        "danh sách sách nói theo thể loại"
+      ],
+      "trustManifest": "https://wavelink-audio-app.zhost.education/.well-known/ai-catalog.json"
+    },
+    {
+      "identifier": "urn:air:wavelink-audio-app.zhost.education:community",
+      "displayName": "WaveLink Cộng Đồng",
+      "type": "webpage",
+      "url": "https://wavelink-audio-app.zhost.education/community",
+      "description": "Không gian cộng đồng để người nghe thảo luận, gợi ý truyện hay và kết nối cùng tác giả/kênh audio.",
+      "representativeQueries": [
+        "cộng đồng nghe audio WaveLink",
+        "gợi ý sách nói hay trên WaveLink"
+      ],
+      "trustManifest": "https://wavelink-audio-app.zhost.education/.well-known/ai-catalog.json"
+    },
+    {
+      "identifier": "urn:air:wavelink-audio-app.zhost.education:membership",
+      "displayName": "WaveLink Thành Viên VIP",
+      "type": "webpage",
+      "url": "https://wavelink-audio-app.zhost.education/membership",
+      "description": "Thông tin các gói thành viên VIP và quyền lợi mở rộng trên nền tảng WaveLink Audio.",
+      "representativeQueries": [
+        "quyền lợi gói VIP WaveLink Audio",
+        "nâng cấp tài khoản WaveLink"
+      ],
+      "trustManifest": "https://wavelink-audio-app.zhost.education/.well-known/ai-catalog.json"
+    }
+  ]
+}

@@ -18,7 +18,7 @@
 
   --ink-primary: #111113;
   --ink-secondary: #4B5563;
-  --ink-muted: #6B7280;
+  --ink-muted: #52525B;
   --border-ink: #111113;
   --shadow-ink: #111113;
 
@@ -27,9 +27,9 @@
   --comic-black: #111113;
   --comic-yellow: #FFE600;
   --comic-yellow-light: #FEF9C3;
-  --comic-blue: #3A86FF;
-  --comic-teal: #2A9D8F;
-  --comic-red: #E63946;
+  --comic-blue: #1D4ED8;
+  --comic-teal: #0F766E;
+  --comic-red: #C81E2B;
   --comic-orange: #F4A261;
   --comic-purple: #8338EC;
   --comic-gray: #E5E7EB;
@@ -178,7 +178,7 @@ body {
     color: #FFFFFF;
   }
   .btn-comic-primary:hover {
-    background-color: #2563EB;
+    background-color: #1E40AF;
   }
 
   .btn-comic-yellow {
@@ -196,7 +196,7 @@ body {
     color: #FFFFFF;
   }
   .btn-comic-teal:hover {
-    background-color: #238579;
+    background-color: #115E59;
   }
 
   .btn-comic-red {
@@ -205,7 +205,7 @@ body {
     color: #FFFFFF;
   }
   .btn-comic-red:hover {
-    background-color: #DC2626;
+    background-color: #A61B26;
   }
 
   .btn-comic-purple {
@@ -278,6 +278,11 @@ body {
   }
   .badge-comic-teal {
     background-color: var(--comic-teal);
+    border-color: #111113;
+    color: #FFFFFF;
+  }
+  .badge-comic-green {
+    background-color: #15803D;
     border-color: #111113;
     color: #FFFFFF;
   }
@@ -819,7 +824,12 @@ iframe[src*="accounts.google.com/gsi"],
 }
 
 .screen-lock-close-btn:active {
-  background: rgba(230, 57, 70, 0.8);
-  border-color: #E63946;
+  background: rgba(200, 30, 43, 0.85);
+  border-color: #C81E2B;
   transform: scale(0.92);
+}
+
+.content-visibility-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 320px;
 }

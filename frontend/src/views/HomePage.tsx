@@ -35,7 +35,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '@/stores/authStore';
 import { HomeSkeleton } from '@/components/common/Skeletons';
 import { toast } from '@/components/ui/Toast';
-import { formatTime, getOptimizedThumbnailUrl } from '@/lib/utils';
+import { formatTime, getOptimizedThumbnailUrl, handleImageFallback } from '@/lib/utils';
 import { getAudioListMeta } from '@/services/audioService';
 import { groupAudiosIntoSeries, groupTopAuthors } from '@/lib/seriesGrouping';
 import { AudioItem, Category, SystemStats } from '@/types';
@@ -190,6 +190,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   const handleAudiosHorizontalScroll = (e: React.UIEvent<HTMLDivElement>) => {
     if (!hasMoreAudios || audiosFetching) return;
     const el = e.currentTarget;
+    if (el.scrollLeft <= 0) return;
     if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 200) {
       loadMoreAudios();
     }
@@ -210,6 +211,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   const handleSeriesScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
+    if (el.scrollLeft <= 0) return;
     if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 160) {
       setVisibleSeriesCount((prev) =>
         prev < groupedSeries.length
@@ -335,10 +337,10 @@ export const HomePage: React.FC<HomePageProps> = ({
                     onClick={() =>
                       setHeroIndex((prev) => (prev - 1 + top3Audios.length) % top3Audios.length)
                     }
-                    className="w-7 h-7 rounded-lg bg-[var(--surface-card)] border-2 border-[var(--border-ink)] shadow-comic-sm flex items-center justify-center text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113] active:scale-95 transition-all cursor-pointer"
+                    className="w-9 h-9 rounded-lg bg-[var(--surface-card)] border-2 border-[var(--border-ink)] shadow-comic-sm flex items-center justify-center text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113] active:scale-95 transition-transform cursor-pointer"
                     aria-label="Truyện trước"
                   >
-                    <ChevronLeft className="w-3.5 h-3.5" strokeWidth={2.5} />
+                    <ChevronLeft className="w-4 h-4" strokeWidth={2.5} />
                   </button>
                 )}
                 {top3Audios.map((_, idx) => (
@@ -346,22 +348,26 @@ export const HomePage: React.FC<HomePageProps> = ({
                     key={idx}
                     type="button"
                     onClick={() => setHeroIndex(idx)}
-                    className={`transition-all duration-300 rounded-full border-2 border-[#111113] cursor-pointer ${
-                      heroIndex === idx
-                        ? 'w-6 h-2.5 bg-[#FFE600] shadow-comic-sm'
-                        : 'w-2.5 h-2.5 bg-[var(--surface-muted)] hover:bg-[var(--ink-muted)]'
-                    }`}
+                    className="min-w-[28px] min-h-[28px] flex items-center justify-center cursor-pointer"
                     aria-label={`Chuyển tới truyện số ${idx + 1}`}
-                  />
+                  >
+                    <span
+                      className={`block h-2.5 w-4 rounded-full border-2 border-[#111113] transition-transform duration-200 ${
+                        heroIndex === idx
+                          ? 'scale-x-125 bg-[#FFE600]'
+                          : 'scale-x-75 bg-[var(--surface-muted)] opacity-75 hover:opacity-100'
+                      }`}
+                    />
+                  </button>
                 ))}
                 {top3Audios.length > 1 && (
                   <button
                     type="button"
                     onClick={() => setHeroIndex((prev) => (prev + 1) % top3Audios.length)}
-                    className="w-7 h-7 rounded-lg bg-[var(--surface-card)] border-2 border-[var(--border-ink)] shadow-comic-sm flex items-center justify-center text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113] active:scale-95 transition-all cursor-pointer"
+                    className="w-9 h-9 rounded-lg bg-[var(--surface-card)] border-2 border-[var(--border-ink)] shadow-comic-sm flex items-center justify-center text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113] active:scale-95 transition-transform cursor-pointer"
                     aria-label="Truyện kế tiếp"
                   >
-                    <ChevronRight className="w-3.5 h-3.5" strokeWidth={2.5} />
+                    <ChevronRight className="w-4 h-4" strokeWidth={2.5} />
                   </button>
                 )}
               </div>
@@ -445,6 +451,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                           height={720}
                           loading={idx === 0 ? 'eager' : 'lazy'}
                           decoding={idx === 0 ? 'sync' : 'async'}
+                          onError={(e) => handleImageFallback(e, audio.thumbnailUrl)}
                           {...(idx === 0 ? ({ fetchpriority: 'high' } as Record<string, string>) : {})}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         />
@@ -524,6 +531,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                       <div className="flex items-center justify-between gap-2 pt-2 border-t-2 border-[var(--border-ink)]/30">
                         <Link
                           to={`/player/${audio.id}`}
+                          aria-label={`Danh sách tập - ${audio.title}`}
                           className="btn-comic text-xs h-9 px-3 whitespace-nowrap"
                         >
                           <ListMusic className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
@@ -712,6 +720,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                     height={480}
                     loading="lazy"
                     decoding="async"
+                    onError={(e) => handleImageFallback(e, audio.thumbnailUrl)}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
@@ -779,7 +788,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       {/* 5. BỘ TRUYỆN NHIỀU PHẦN (Lấy tất cả bộ truyện cùng tên/tác giả, lướt ngang load 10 thẻ cùng lúc) */}
       {groupedSeries.length > 0 && (
-        <section className="flex flex-col gap-3">
+        <section className="flex flex-col gap-3 content-visibility-auto">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5">
               <Layers className="w-4 h-4 text-[#8338EC]" strokeWidth={2.5} />
@@ -813,6 +822,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                       height={480}
                       loading="lazy"
                       decoding="async"
+                      onError={(e) => handleImageFallback(e, series.thumbnailUrl)}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
@@ -870,7 +880,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       {/* 6. TỪ KHÓA NỔI BẬT */}
       {discoveryTags.length > 0 && (
-        <section className="card-comic p-4 flex flex-col gap-3">
+        <section className="card-comic p-4 flex flex-col gap-3 content-visibility-auto">
           <div className="flex items-center gap-1.5">
             <Hash className="w-4 h-4 text-[#E63946]" strokeWidth={2.5} />
             <h2 className="font-comic font-extrabold text-sm uppercase text-[var(--ink-primary)] tracking-tight">
@@ -893,7 +903,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       {/* 7. CÀY XUYÊN ĐÊM (Hiện theo hàng ngang, lướt ngang để xem thêm) */}
       {marathonPicks.length > 0 && (
-        <section className="flex flex-col gap-3">
+        <section className="flex flex-col gap-3 content-visibility-auto">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5">
               <Clock className="w-4 h-4 text-[#2A9D8F]" strokeWidth={2.5} />
@@ -929,16 +939,17 @@ export const HomePage: React.FC<HomePageProps> = ({
                     height={480}
                     loading="lazy"
                     decoding="async"
+                    onError={(e) => handleImageFallback(e, audio.thumbnailUrl)}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
 
-                  <span className="absolute top-1.5 left-1.5 badge-comic badge-comic-green text-[8px] py-0 px-1.5 font-mono font-black flex items-center gap-0.5">
+                  <span className="absolute top-1.5 left-1.5 badge-comic badge-comic-yellow text-[8px] py-0 px-1.5 font-mono font-black text-[#111113] flex items-center gap-0.5">
                     <Clock className="w-2.5 h-2.5" strokeWidth={2.5} />
                     {audio.formattedDuration || formatTime(audio.totalDurationSeconds || 0)}
                   </span>
 
-                  <span className="absolute top-1.5 right-1.5 badge-comic badge-comic-yellow text-[8px] py-0 px-1.5 font-black text-[#111113]">
+                  <span className="absolute top-1.5 right-1.5 badge-comic badge-comic-purple text-[8px] py-0 px-1.5 font-black text-white">
                     {audio.totalEpisodes || audio.episodes?.length || 1} TẬP
                   </span>
 
@@ -967,7 +978,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       {/* 8. KÊNH & TÁC GIẢ NỔI BẬT (Lướt sang ngang) */}
       {topAuthors.length > 0 && (
-        <section className="flex flex-col gap-3">
+        <section className="flex flex-col gap-3 content-visibility-auto">
           <div className="flex items-center gap-1.5">
             <Mic2 className="w-4 h-4 text-[#3A86FF]" strokeWidth={2.5} />
             <h2 className="font-comic font-extrabold text-sm uppercase text-[var(--ink-primary)] tracking-tight">
@@ -986,12 +997,13 @@ export const HomePage: React.FC<HomePageProps> = ({
                 className="w-56 sm:w-64 shrink-0 card-comic-sm p-3 flex items-center gap-2.5 text-left hover:bg-[var(--surface-accent-soft)] transition-colors cursor-pointer group"
               >
                 <img
-                  src={getOptimizedThumbnailUrl(author.sampleThumbnail, 'card')}
+                  src={getOptimizedThumbnailUrl(author.sampleThumbnail, 'avatar')}
                   alt={author.name}
                   width={44}
                   height={44}
                   loading="lazy"
                   decoding="async"
+                  onError={(e) => handleImageFallback(e, author.sampleThumbnail)}
                   className="w-11 h-11 rounded-xl object-cover border-2 border-[var(--border-ink)] shrink-0"
                 />
                 <div className="flex flex-col min-w-0 flex-1">
@@ -1010,7 +1022,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       )}
 
       {/* 9. VỪA CÀY GẦN ĐÂY (Mặc định hiển thị 3 mục gần nhất, có nút Xem tất cả toàn bộ lịch sử) */}
-      <section className="flex flex-col gap-3">
+      <section className="flex flex-col gap-3 content-visibility-auto">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-1.5">
             <History className="w-4 h-4 text-[#3A86FF]" strokeWidth={2.5} />
@@ -1061,9 +1073,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                     height={480}
                     loading="lazy"
                     decoding="async"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src = '/wavelink-icon.png';
-                    }}
+                    onError={(e) => handleImageFallback(e, item.thumbnailUrl)}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
@@ -1074,7 +1084,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
                   <span
                     aria-hidden="true"
-                    className="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg border-2 border-[#111113] bg-[#3A86FF] text-white flex items-center justify-center shadow-comic-sm group-hover:scale-105"
+                    className="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg border-2 border-[#111113] bg-[#1D4ED8] text-white flex items-center justify-center shadow-comic-sm group-hover:scale-105"
                   >
                     <Play className="w-3 h-3 fill-current ml-0.5" strokeWidth={2.5} />
                   </span>

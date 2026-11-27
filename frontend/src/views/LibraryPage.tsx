@@ -24,7 +24,7 @@ import { toast } from '@/components/ui/Toast';
 import { Pagination } from '@/components/ui/Pagination';
 import { DEFAULT_PAGE_SIZE } from '@/config/pagination';
 import { getAudioListMeta } from '@/services/audioService';
-import { getOptimizedThumbnailUrl } from '@/lib/utils';
+import { getOptimizedThumbnailUrl, handleImageFallback } from '@/lib/utils';
 import {
   clearLibraryReturnState,
   peekLibraryReturnState,
@@ -523,6 +523,7 @@ export const LibraryPage: React.FC = () => {
                       height={192}
                       loading="lazy"
                       decoding="async"
+                      onError={(e) => handleImageFallback(e, a.thumbnailUrl)}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                     {isCurrentlyPlaying && (
