@@ -3,12 +3,19 @@ import { api } from '@/services/api';
 import { AudioFilter, AudioItem, Episode, ImportYouTubePayload } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 
-export function useAudios(filter: AudioFilter = {}, options?: { enabled?: boolean }) {
+export function useAudios(
+  filter: AudioFilter = {},
+  options?: { enabled?: boolean; initialData?: AudioItem[]; staleTime?: number }
+) {
   const { user } = useAuthStore();
+  const initialData =
+    options?.initialData && options.initialData.length > 0 ? options.initialData : undefined;
 
   return useQuery({
     queryKey: ['audios', filter, user?.id || 0],
     enabled: options?.enabled ?? true,
+    initialData,
+    staleTime: options?.staleTime ?? (filter.fields === 'catalog' ? 5 * 60 * 1000 : undefined),
     queryFn: async () => {
       const { isLive, user: latestUser } = useAuthStore.getState();
       const data = await api.audio.getAudios(filter, isLive, latestUser?.id);

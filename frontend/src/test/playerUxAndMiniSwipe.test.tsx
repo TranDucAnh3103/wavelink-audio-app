@@ -194,7 +194,7 @@ describe('PlayerPage Collapsible Description & Related Audios Carousel', () => {
     expect(screen.getAllByTestId('related-audio-card')).toHaveLength(20);
 
     // Click remaining load-more button to get the final 5
-    const loadMoreBtn = screen.getByRole('button', { name: /Tải thêm 10 audio/i });
+    const loadMoreBtn = screen.getByRole('button', { name: /^Xem thêm$/i });
     fireEvent.click(loadMoreBtn);
     expect(screen.getAllByTestId('related-audio-card')).toHaveLength(25);
 

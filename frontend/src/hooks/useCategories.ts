@@ -3,9 +3,17 @@ import { api } from '@/services/api';
 import { Category, CreateCategoryPayload } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 
-export function useCategories(includeHidden = false) {
+export function useCategories(
+  includeHidden = false,
+  options?: { initialData?: Category[] }
+) {
+  const initialData =
+    options?.initialData && options.initialData.length > 0 ? options.initialData : undefined;
+
   return useQuery({
     queryKey: ['categories', includeHidden ? 'admin' : 'public'],
+    initialData,
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const { isLive } = useAuthStore.getState();
       const data = await api.category.getCategories(isLive, includeHidden);

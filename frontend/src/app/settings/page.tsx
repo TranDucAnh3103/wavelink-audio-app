@@ -4,6 +4,7 @@ import { SettingsPage } from '@/pages/SettingsPage';
 
 export const metadata: Metadata = {
   title: 'Cài Đặt Ứng Dụng | WaveLink',
+  description: 'Tùy chỉnh giao diện, âm thanh nền và thông báo trên WaveLink.',
   robots: {
     index: false,
     follow: false,

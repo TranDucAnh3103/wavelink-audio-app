@@ -251,6 +251,8 @@ export const MiniPlayer: React.FC = React.memo(() => {
             <img
               src={currentAudio.thumbnailUrl || '/wavelink-icon.png'}
               alt={currentAudio.title}
+              width={48}
+              height={48}
               className="w-full h-full object-cover"
             />
             {isPlaying && (

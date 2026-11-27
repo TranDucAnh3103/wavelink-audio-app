@@ -49,6 +49,20 @@ export const AuthPage: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
+    // Tải Google Identity Services script theo nhu cầu chỉ tại trang Đăng nhập / Đăng ký
+    if (
+      typeof document !== 'undefined' &&
+      !(window as any).google?.accounts?.oauth2 &&
+      !document.getElementById('google-gsi-client-script')
+    ) {
+      const script = document.createElement('script');
+      script.id = 'google-gsi-client-script';
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+
     if (window.location.hash) {
       const hashParams = new URLSearchParams(window.location.hash.substring(1));
       const idToken = hashParams.get('id_token');

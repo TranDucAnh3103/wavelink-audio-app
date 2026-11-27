@@ -98,7 +98,7 @@ describe('Listening History Full Display & Xem tất cả Toggle', () => {
     expect(screen.queryByText('Truyện Lịch Sử Số 4')).not.toBeInTheDocument();
 
     const toggleBtn = screen.getByTestId('home-toggle-all-history-btn');
-    expect(toggleBtn).toHaveTextContent('Xem tất cả (6)');
+    expect(toggleBtn).toHaveTextContent('Xem tất cả');
 
     fireEvent.click(toggleBtn);
     expect(screen.getByText('Truyện Lịch Sử Số 4')).toBeInTheDocument();
@@ -109,7 +109,7 @@ describe('Listening History Full Display & Xem tất cả Toggle', () => {
     expect(screen.queryByText('Truyện Lịch Sử Số 4')).not.toBeInTheDocument();
   });
 
-  it('ProfilePage displays all 15 history items beyond page size when clicking Xem tất cả (15)', () => {
+  it('ProfilePage displays all 15 history items beyond page size when clicking Xem tất cả', () => {
     mockHistoryList = makeHistoryItems(15);
     const qc = createTestClient();
 
@@ -128,7 +128,7 @@ describe('Listening History Full Display & Xem tất cả Toggle', () => {
     expect(screen.queryByText('Truyện Lịch Sử Số 15')).not.toBeInTheDocument();
 
     const toggleBtn = screen.getByTestId('profile-toggle-all-history-btn');
-    expect(toggleBtn).toHaveTextContent('Xem tất cả (15)');
+    expect(toggleBtn).toHaveTextContent('Xem tất cả');
 
     fireEvent.click(toggleBtn);
     expect(screen.getByText('Truyện Lịch Sử Số 13')).toBeInTheDocument();

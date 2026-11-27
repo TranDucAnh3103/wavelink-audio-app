@@ -1,17 +1,17 @@
 {
-  "name": "WaveLink - Nghe Truyện Audio",
+  "name": "WaveLink - Nghe Audio & Podcast YouTube Chạy Ngầm",
   "short_name": "WaveLink",
-  "description": "Ứng dụng nghe truyện audio trực tuyến - WaveLink",
+  "description": "Nghe trọn vẹn audio, sách nói, podcast từ video YouTube khi tắt màn hình trên WaveLink",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f0f0f",
-  "theme_color": "#6366f1",
+  "background_color": "#F6F5F0",
+  "theme_color": "#FFE600",
   "orientation": "portrait-primary",
   "lang": "vi",
   "categories": ["entertainment", "music"],
   "icons": [
     {
-      "src": "/wavelink-icon.png",
+      "src": "/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
@@ -30,7 +30,7 @@
     {
       "name": "Thư Viện",
       "short_name": "Library",
-      "url": "/#/library",
+      "url": "/library",
       "description": "Xem thư viện audio"
     },
     {

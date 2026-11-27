@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Flame,
   Eye,
@@ -35,14 +35,28 @@ import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '@/stores/authStore';
 import { HomeSkeleton } from '@/components/common/Skeletons';
 import { toast } from '@/components/ui/Toast';
-import { formatTime } from '@/lib/utils';
+import { formatTime, getOptimizedThumbnailUrl } from '@/lib/utils';
+import { getAudioListMeta } from '@/services/audioService';
 import { groupAudiosIntoSeries, groupTopAuthors } from '@/lib/seriesGrouping';
+import { AudioItem, Category, SystemStats } from '@/types';
 
 const GREETING_DISMISSED_SESSION_KEY = 'wavelink_hide_greeting_banner';
 const SERIES_BATCH_SIZE = 10;
 const HOME_AUDIO_BATCH_STEP = 36;
 
-export const HomePage: React.FC = () => {
+export interface HomePageProps {
+  initialAudios?: AudioItem[];
+  initialCatalogAudios?: AudioItem[];
+  initialCategories?: Category[];
+  initialStats?: SystemStats | null;
+}
+
+export const HomePage: React.FC<HomePageProps> = ({
+  initialAudios,
+  initialCatalogAudios,
+  initialCategories,
+  initialStats,
+}) => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const { currentAudio: playingAudio, isPlaying, play, togglePlay } = usePlayerStore(
@@ -54,22 +68,43 @@ export const HomePage: React.FC = () => {
     }))
   );
 
-  const [audioBatchLimit, setAudioBatchLimit] = useState<number>(HOME_AUDIO_BATCH_STEP);
-  const { data: stats, isLoading: statsLoading } = useStats();
-  const { data: audios = [], isLoading: audiosLoading } = useAudios({
-    page: 1,
-    limit: audioBatchLimit,
-  });
-  const { data: catalogAudios = [] } = useAudios({
-    all: true,
-    fields: 'catalog',
-  });
-  const { data: history = [] } = useRecentHistory();
-  const { data: categories = [] } = useCategories();
-  const { data: tags = [] } = useTags();
-
   const [homeTab, setHomeTab] = useState<'latest' | 'popular'>('latest');
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
+  const [audioBatchLimit, setAudioBatchLimit] = useState<number>(HOME_AUDIO_BATCH_STEP);
+
+  useEffect(() => {
+    setAudioBatchLimit(HOME_AUDIO_BATCH_STEP);
+  }, [homeTab, selectedCategory]);
+  const isDefaultHomeQuery = selectedCategory === null && homeTab === 'latest';
+  const { data: stats, isLoading: statsLoading } = useStats({ initialData: initialStats });
+  const {
+    data: audios = [],
+    isLoading: audiosLoading,
+    isFetching: audiosFetching,
+  } = useAudios(
+    {
+      page: 1,
+      limit: audioBatchLimit,
+      ...(selectedCategory !== null ? { categoryId: selectedCategory } : {}),
+      ...(homeTab === 'popular' ? { sort: 'popular' } : {}),
+    },
+    {
+      initialData:
+        isDefaultHomeQuery && audioBatchLimit === HOME_AUDIO_BATCH_STEP ? initialAudios : undefined,
+    }
+  );
+  const { data: catalogAudios = [] } = useAudios(
+    {
+      all: true,
+      fields: 'catalog',
+    },
+    {
+      initialData: initialCatalogAudios,
+    }
+  );
+  const { data: history = [] } = useRecentHistory();
+  const { data: categories = [] } = useCategories(false, { initialData: initialCategories });
+  const { data: tags = [] } = useTags();
   const [heroIndex, setHeroIndex] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
   const [isGreetingHidden, setIsGreetingHidden] = useState<boolean>(() => {
@@ -135,6 +170,30 @@ export const HomePage: React.FC = () => {
     }
     return list;
   }, [audios, selectedCategory, homeTab]);
+
+  const audiosMeta = getAudioListMeta(audios);
+  const totalAvailableAudios =
+    audiosMeta?.total ??
+    (selectedCategory === null
+      ? Math.max(stats?.totalAudios ?? 0, catalogAudios.length)
+      : audios.length);
+  const hasMoreAudios =
+    !audiosLoading &&
+    audios.length >= audioBatchLimit &&
+    (totalAvailableAudios > audios.length || totalAvailableAudios === 0);
+
+  const loadMoreAudios = () => {
+    if (audiosFetching || !hasMoreAudios) return;
+    setAudioBatchLimit((prev) => prev + HOME_AUDIO_BATCH_STEP);
+  };
+
+  const handleAudiosHorizontalScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (!hasMoreAudios || audiosFetching) return;
+    const el = e.currentTarget;
+    if (el.scrollLeft + el.clientWidth >= el.scrollWidth - 200) {
+      loadMoreAudios();
+    }
+  };
 
   // Tự động gộp tất cả các bộ truyện nhiều phần có tên (>10 ký tự có nghĩa) & tác giả trùng nhau trên toàn bộ catalog
   const seriesSourceAudios = catalogAudios.length > 0 ? catalogAudios : audios;
@@ -206,6 +265,12 @@ export const HomePage: React.FC = () => {
 
   return (
     <div className="w-full max-w-6xl mx-auto px-4 md:px-6 flex flex-col gap-6 pb-36 md:pb-28 pt-2 fade-in-comic">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h1 className="font-comic font-black text-base sm:text-xl text-[var(--ink-primary)] tracking-tight leading-snug">
+          WaveLink — Nghe Audio, Sách Nói &amp; Podcast YouTube Tắt Màn Hình
+        </h1>
+      </div>
+
       {/* 1. Section Lời Chào (Có nút X để tắt trong phiên mở web) */}
       {!isGreetingHidden && (
         <div className="manga-bubble flex items-center justify-between gap-3 relative">
@@ -368,15 +433,19 @@ export const HomePage: React.FC = () => {
 
                   return (
                     <div key={audio.id} className="w-full shrink-0 p-3.5 sm:p-4 flex flex-col gap-3">
-                      <div
-                        className="relative w-full aspect-[16/9] sm:aspect-[21/9] rounded-xl border-2 border-[var(--border-ink)] overflow-hidden bg-[#111113] shadow-comic-sm cursor-pointer group"
-                        onClick={() => navigate(`/player/${audio.id}`)}
+                      <Link
+                        to={`/player/${audio.id}`}
+                        className="relative block w-full aspect-[16/9] sm:aspect-[21/9] rounded-xl border-2 border-[var(--border-ink)] overflow-hidden bg-[#111113] shadow-comic-sm cursor-pointer group"
+                        aria-label={`Nghe ${audio.title}`}
                       >
                         <img
-                          src={audio.thumbnailUrl || '/wavelink-icon.png'}
+                          src={getOptimizedThumbnailUrl(audio.thumbnailUrl, 'hero')}
                           alt={audio.title}
-                          loading="eager"
-                          decoding="async"
+                          width={1280}
+                          height={720}
+                          loading={idx === 0 ? 'eager' : 'lazy'}
+                          decoding={idx === 0 ? 'sync' : 'async'}
+                          {...(idx === 0 ? ({ fetchpriority: 'high' } as Record<string, string>) : {})}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
@@ -413,15 +482,17 @@ export const HomePage: React.FC = () => {
                             TẬP {String(activeEp?.episodeNumber || 1).padStart(2, '0')}
                           </span>
                         </div>
-                      </div>
+                      </Link>
 
                       <div className="flex flex-col gap-1.5 min-w-0">
-                        <h3
-                          className="font-extrabold text-sm sm:text-base text-[var(--ink-primary)] line-clamp-2 cursor-pointer hover:text-[#3A86FF] transition-colors leading-snug"
-                          onClick={() => navigate(`/player/${audio.id}`)}
+                        <Link
+                          to={`/player/${audio.id}`}
+                          className="group"
                         >
-                          {audio.title}
-                        </h3>
+                          <h3 className="font-extrabold text-sm sm:text-base text-[var(--ink-primary)] line-clamp-2 group-hover:text-[#3A86FF] transition-colors leading-snug">
+                            {audio.title}
+                          </h3>
+                        </Link>
 
                         <div className="flex items-center justify-between gap-2 text-xs text-[var(--ink-secondary)]">
                           <span className="font-semibold truncate">
@@ -451,14 +522,13 @@ export const HomePage: React.FC = () => {
                       )}
 
                       <div className="flex items-center justify-between gap-2 pt-2 border-t-2 border-[var(--border-ink)]/30">
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/player/${audio.id}`)}
+                        <Link
+                          to={`/player/${audio.id}`}
                           className="btn-comic text-xs h-9 px-3 whitespace-nowrap"
                         >
                           <ListMusic className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
                           <span>Danh sách tập</span>
-                        </button>
+                        </Link>
                         <button
                           type="button"
                           onClick={handlePlay}
@@ -595,14 +665,14 @@ export const HomePage: React.FC = () => {
                 {selectedCategoryName}
               </span>
             )}
-            <button
-              type="button"
-              onClick={() => navigate('/library')}
+            <Link
+              to="/library"
+              aria-label="Xem tất cả audio trong thư viện"
               className="text-xs font-extrabold text-[#3A86FF] hover:underline flex items-center gap-0.5 cursor-pointer"
             >
-              <span>Xem tất cả ({displayAudios.length})</span>
+              <span>Xem tất cả</span>
               <ChevronRight className="w-4 h-4" />
-            </button>
+            </Link>
           </div>
         </div>
 
@@ -623,17 +693,23 @@ export const HomePage: React.FC = () => {
             )}
           </div>
         ) : (
-          <div className="flex overflow-x-auto sm:overflow-visible sm:grid sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5 pb-2 no-scrollbar">
-            {displayAudios.slice(0, 15).map((audio, index) => (
-              <div
+          <div
+            data-testid="home-audios-scroller"
+            onScroll={handleAudiosHorizontalScroll}
+            className="flex overflow-x-auto sm:overflow-visible sm:grid sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5 pb-2 no-scrollbar"
+          >
+            {displayAudios.slice(0, audioBatchLimit).map((audio, index) => (
+              <Link
                 key={audio.id}
+                to={`/player/${audio.id}`}
                 className="w-36 sm:w-auto flex flex-col gap-2 shrink-0 cursor-pointer group"
-                onClick={() => navigate(`/player/${audio.id}`)}
               >
                 <div className="card-comic w-full aspect-[3/4] overflow-hidden relative card-comic-interactive">
                   <img
-                    src={audio.thumbnailUrl || '/wavelink-icon.png'}
+                    src={getOptimizedThumbnailUrl(audio.thumbnailUrl, 'card')}
                     alt={audio.title}
+                    width={360}
+                    height={480}
                     loading="lazy"
                     decoding="async"
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
@@ -682,22 +758,20 @@ export const HomePage: React.FC = () => {
                     </span>
                   </div>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         )}
-        {(stats?.totalAudios ?? 0) > audios.length && audios.length >= audioBatchLimit && (
-          <div className="flex justify-center pt-1">
+        {hasMoreAudios && (
+          <div className="hidden sm:flex justify-center pt-1">
             <button
               type="button"
-              data-testid="home-load-more-audios-btn"
-              onClick={() => setAudioBatchLimit((prev) => prev + HOME_AUDIO_BATCH_STEP)}
-              className="btn-comic text-xs py-2 px-4 cursor-pointer"
+              data-testid="home-show-more-audios-btn"
+              onClick={loadMoreAudios}
+              disabled={audiosFetching}
+              className="btn-comic text-xs py-2 px-5 cursor-pointer"
             >
-              <Plus className="w-4 h-4" strokeWidth={2.5} />
-              <span>
-                Tải thêm truyện ({audios.length}/{stats?.totalAudios})
-              </span>
+              <span>{audiosFetching ? 'Đang tải...' : 'Xem thêm'}</span>
             </button>
           </div>
         )}
@@ -721,19 +795,9 @@ export const HomePage: React.FC = () => {
             className="flex overflow-x-auto gap-3.5 py-1 px-0.5 pb-2 no-scrollbar flex-nowrap"
           >
             {visibleSeries.map((series) => (
-              <div
+              <Link
                 key={series.key}
-                role="button"
-                tabIndex={0}
-                onClick={() =>
-                  navigate(`/library?search=${encodeURIComponent(series.searchQuery)}`)
-                }
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    navigate(`/library?search=${encodeURIComponent(series.searchQuery)}`);
-                  }
-                }}
+                to={`/library?search=${encodeURIComponent(series.searchQuery)}`}
                 className="w-40 sm:w-44 shrink-0 flex flex-col gap-2 cursor-pointer group"
               >
                 <div className="relative pr-1.5 pb-1.5">
@@ -743,8 +807,10 @@ export const HomePage: React.FC = () => {
                   />
                   <div className="card-comic w-full aspect-[3/4] overflow-hidden relative card-comic-interactive">
                     <img
-                      src={series.thumbnailUrl}
+                      src={getOptimizedThumbnailUrl(series.thumbnailUrl, 'card')}
                       alt={series.seriesTitle}
+                      width={360}
+                      height={480}
                       loading="lazy"
                       decoding="async"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
@@ -779,7 +845,7 @@ export const HomePage: React.FC = () => {
                     </span>
                   </div>
                 </div>
-              </div>
+              </Link>
             ))}
 
             {visibleSeriesCount < groupedSeries.length && (
@@ -794,7 +860,7 @@ export const HomePage: React.FC = () => {
               >
                 <Plus className="w-6 h-6" strokeWidth={2.5} />
                 <span className="font-comic font-extrabold text-xs uppercase">
-                  Tải thêm 10 bộ ({groupedSeries.length - visibleSeriesCount} còn lại)
+                  Xem thêm
                 </span>
               </button>
             )}
@@ -813,14 +879,13 @@ export const HomePage: React.FC = () => {
           </div>
           <div className="flex items-center gap-2 overflow-x-auto py-1 px-0.5 no-scrollbar flex-nowrap">
             {discoveryTags.map((tag) => (
-              <button
+              <Link
                 key={tag}
-                type="button"
-                onClick={() => navigate(`/library?search=${encodeURIComponent(tag)}`)}
+                to={`/library?search=${encodeURIComponent(tag)}`}
                 className="badge-comic badge-comic-white hover:bg-[#FFE600] hover:text-[#111113] transition-colors text-[11px] py-1 px-2.5 shrink-0 cursor-pointer font-bold"
               >
                 #{tag}
-              </button>
+              </Link>
             ))}
           </div>
         </section>
@@ -836,14 +901,14 @@ export const HomePage: React.FC = () => {
                 Cày Xuyên Đêm
               </h2>
             </div>
-            <button
-              type="button"
-              onClick={() => navigate('/library')}
+            <Link
+              to="/library"
+              aria-label="Xem thêm audio dài trong thư viện"
               className="text-xs font-extrabold text-[#3A86FF] hover:underline flex items-center gap-0.5 cursor-pointer"
             >
               <span>Thư viện</span>
               <ChevronRight className="w-4 h-4" />
-            </button>
+            </Link>
           </div>
 
           <div
@@ -851,15 +916,17 @@ export const HomePage: React.FC = () => {
             className="flex overflow-x-auto gap-3.5 py-1 px-0.5 pb-2 no-scrollbar flex-nowrap"
           >
             {marathonPicks.map((audio) => (
-              <div
+              <Link
                 key={`marathon-${audio.id}`}
-                onClick={() => navigate(`/player/${audio.id}`)}
+                to={`/player/${audio.id}`}
                 className="w-40 sm:w-44 shrink-0 flex flex-col gap-2 cursor-pointer group"
               >
                 <div className="card-comic w-full aspect-[3/4] overflow-hidden relative card-comic-interactive">
                   <img
-                    src={audio.thumbnailUrl || '/wavelink-icon.png'}
+                    src={getOptimizedThumbnailUrl(audio.thumbnailUrl, 'card')}
                     alt={audio.title}
+                    width={360}
+                    height={480}
                     loading="lazy"
                     decoding="async"
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
@@ -892,7 +959,7 @@ export const HomePage: React.FC = () => {
                     </span>
                   </div>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         </section>
@@ -904,7 +971,7 @@ export const HomePage: React.FC = () => {
           <div className="flex items-center gap-1.5">
             <Mic2 className="w-4 h-4 text-[#3A86FF]" strokeWidth={2.5} />
             <h2 className="font-comic font-extrabold text-sm uppercase text-[var(--ink-primary)] tracking-tight">
-              Kênh & Tác Giả Nổi Bật
+              Kênh &amp; Tác Giả Nổi Bật
             </h2>
           </div>
 
@@ -913,15 +980,16 @@ export const HomePage: React.FC = () => {
             className="flex overflow-x-auto gap-3 py-1 px-0.5 pb-2 no-scrollbar flex-nowrap"
           >
             {topAuthors.map((author) => (
-              <button
+              <Link
                 key={author.name}
-                type="button"
-                onClick={() => navigate(`/library?search=${encodeURIComponent(author.name)}`)}
+                to={`/library?search=${encodeURIComponent(author.name)}`}
                 className="w-56 sm:w-64 shrink-0 card-comic-sm p-3 flex items-center gap-2.5 text-left hover:bg-[var(--surface-accent-soft)] transition-colors cursor-pointer group"
               >
                 <img
-                  src={author.sampleThumbnail}
+                  src={getOptimizedThumbnailUrl(author.sampleThumbnail, 'card')}
                   alt={author.name}
+                  width={44}
+                  height={44}
                   loading="lazy"
                   decoding="async"
                   className="w-11 h-11 rounded-xl object-cover border-2 border-[var(--border-ink)] shrink-0"
@@ -935,7 +1003,7 @@ export const HomePage: React.FC = () => {
                   </span>
                 </div>
                 <ChevronRight className="w-4 h-4 text-[var(--ink-muted)] shrink-0" />
-              </button>
+              </Link>
             ))}
           </div>
         </section>
@@ -963,32 +1031,34 @@ export const HomePage: React.FC = () => {
                 onClick={() => setShowAllHistory((prev) => !prev)}
                 className="text-xs font-extrabold text-[#8338EC] hover:underline flex items-center gap-0.5 cursor-pointer"
               >
-                <span>{showAllHistory ? 'Thu gọn' : `Xem tất cả (${history.length})`}</span>
+                <span>{showAllHistory ? 'Thu gọn' : 'Xem tất cả'}</span>
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => navigate('/profile')}
+            <Link
+              to="/profile"
+              aria-label="Xem hồ sơ và lịch sử nghe"
               className="text-xs font-extrabold text-[#3A86FF] hover:underline flex items-center gap-0.5 cursor-pointer"
             >
               <span>{history.length > 3 ? 'Hồ sơ' : 'Xem thêm'}</span>
               <ChevronRight className="w-4 h-4" />
-            </button>
+            </Link>
           </div>
         </div>
 
         {history && history.length > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
             {(showAllHistory ? history : history.slice(0, 3)).map((item) => (
-              <div
+              <Link
                 key={`${item.audioId}-${item.episodeId}`}
+                to={`/player/${item.audioId}`}
                 className="flex flex-col gap-2 cursor-pointer group"
-                onClick={() => navigate(`/player/${item.audioId}`)}
               >
                 <div className="card-comic w-full aspect-[3/4] overflow-hidden relative card-comic-interactive">
                   <img
-                    src={item.thumbnailUrl || '/wavelink-icon.png'}
+                    src={getOptimizedThumbnailUrl(item.thumbnailUrl, 'card')}
                     alt={item.title || 'Truyện Audio'}
+                    width={360}
+                    height={480}
                     loading="lazy"
                     decoding="async"
                     onError={(e) => {
@@ -1002,13 +1072,12 @@ export const HomePage: React.FC = () => {
                     {item.currentEpisodeTitle || item.episodeTitle || 'Tập 1'}
                   </span>
 
-                  <button
-                    type="button"
-                    className="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg border-2 border-[#111113] bg-[#3A86FF] text-white flex items-center justify-center shadow-comic-sm group-hover:scale-105 cursor-pointer"
-                    aria-label="Phát"
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg border-2 border-[#111113] bg-[#3A86FF] text-white flex items-center justify-center shadow-comic-sm group-hover:scale-105"
                   >
                     <Play className="w-3 h-3 fill-current ml-0.5" strokeWidth={2.5} />
-                  </button>
+                  </span>
 
                   <span className="absolute bottom-1.5 left-1.5 right-1.5 badge-comic badge-comic-blue text-[8px] py-0 px-1.5 truncate font-mono font-bold text-center justify-center">
                     Mốc: {item.formattedPosition || '00:00:00'}
@@ -1023,7 +1092,7 @@ export const HomePage: React.FC = () => {
                     {item.currentEpisodeTitle || item.episodeTitle || 'Tập 1'} · {item.formattedPosition || '00:00:00'}
                   </span>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         ) : (
@@ -1031,13 +1100,12 @@ export const HomePage: React.FC = () => {
             <span className="text-xs font-semibold text-[var(--ink-secondary)]">
               Bạn chưa có lịch sử nghe gần đây. Chọn một bộ truyện bất kỳ để bắt đầu cày!
             </span>
-            <button
-              type="button"
-              onClick={() => navigate('/profile')}
+            <Link
+              to="/profile"
               className="btn-comic text-xs py-1.5 px-3 shrink-0"
             >
               Vào Hồ Sơ
-            </button>
+            </Link>
           </div>
         )}
       </section>

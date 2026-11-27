@@ -42,6 +42,8 @@ export interface AudioItem {
   isVipOnly?: boolean;
   freeEpisodesCount?: number;
   createdBy?: number;
+  createdAt?: string;
+  updatedAt?: string;
   episodes?: Episode[];
   viewCount?: number;
 }

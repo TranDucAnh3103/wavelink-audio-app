@@ -1,6 +1,5 @@
 import React from 'react';
 import type { Metadata, Viewport } from 'next';
-import Script from 'next/script';
 import { Nunito, Baloo_2, JetBrains_Mono } from 'next/font/google';
 import '@/styles/globals.css';
 import { AppProviders } from './providers';
@@ -9,34 +8,28 @@ import { getSiteUrl } from '@/lib/siteConfig';
 
 const nunito = Nunito({
   subsets: ['latin', 'vietnamese'],
-  weight: ['400', '500', '600', '700', '800', '900'],
   variable: '--font-sans',
   display: 'swap',
 });
 
 const baloo2 = Baloo_2({
   subsets: ['latin', 'vietnamese'],
-  weight: ['500', '600', '700', '800'],
   variable: '--font-comic',
   display: 'swap',
 });
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ['latin', 'vietnamese'],
-  weight: ['500', '700'],
   variable: '--font-mono',
   display: 'swap',
 });
 
 const siteUrl = getSiteUrl();
-
-export const dynamic = 'force-dynamic';
+const googleVerification = process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION?.trim();
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-  verification: {
-    google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || '',
-  },
+  ...(googleVerification ? { verification: { google: googleVerification } } : {}),
   title: {
     default: 'WaveLink - Nền tảng nghe Audio từ YouTube, Chạy ngầm khi tắt màn hình',
     template: '%s | WaveLink Audio',
@@ -57,8 +50,11 @@ export const metadata: Metadata = {
   publisher: 'WaveLink',
   manifest: '/manifest.json',
   icons: {
-    icon: '/wavelink-icon.png',
-    apple: '/wavelink-icon.png',
+    icon: [
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/wavelink-icon.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: '/icon-192.png',
   },
   openGraph: {
     type: 'website',
@@ -122,11 +118,11 @@ export default function RootLayout({
       className={`h-full ${nunito.variable} ${baloo2.variable} ${jetbrainsMono.variable}`}
     >
       <head>
+        <link rel="preconnect" href="https://i.ytimg.com" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://img.youtube.com" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://i.ytimg.com" />
+        <link rel="dns-prefetch" href="https://img.youtube.com" />
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
-        <Script
-          src="https://accounts.google.com/gsi/client"
-          strategy="afterInteractive"
-        />
       </head>
       <body className="flex flex-col min-h-screen antialiased">
         <AppProviders>

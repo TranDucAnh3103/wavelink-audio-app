@@ -757,6 +757,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
             onClick={handleShare}
             className="w-9 h-9 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-card)] flex items-center justify-center text-[var(--ink-primary)] shadow-comic-sm hover:bg-[var(--surface-muted)] cursor-pointer"
             title="Chia sẻ"
+            aria-label="Chia sẻ audio"
           >
             <Share2 className="w-4 h-4" strokeWidth={2.25} />
           </button>
@@ -765,6 +766,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
             onClick={handleToggleFavorite}
             className="w-9 h-9 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-card)] flex items-center justify-center shadow-comic-sm hover:bg-[var(--surface-muted)] cursor-pointer transition-transform"
             title="Yêu thích"
+            aria-label="Yêu thích audio"
             aria-pressed={isFavorite}
           >
             <Heart
@@ -803,7 +805,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
           }`}
         >
           <ListMusic className="w-4 h-4 shrink-0" strokeWidth={2.25} />
-          <span>Danh Sách Tập ({audio.episodes?.length || 0})</span>
+          <span>Danh Sách Tập</span>
         </button>
       </div>
 
@@ -822,6 +824,10 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                 className="w-full h-full object-cover"
                 src={audio.thumbnailUrl || '/wavelink-icon.png'}
                 alt={audio.title}
+                width={640}
+                height={400}
+                {...({ fetchpriority: 'high' } as Record<string, string>)}
+                decoding="sync"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
 

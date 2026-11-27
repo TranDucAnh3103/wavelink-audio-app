@@ -1,4 +1,4 @@
-import { AudioItem } from '@/types';
+import { AudioItem, Category, SystemStats } from '@/types';
 
 const getBackendUrl = () => {
   if (process.env.BACKEND_INTERNAL_URL && process.env.BACKEND_INTERNAL_URL.trim().length > 0) {
@@ -17,52 +17,84 @@ const getBackendUrl = () => {
   return 'http://localhost:8080';
 };
 
-export async function fetchServerAudio(id: string | number): Promise<AudioItem | null> {
-  const backendUrl = getBackendUrl();
+async function fetchJsonWithTimeout<T>(url: string, revalidateSeconds: number, timeoutMs = 2500): Promise<T | null> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch(`${backendUrl}/api/v1/audios/${id}`, {
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, {
       signal: controller.signal,
-      next: { revalidate: 60 }, // ISR: Cache 60s
+      next: { revalidate: revalidateSeconds },
     });
     clearTimeout(timeoutId);
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
 
-    if (!res.ok) {
-      return null;
-    }
-
-    const data = await res.json();
-    if (data.success && data.data) {
-      return data.data as AudioItem;
-    }
-  } catch (err) {
-    console.warn(`[fetchServerAudio] Failed to fetch audio ID ${id}:`, err);
+export async function fetchServerAudio(id: string | number): Promise<AudioItem | null> {
+  const backendUrl = getBackendUrl();
+  const data = await fetchJsonWithTimeout<{ success?: boolean; data?: AudioItem }>(
+    `${backendUrl}/api/v1/audios/${id}`,
+    60,
+    3500
+  );
+  if (data?.success && data.data) {
+    return data.data;
   }
   return null;
 }
 
 export async function fetchServerAllAudios(): Promise<AudioItem[]> {
   const backendUrl = getBackendUrl();
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch(`${backendUrl}/api/v1/audios?limit=1000`, {
-      signal: controller.signal,
-      next: { revalidate: 300 }, // Cache 5 minutes
-    });
-    clearTimeout(timeoutId);
-
-    if (!res.ok) {
-      return [];
-    }
-
-    const data = await res.json();
-    if (data.success && Array.isArray(data.data)) {
-      return data.data as AudioItem[];
-    }
-  } catch (err) {
-    console.warn('[fetchServerAllAudios] Failed to fetch audios list:', err);
+  const data = await fetchJsonWithTimeout<{ success?: boolean; data?: AudioItem[] }>(
+    `${backendUrl}/api/v1/audios?fields=catalog&all=true&limit=0`,
+    300,
+    3500
+  );
+  if (data?.success && Array.isArray(data.data)) {
+    return data.data;
   }
   return [];
+}
+
+export interface ServerHomeData {
+  audios: AudioItem[];
+  catalogAudios: AudioItem[];
+  categories: Category[];
+  stats: SystemStats | null;
+}
+
+export async function fetchServerHomeData(): Promise<ServerHomeData> {
+  const backendUrl = getBackendUrl();
+  const [audiosRes, catalogRes, categoriesRes, statsRes] = await Promise.all([
+    fetchJsonWithTimeout<{ success?: boolean; data?: AudioItem[] }>(
+      `${backendUrl}/api/v1/audios?fields=lite&page=1&limit=36`,
+      60,
+      2500
+    ),
+    fetchJsonWithTimeout<{ success?: boolean; data?: AudioItem[] }>(
+      `${backendUrl}/api/v1/audios?fields=catalog&all=true&limit=0`,
+      60,
+      2500
+    ),
+    fetchJsonWithTimeout<{ success?: boolean; data?: Category[] }>(
+      `${backendUrl}/api/v1/categories`,
+      300,
+      2500
+    ),
+    fetchJsonWithTimeout<{ success?: boolean; data?: SystemStats }>(
+      `${backendUrl}/api/v1/stats`,
+      60,
+      2500
+    ),
+  ]);
+
+  return {
+    audios: audiosRes?.success && Array.isArray(audiosRes.data) ? audiosRes.data : [],
+    catalogAudios: catalogRes?.success && Array.isArray(catalogRes.data) ? catalogRes.data : [],
+    categories: categoriesRes?.success && Array.isArray(categoriesRes.data) ? categoriesRes.data : [],
+    stats: statsRes?.success && statsRes.data ? statsRes.data : null,
+  };
 }

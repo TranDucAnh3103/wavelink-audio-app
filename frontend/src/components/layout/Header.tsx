@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Headphones, Search, Bell, Settings, Sun, Moon, User } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
@@ -55,9 +55,10 @@ export const Header: React.FC = React.memo(() => {
     <header className="fixed top-0 left-0 md:left-[76px] lg:left-60 right-0 z-30 bg-[var(--surface-card)]/95 backdrop-blur-md border-b-2 border-[var(--border-ink)] pt-safe transition-colors">
       <div className="h-14 md:h-16 px-3 sm:px-4 md:px-6 max-w-7xl mx-auto flex items-center justify-between gap-3">
         {/* Mobile Brand Logo (hidden on md+ since SidebarNav shows it) */}
-        <div
+        <Link
+          to="/home"
           className="flex md:hidden items-center gap-2 cursor-pointer select-none min-w-0"
-          onClick={() => navigate('/home')}
+          aria-label="WaveLink - Về trang chủ"
         >
           <div className="w-8 h-8 rounded-lg border-2 border-[#111113] bg-[#FFE600] text-[#111113] flex items-center justify-center font-black shadow-comic-sm shrink-0">
             <Headphones className="w-4 h-4" strokeWidth={2.5} />
@@ -76,12 +77,13 @@ export const Header: React.FC = React.memo(() => {
               </span>
             </span>
           </div>
-        </div>
+        </Link>
 
         {/* Tablet/Desktop Inline Search Bar */}
         <form
           onSubmit={handleQuickSearch}
           className="hidden md:flex items-center flex-1 max-w-md relative"
+          role="search"
         >
           <Search
             className="w-4 h-4 text-[var(--ink-muted)] absolute left-3 pointer-events-none"
@@ -91,6 +93,7 @@ export const Header: React.FC = React.memo(() => {
             type="search"
             value={quickQuery}
             onChange={(e) => setQuickQuery(e.target.value)}
+            aria-label="Tìm audio, sách nói, tác giả hoặc link YouTube"
             placeholder="Tìm audio, sách nói, tác giả, link YouTube..."
             className="input-comic pl-9 pr-16 py-1.5 text-xs h-9"
           />
@@ -105,15 +108,14 @@ export const Header: React.FC = React.memo(() => {
         {/* Quick Action Buttons */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Mobile Search Trigger */}
-          <button
-            type="button"
-            onClick={() => navigate('/library')}
-            aria-label="Tìm kiếm"
+          <Link
+            to="/library"
+            aria-label="Tìm kiếm trong Thư viện"
             title="Tìm kiếm trong Thư viện"
             className="md:hidden w-9 h-9 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] flex items-center justify-center text-[var(--ink-primary)] shadow-comic-sm hover:bg-[var(--surface-muted)] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
           >
             <Search className="w-4 h-4" strokeWidth={2.25} />
-          </button>
+          </Link>
 
           {/* Theme Quick Toggle */}
           <button
@@ -131,9 +133,8 @@ export const Header: React.FC = React.memo(() => {
           </button>
 
           {/* Notifications Bell */}
-          <button
-            type="button"
-            onClick={() => navigate('/notifications')}
+          <Link
+            to="/notifications"
             id="header-bell-btn"
             aria-label="Thông báo"
             title="Thông báo"
@@ -145,35 +146,33 @@ export const Header: React.FC = React.memo(() => {
                 {unreadCount > 99 ? '99+' : unreadCount}
               </span>
             )}
-          </button>
+          </Link>
 
           {/* Settings */}
-          <button
-            type="button"
-            onClick={() => navigate('/settings')}
+          <Link
+            to="/settings"
             aria-label="Cài đặt"
             title="Cài đặt"
             className="w-9 h-9 rounded-lg border-2 border-[#111113] bg-[#8338EC] flex items-center justify-center text-white shadow-comic-sm hover:bg-purple-600 active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
           >
             <Settings className="w-4 h-4" strokeWidth={2.25} />
-          </button>
+          </Link>
 
           {/* Desktop Quick Profile Chip */}
-          <button
-            type="button"
-            onClick={() => navigate(user?.isGuest ? '/login' : '/profile')}
+          <Link
+            to={user?.isGuest ? '/login' : '/profile'}
             className="hidden md:inline-flex items-center gap-2 h-9 pl-1.5 pr-3 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] hover:bg-[var(--surface-muted)] text-[var(--ink-primary)] text-xs font-extrabold shadow-comic-sm cursor-pointer transition-colors"
             title={user?.isGuest ? 'Đăng nhập / Đăng ký' : 'Trang cá nhân'}
           >
             <span className="w-6 h-6 rounded-md bg-[#3A86FF] text-white border border-[#111113] flex items-center justify-center overflow-hidden">
               {user?.avatarUrl ? (
-                <img src={user.avatarUrl} alt={displayName} className="w-full h-full object-cover" />
+                <img src={user.avatarUrl} alt={displayName} width={24} height={24} className="w-full h-full object-cover" />
               ) : (
                 <User className="w-3.5 h-3.5" strokeWidth={2.5} />
               )}
             </span>
             <span className="max-w-[100px] truncate">{displayName}</span>
-          </button>
+          </Link>
         </div>
       </div>
     </header>
