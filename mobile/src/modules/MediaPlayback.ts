@@ -83,4 +83,26 @@ export const MediaPlayback = {
     if (!eventEmitter) return { remove: () => {} };
     return eventEmitter.addListener('onMediaAction', callback);
   },
+
+  async isBatteryOptimizationIgnored(): Promise<boolean> {
+    if (Platform.OS !== 'android' || !MediaPlaybackModule?.isBatteryOptimizationIgnored) {
+      return true;
+    }
+    try {
+      return Boolean(await MediaPlaybackModule.isBatteryOptimizationIgnored());
+    } catch {
+      return true;
+    }
+  },
+
+  async requestIgnoreBatteryOptimizations(): Promise<boolean> {
+    if (Platform.OS !== 'android' || !MediaPlaybackModule?.requestIgnoreBatteryOptimizations) {
+      return false;
+    }
+    try {
+      return Boolean(await MediaPlaybackModule.requestIgnoreBatteryOptimizations());
+    } catch {
+      return false;
+    }
+  },
 };

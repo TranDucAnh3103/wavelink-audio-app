@@ -6,18 +6,59 @@ import { localDb } from './localDb';
 const GUEST_PROGRESS_KEY = 'wavelink_guest_progress';
 const GUEST_HISTORY_KEY = 'wavelink_guest_history';
 
+function readGuestStorage(key: string): string | null {
+  if (typeof sessionStorage !== 'undefined') {
+    try {
+      const val = sessionStorage.getItem(key);
+      if (val) return val;
+    } catch {}
+  }
+  if (typeof localStorage !== 'undefined') {
+    try {
+      return localStorage.getItem(key);
+    } catch {}
+  }
+  return null;
+}
+
+function writeGuestStorage(key: string, value: string): void {
+  if (typeof sessionStorage !== 'undefined') {
+    try {
+      sessionStorage.setItem(key, value);
+    } catch {}
+  }
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(key, value);
+    } catch {}
+  }
+}
+
+function removeGuestStorage(key: string): void {
+  if (typeof sessionStorage !== 'undefined') {
+    try {
+      sessionStorage.removeItem(key);
+    } catch {}
+  }
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.removeItem(key);
+    } catch {}
+  }
+}
+
 export interface StoredGuestProgress extends ProgressPayload {
   updatedAt: number;
 }
 
 export const guestSessionService = {
   /**
-   * Lưu hoặc cập nhật tiến trình nghe của khách trong sessionStorage (tồn tại qua F5, mất khi tắt tab).
+   * Lưu hoặc cập nhật tiến trình nghe của khách vào cả sessionStorage và localStorage
+   * để không bị mất khi hệ điều hành mobile kill tab/app vì thiếu RAM.
    */
   saveGuestProgress(payload: ProgressPayload): void {
-    if (typeof sessionStorage === 'undefined') return;
     try {
-      const raw = sessionStorage.getItem(GUEST_PROGRESS_KEY);
+      const raw = readGuestStorage(GUEST_PROGRESS_KEY);
       const map: Record<string, StoredGuestProgress> = raw ? JSON.parse(raw) : {};
       const key = `${payload.audioId}_${payload.episodeId}`;
       map[key] = {
@@ -28,19 +69,18 @@ export const guestSessionService = {
         completed: Boolean(payload.completed || payload.progressPercent >= 95),
         updatedAt: Date.now(),
       };
-      sessionStorage.setItem(GUEST_PROGRESS_KEY, JSON.stringify(map));
+      writeGuestStorage(GUEST_PROGRESS_KEY, JSON.stringify(map));
     } catch (err) {
-      console.warn('Failed to save guest progress in sessionStorage:', err);
+      console.warn('Failed to save guest progress:', err);
     }
   },
 
   /**
-   * Lấy toàn bộ tiến trình nghe của khách từ sessionStorage.
+   * Lấy toàn bộ tiến trình nghe của khách (ưu tiên sessionStorage, fallback localStorage sau OS kill).
    */
   getAllGuestProgress(): StoredGuestProgress[] {
-    if (typeof sessionStorage === 'undefined') return [];
     try {
-      const raw = sessionStorage.getItem(GUEST_PROGRESS_KEY);
+      const raw = readGuestStorage(GUEST_PROGRESS_KEY);
       if (!raw) return [];
       const map: Record<string, StoredGuestProgress> = JSON.parse(raw);
       return Object.values(map);
@@ -118,7 +158,6 @@ export const guestSessionService = {
     currentAudio?: AudioItem | null,
     currentEpisode?: Episode | null
   ): void {
-    if (typeof sessionStorage === 'undefined') return;
     try {
       const history = this.getGuestHistory();
       const audioId = Number(payload.audioId);
@@ -182,19 +221,18 @@ export const guestSessionService = {
       const filtered = history.filter((h) => h.audioId !== audioId);
       filtered.unshift(newItem);
 
-      sessionStorage.setItem(GUEST_HISTORY_KEY, JSON.stringify(filtered.slice(0, 500)));
+      writeGuestStorage(GUEST_HISTORY_KEY, JSON.stringify(filtered.slice(0, 100)));
     } catch (err) {
-      console.warn('Failed to save guest history in sessionStorage:', err);
+      console.warn('Failed to save guest history:', err);
     }
   },
 
   /**
-   * Lấy danh sách lịch sử nghe của khách từ sessionStorage.
+   * Lấy danh sách lịch sử nghe của khách từ sessionStorage/localStorage.
    */
   getGuestHistory(): ListeningHistoryItem[] {
-    if (typeof sessionStorage === 'undefined') return [];
     try {
-      const raw = sessionStorage.getItem(GUEST_HISTORY_KEY);
+      const raw = readGuestStorage(GUEST_HISTORY_KEY);
       if (!raw) return [];
       return JSON.parse(raw);
     } catch {
@@ -203,14 +241,11 @@ export const guestSessionService = {
   },
 
   /**
-   * Xóa sạch dữ liệu sessionStorage của khách (gọi sau khi đã di chuyển vào DB hoặc đăng xuất).
+   * Xóa sạch dữ liệu tạm của khách (gọi sau khi đã di chuyển vào DB hoặc đăng xuất).
    */
   clearGuestSession(): void {
-    if (typeof sessionStorage === 'undefined') return;
-    try {
-      sessionStorage.removeItem(GUEST_PROGRESS_KEY);
-      sessionStorage.removeItem(GUEST_HISTORY_KEY);
-    } catch {}
+    removeGuestStorage(GUEST_PROGRESS_KEY);
+    removeGuestStorage(GUEST_HISTORY_KEY);
   },
 
   /**

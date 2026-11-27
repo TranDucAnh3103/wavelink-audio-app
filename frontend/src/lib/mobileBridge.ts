@@ -88,6 +88,11 @@ export function initMobileBridge(): () => void {
           store.seekTo(payload);
         }
         break;
+      case 'flushProgress':
+        if (store.currentAudio && store.currentEpisode) {
+          window.dispatchEvent(new Event('pagehide'));
+        }
+        break;
       default:
         console.debug('[mobileBridge] Unknown native action:', action);
         break;

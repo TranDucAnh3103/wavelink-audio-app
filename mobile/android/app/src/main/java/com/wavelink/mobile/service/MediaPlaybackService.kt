@@ -10,6 +10,10 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -56,7 +60,36 @@ class MediaPlaybackService : Service() {
 
     private var mediaSession: MediaSessionCompat? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var audioManager: AudioManager? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var hasAudioFocus: Boolean = false
+    private var pausedByTransientFocusLoss: Boolean = false
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        when (focusChange) {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                hasAudioFocus = false
+                pausedByTransientFocusLoss = false
+                MediaPlaybackModule.emitAction("pause")
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                if (isPlaying) {
+                    pausedByTransientFocusLoss = true
+                    MediaPlaybackModule.emitAction("pause")
+                }
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                hasAudioFocus = true
+                if (pausedByTransientFocusLoss) {
+                    pausedByTransientFocusLoss = false
+                    MediaPlaybackModule.emitAction("play")
+                }
+            }
+        }
+    }
 
     private var currentTitle: String = "WaveLink Audio"
     private var currentArtist: String = "Sẵn sàng phát"
@@ -77,7 +110,85 @@ class MediaPlaybackService : Service() {
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WaveLink::MediaPlaybackServiceLock")
         wakeLock?.setReferenceCounted(false)
 
+        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val wifiLockMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+        } else {
+            @Suppress("DEPRECATION")
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF
+        }
+        wifiLock = wifiManager.createWifiLock(wifiLockMode, "WaveLink::MediaWifiLock").apply {
+            setReferenceCounted(false)
+        }
+
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+
         initMediaSession()
+    }
+
+    private fun acquirePlaybackLocks() {
+        if (wakeLock?.isHeld != true) {
+            wakeLock?.acquire(24 * 60 * 60 * 1000L)
+        }
+        if (wifiLock?.isHeld != true) {
+            try {
+                wifiLock?.acquire()
+            } catch (_: Exception) {}
+        }
+        requestAudioFocus()
+    }
+
+    private fun releasePlaybackLocks(releaseFocus: Boolean) {
+        if (wakeLock?.isHeld == true) {
+            try {
+                wakeLock?.release()
+            } catch (_: Exception) {}
+        }
+        if (wifiLock?.isHeld == true) {
+            try {
+                wifiLock?.release()
+            } catch (_: Exception) {}
+        }
+        if (releaseFocus) {
+            abandonAudioFocus()
+        }
+    }
+
+    private fun requestAudioFocus() {
+        val manager = audioManager ?: return
+        if (hasAudioFocus) return
+        val res = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val attrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
+            val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(attrs)
+                .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                .build()
+            audioFocusRequest = req
+            manager.requestAudioFocus(req)
+        } else {
+            @Suppress("DEPRECATION")
+            manager.requestAudioFocus(
+                audioFocusChangeListener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN
+            )
+        }
+        hasAudioFocus = res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+    }
+
+    private fun abandonAudioFocus() {
+        val manager = audioManager ?: return
+        if (!hasAudioFocus) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { manager.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            manager.abandonAudioFocus(audioFocusChangeListener)
+        }
+        hasAudioFocus = false
     }
 
     private fun initMediaSession() {
@@ -122,7 +233,17 @@ class MediaPlaybackService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action ?: return START_NOT_STICKY
+        val action = intent?.action
+        if (action == null) {
+            // Re-attach foreground notification if OS recreated sticky service after memory pressure
+            val notification = buildMediaNotification()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            return START_STICKY
+        }
 
         when (action) {
             ACTION_START -> {
@@ -134,7 +255,9 @@ class MediaPlaybackService : Service() {
                 currentDurationMs = intent.getLongExtra(EXTRA_DURATION, 0L)
                 currentPlaybackSpeed = intent.getFloatExtra(EXTRA_SPEED, 1.0f)
 
-                wakeLock?.acquire(24 * 60 * 60 * 1000L) // Giữ CPU chạy nền khi tắt màn hình
+                if (isPlaying) {
+                    acquirePlaybackLocks()
+                }
                 loadArtworkAndRefresh(currentArtworkUrl)
 
                 val notification = buildMediaNotification()
@@ -156,13 +279,9 @@ class MediaPlaybackService : Service() {
                 currentPlaybackSpeed = intent.getFloatExtra(EXTRA_SPEED, currentPlaybackSpeed)
 
                 if (isPlaying) {
-                    if (wakeLock?.isHeld != true) {
-                        wakeLock?.acquire(24 * 60 * 60 * 1000L)
-                    }
+                    acquirePlaybackLocks()
                 } else {
-                    if (wakeLock?.isHeld == true) {
-                        wakeLock?.release()
-                    }
+                    releasePlaybackLocks(releaseFocus = false)
                 }
 
                 updateMediaSessionState()
@@ -198,7 +317,7 @@ class MediaPlaybackService : Service() {
             ACTION_STOP -> stopSelfService()
         }
 
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun loadArtworkAndRefresh(url: String) {
@@ -356,9 +475,7 @@ class MediaPlaybackService : Service() {
     }
 
     private fun stopSelfService() {
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
-        }
+        releasePlaybackLocks(releaseFocus = true)
         mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null

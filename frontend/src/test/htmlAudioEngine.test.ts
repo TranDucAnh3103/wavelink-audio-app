@@ -124,12 +124,22 @@ describe('HtmlAudioEngine', () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(spyToken).toHaveBeenCalledTimes(3);
 
-    // Trigger 3rd error -> retry #3 after 4000ms
+    // Trigger 3rd error -> retry #3 after 5000ms
     audioEl.dispatchEvent(new Event('error'));
-    await vi.advanceTimersByTimeAsync(4000);
+    await vi.advanceTimersByTimeAsync(5000);
     expect(spyToken).toHaveBeenCalledTimes(4);
 
-    // 4th error exceeds MAX_STREAM_RETRIES -> emits fatal YouTube fallback
+    // Trigger 4th error -> retry #4 after 10000ms
+    audioEl.dispatchEvent(new Event('error'));
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(spyToken).toHaveBeenCalledTimes(5);
+
+    // Trigger 5th error -> retry #5 after 15000ms
+    audioEl.dispatchEvent(new Event('error'));
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(spyToken).toHaveBeenCalledTimes(6);
+
+    // 6th error exceeds MAX_STREAM_RETRIES (5) -> emits fatal YouTube fallback
     audioEl.dispatchEvent(new Event('error'));
     expect(errors).toHaveLength(1);
     expect(errors[0].fatal).toBe(true);

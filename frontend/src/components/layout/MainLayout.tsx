@@ -15,13 +15,19 @@ import { peekLibraryReturnState } from '@/lib/libraryNavigationState';
 export const MainLayout: React.FC = () => {
   const location = useLocation();
   const isAuthPage = location.pathname === '/login' || location.pathname === '/register';
-  const { isScreenLocked, setScreenLocked, hasCurrentAudio } = usePlayerStore(
-    useShallow((s) => ({
-      isScreenLocked: s.isScreenLocked,
-      setScreenLocked: s.setScreenLocked,
-      hasCurrentAudio: Boolean(s.currentAudio),
-    }))
-  );
+  const { isScreenLocked, setScreenLocked, hasCurrentAudio, hydrateLastPlaybackSession } =
+    usePlayerStore(
+      useShallow((s) => ({
+        isScreenLocked: s.isScreenLocked,
+        setScreenLocked: s.setScreenLocked,
+        hasCurrentAudio: Boolean(s.currentAudio),
+        hydrateLastPlaybackSession: s.hydrateLastPlaybackSession,
+      }))
+    );
+
+  useEffect(() => {
+    hydrateLastPlaybackSession();
+  }, [hydrateLastPlaybackSession]);
 
   useEffect(() => {
     if (location.pathname === '/library' && peekLibraryReturnState()) {
