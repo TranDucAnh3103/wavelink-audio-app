@@ -13,7 +13,9 @@ export type StreamTokenFetcher = (
   episodeNumber?: number
 ) => Promise<StreamTokenResponse>;
 
-const MAX_STREAM_RETRIES = 3;
+const MAX_STREAM_RETRIES = 5;
+const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000, 15000];
+const TOKEN_REFRESH_AGE_MS = 4 * 60 * 60 * 1000; // Refresh 6h stream token proactively after 4h
 
 function applyPreservesPitch(el: HTMLAudioElement): void {
   const media = el as HTMLAudioElement & {
@@ -66,6 +68,8 @@ export class HtmlAudioEngine implements AudioEngine {
   private metadataApplied = false;
   private retryCount = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private onlineCleanup: (() => void) | null = null;
+  private tokenIssuedAt = 0;
   private loadSeq = 0;
   private stopped = false;
   private boundCleanup: (() => void) | null = null;
@@ -73,6 +77,10 @@ export class HtmlAudioEngine implements AudioEngine {
   getLoadedVideoId(): string | null {
     if (this.loadingNewStream || !this.metadataApplied || this.stopped) return null;
     return this.loadedVideoId;
+  }
+
+  isPaused(): boolean {
+    return !this.el || this.el.paused;
   }
 
   attachElement(el: HTMLAudioElement | null): void {
@@ -195,7 +203,8 @@ export class HtmlAudioEngine implements AudioEngine {
     const sameStreamLoaded =
       this.currentVideoId === options.videoId &&
       Boolean(el.currentSrc || el.src) &&
-      !el.error;
+      !el.error &&
+      (this.tokenIssuedAt === 0 || Date.now() - this.tokenIssuedAt < TOKEN_REFRESH_AGE_MS);
 
     this.currentOpts = options;
     this.pendingRate = options.playbackRate || 1.0;
@@ -242,6 +251,7 @@ export class HtmlAudioEngine implements AudioEngine {
       );
       if (seq !== this.loadSeq || this.stopped) return;
 
+      this.tokenIssuedAt = Date.now();
       const streamUrl = buildStreamUrl(tokenRes.streamUrl, options.videoId, tokenRes.streamToken);
       applyPreservesPitch(el);
       try {
@@ -410,36 +420,59 @@ export class HtmlAudioEngine implements AudioEngine {
         ? this.el.currentTime
         : this.pendingStartSeconds;
 
+    const retryStreamReload = async (seq: number) => {
+      if (seq !== this.loadSeq || this.stopped || !this.el || !this.currentOpts) return;
+      try {
+        if (!this.tokenFetcher) {
+          throw new Error('Stream token fetcher is not configured');
+        }
+        const tokenRes = await this.tokenFetcher(
+          opts.audioId,
+          opts.episodeId,
+          opts.episodeNumber
+        );
+        if (seq !== this.loadSeq || this.stopped || !this.el) return;
+
+        this.tokenIssuedAt = Date.now();
+        const baseStreamUrl = buildStreamUrl(tokenRes.streamUrl, opts.videoId, tokenRes.streamToken);
+        const sep = baseStreamUrl.includes('?') ? '&' : '?';
+        this.pendingStartSeconds = lastTime;
+        this.pendingAutoplay = true;
+        this.metadataApplied = false;
+        this.el.src = `${baseStreamUrl}${sep}retry=${Date.now()}`;
+        this.el.load();
+      } catch {
+        this.handleMediaError();
+      }
+    };
+
+    // Wait for connectivity restoration instead of burning retries during background network drop / Doze
+    if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && navigator.onLine === false) {
+      const seq = this.loadSeq;
+      this.clearRetryTimer();
+      this.pendingStartSeconds = lastTime;
+      this.emit('state', 'buffering');
+      const onOnline = () => {
+        if (this.onlineCleanup) {
+          this.onlineCleanup();
+          this.onlineCleanup = null;
+        }
+        void retryStreamReload(seq);
+      };
+      window.addEventListener('online', onOnline, { once: true });
+      this.onlineCleanup = () => window.removeEventListener('online', onOnline);
+      return;
+    }
+
     if (this.retryCount < MAX_STREAM_RETRIES) {
+      const delayMs = RETRY_DELAYS_MS[this.retryCount] ?? 15000;
       this.retryCount++;
-      const delayMs = Math.pow(2, this.retryCount - 1) * 1000;
       const seq = this.loadSeq;
       this.clearRetryTimer();
       this.emit('state', 'buffering');
 
-      this.retryTimer = setTimeout(async () => {
-        if (seq !== this.loadSeq || this.stopped || !this.el || !this.currentOpts) return;
-        try {
-          if (!this.tokenFetcher) {
-            throw new Error('Stream token fetcher is not configured');
-          }
-          const tokenRes = await this.tokenFetcher(
-            opts.audioId,
-            opts.episodeId,
-            opts.episodeNumber
-          );
-          if (seq !== this.loadSeq || this.stopped || !this.el) return;
-
-          const baseStreamUrl = buildStreamUrl(tokenRes.streamUrl, opts.videoId, tokenRes.streamToken);
-          const sep = baseStreamUrl.includes('?') ? '&' : '?';
-          this.pendingStartSeconds = lastTime;
-          this.pendingAutoplay = true;
-          this.metadataApplied = false;
-          this.el.src = `${baseStreamUrl}${sep}retry=${Date.now()}`;
-          this.el.load();
-        } catch {
-          this.handleMediaError();
-        }
+      this.retryTimer = setTimeout(() => {
+        void retryStreamReload(seq);
       }, delayMs);
       return;
     }
@@ -457,6 +490,10 @@ export class HtmlAudioEngine implements AudioEngine {
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
+    }
+    if (this.onlineCleanup) {
+      this.onlineCleanup();
+      this.onlineCleanup = null;
     }
   }
 

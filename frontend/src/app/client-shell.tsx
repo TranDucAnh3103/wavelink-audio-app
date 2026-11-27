@@ -21,13 +21,19 @@ const ScreenLockOverlay = dynamic(
 function ShellBody({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
   const isAuthPage = pathname === '/login' || pathname === '/register';
-  const { isScreenLocked, setScreenLocked, hasCurrentAudio } = usePlayerStore(
-    useShallow((s) => ({
-      isScreenLocked: s.isScreenLocked,
-      setScreenLocked: s.setScreenLocked,
-      hasCurrentAudio: Boolean(s.currentAudio),
-    }))
-  );
+  const { isScreenLocked, setScreenLocked, hasCurrentAudio, hydrateLastPlaybackSession } =
+    usePlayerStore(
+      useShallow((s) => ({
+        isScreenLocked: s.isScreenLocked,
+        setScreenLocked: s.setScreenLocked,
+        hasCurrentAudio: Boolean(s.currentAudio),
+        hydrateLastPlaybackSession: s.hydrateLastPlaybackSession,
+      }))
+    );
+
+  useEffect(() => {
+    hydrateLastPlaybackSession();
+  }, [hydrateLastPlaybackSession]);
 
   useEffect(() => {
     if (pathname === '/library' && peekLibraryReturnState()) {

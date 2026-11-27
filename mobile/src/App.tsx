@@ -5,8 +5,11 @@ import {
   StyleSheet,
   View,
   Text,
+  TouchableOpacity,
   ActivityIndicator,
   BackHandler,
+  AppState,
+  AppStateStatus,
   Animated,
   Linking,
 } from 'react-native';
@@ -317,6 +320,44 @@ export default function App() {
   const currentTrackRef = useRef(currentTrack);
   currentTrackRef.current = currentTrack;
   const hasStartedServiceRef = useRef(false);
+  const [showBatteryBanner, setShowBatteryBanner] = useState(false);
+  const batteryBannerDismissedRef = useRef(false);
+
+  // Kiểm tra tối ưu hóa pin & đồng bộ tiến trình ngay khi chuyển app ra nền
+  useEffect(() => {
+    MediaPlayback.isBatteryOptimizationIgnored().then((ignored) => {
+      if (!ignored && !batteryBannerDismissedRef.current) {
+        setShowBatteryBanner(true);
+      }
+    });
+
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (nextState === 'background' || nextState === 'inactive') {
+        if (webViewRef.current) {
+          webViewRef.current.injectJavaScript(
+            'if (window.__wavelinkMobileDispatch) { window.__wavelinkMobileDispatch("flushProgress"); } true;'
+          );
+        }
+        const track = currentTrackRef.current;
+        if (track.isPlaying && hasStartedServiceRef.current) {
+          MediaPlayback.updateState(
+            true,
+            track.currentTime || 0,
+            track.duration || 0
+          );
+        }
+      } else if (nextState === 'active') {
+        MediaPlayback.isBatteryOptimizationIgnored().then((ignored) => {
+          if (ignored) {
+            setShowBatteryBanner(false);
+          }
+        });
+      }
+    };
+
+    const appStateSub = AppState.addEventListener('change', handleAppStateChange);
+    return () => appStateSub.remove();
+  }, []);
 
   // 1. Lắng nghe các action từ Android Media Notification
   useEffect(() => {
@@ -464,6 +505,33 @@ export default function App() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0F0F12" />
 
+      {showBatteryBanner && (
+        <View style={styles.batteryBanner}>
+          <Text style={styles.batteryText} numberOfLines={2}>
+            Cho phép WaveLink chạy nền không giới hạn pin để tránh bị tắt audio khi khóa màn hình.
+          </Text>
+          <View style={styles.batteryActions}>
+            <TouchableOpacity
+              style={styles.batteryEnableBtn}
+              onPress={() => {
+                void MediaPlayback.requestIgnoreBatteryOptimizations();
+              }}
+            >
+              <Text style={styles.batteryEnableText}>Bật ngay</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.batteryDismissBtn}
+              onPress={() => {
+                batteryBannerDismissedRef.current = true;
+                setShowBatteryBanner(false);
+              }}
+            >
+              <Text style={styles.batteryDismissText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       <WebView
         ref={webViewRef}
         source={{ uri: getActiveWebUrl() }}
@@ -565,5 +633,47 @@ const styles = StyleSheet.create({
   },
   splashSpinnerBox: {
     marginTop: 32,
+  },
+  batteryBanner: {
+    backgroundColor: '#1E1B4B',
+    borderBottomWidth: 1,
+    borderBottomColor: '#4338CA',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  batteryText: {
+    flex: 1,
+    color: '#E0E7FF',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  batteryActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  batteryEnableBtn: {
+    backgroundColor: '#FFE600',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  batteryEnableText: {
+    color: '#111113',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  batteryDismissBtn: {
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  batteryDismissText: {
+    color: '#A5B4FC',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

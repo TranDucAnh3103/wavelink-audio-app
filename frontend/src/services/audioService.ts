@@ -4,6 +4,8 @@ import { AudioItem, AudioFilter, YouTubePreviewData, ImportYouTubePayload, Impor
 import { localDb, isMockAudio } from './localDb';
 import { extractYouTubeId, formatTime, formatDuration } from '@/lib/utils';
 import { guestSessionService } from './guestSessionService';
+import { progressService } from './progressService';
+import { reconcileAudioWithLocalSnapshot } from '@/lib/progressSnapshot';
 import { useAuthStore } from '@/stores/authStore';
 
 export interface AudioListPaginationMeta {
@@ -64,7 +66,7 @@ export const audioService = {
           }
           let list = Array.from(map.values());
 
-          // Nếu là khách (chưa đăng nhập): ghép tiến trình từ sessionStorage
+          // Nếu là khách (chưa đăng nhập): ghép tiến trình từ sessionStorage/localStorage
           if (!token) {
             list = guestSessionService.applyGuestProgressToAudios(list);
             if (filter.status === 'listening') {
@@ -73,6 +75,8 @@ export const audioService = {
               list = list.filter((a) => (a.progressPercent || 0) >= 95);
             }
           }
+
+          list = list.map((item) => reconcileAudioWithLocalSnapshot(item).audio);
 
           if (res.data.meta) {
             audioListMetaMap.set(list, res.data.meta);
@@ -169,6 +173,26 @@ export const audioService = {
           let item = res.data.data;
           if (!token) {
             item = guestSessionService.applyGuestProgressToAudio(item);
+          }
+          const reconciled = reconcileAudioWithLocalSnapshot(item);
+          item = reconciled.audio;
+          if (reconciled.needsBackfill && token) {
+            const snap = reconciled.needsBackfill;
+            const numericAudioId = Number(snap.audioId);
+            if (Number.isFinite(numericAudioId) && numericAudioId > 0) {
+              void progressService
+                .updateProgress(
+                  {
+                    audioId: numericAudioId,
+                    episodeId: snap.episodeId,
+                    positionSeconds: snap.positionSeconds,
+                    progressPercent: snap.progressPercent || 0,
+                    completed: (snap.progressPercent || 0) >= 95,
+                  },
+                  isLive
+                )
+                .catch(() => {});
+            }
           }
           return enrichAudioEpisodes(item);
         }

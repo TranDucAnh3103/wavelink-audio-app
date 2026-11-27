@@ -1,8 +1,13 @@
 package com.wavelink.mobile.service
 
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
@@ -84,7 +89,13 @@ class MediaPlaybackModule(private val reactContext: ReactApplicationContext) :
             putExtra(MediaPlaybackService.EXTRA_DURATION, (duration * 1000).toLong())
             putExtra(MediaPlaybackService.EXTRA_SPEED, playbackSpeed.toFloat())
         }
-        reactContext.startService(intent)
+        try {
+            if (isPlaying && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                reactContext.startForegroundService(intent)
+            } else {
+                reactContext.startService(intent)
+            }
+        } catch (_: Exception) {}
     }
 
     @ReactMethod
@@ -101,7 +112,9 @@ class MediaPlaybackModule(private val reactContext: ReactApplicationContext) :
             putExtra(MediaPlaybackService.EXTRA_ARTWORK, artwork)
             putExtra(MediaPlaybackService.EXTRA_DURATION, (durationSec * 1000).toLong())
         }
-        reactContext.startService(intent)
+        try {
+            reactContext.startService(intent)
+        } catch (_: Exception) {}
     }
 
     @ReactMethod
@@ -109,6 +122,54 @@ class MediaPlaybackModule(private val reactContext: ReactApplicationContext) :
         val intent = Intent(reactContext, MediaPlaybackService::class.java).apply {
             action = MediaPlaybackService.ACTION_STOP
         }
-        reactContext.startService(intent)
+        try {
+            reactContext.startService(intent)
+        } catch (_: Exception) {}
+    }
+
+    @ReactMethod
+    fun isBatteryOptimizationIgnored(promise: Promise) {
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                promise.resolve(true)
+                return
+            }
+            val pm = reactContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val ignoring = pm?.isIgnoringBatteryOptimizations(reactContext.packageName) ?: true
+            promise.resolve(ignoring)
+        } catch (e: Exception) {
+            promise.resolve(true)
+        }
+    }
+
+    @ReactMethod
+    fun requestIgnoreBatteryOptimizations(promise: Promise) {
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                promise.resolve(true)
+                return
+            }
+            val pm = reactContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (pm?.isIgnoringBatteryOptimizations(reactContext.packageName) == true) {
+                promise.resolve(true)
+                return
+            }
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:${reactContext.packageName}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (intent.resolveActivity(reactContext.packageManager) != null) {
+                reactContext.startActivity(intent)
+                promise.resolve(true)
+                return
+            }
+            val fallbackIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            reactContext.startActivity(fallbackIntent)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.resolve(false)
+        }
     }
 }

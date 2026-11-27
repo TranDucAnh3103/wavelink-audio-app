@@ -3,6 +3,7 @@ import { ProgressPayload } from '@/types';
 import { localDb } from './localDb';
 import { formatTime } from '@/lib/utils';
 import { guestSessionService } from './guestSessionService';
+import { markLocalProgressServerSynced } from '@/lib/progressSnapshot';
 
 const OFFLINE_QUEUE_KEY = 'offline_progress_queue';
 
@@ -39,6 +40,7 @@ export const progressService = {
     if (isLive && isOnline) {
       try {
         await axiosClient.put('/progress', payload);
+        markLocalProgressServerSynced(payload.audioId, payload.episodeId, payload.positionSeconds);
       } catch (err) {
         console.warn('updateProgress live API failed, saving to offline queue', err);
         this.enqueueOfflineProgress(payload);

@@ -267,11 +267,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       localStorage.removeItem('auth_token');
       localStorage.removeItem('auth_user');
       localStorage.removeItem('wavelink_sleep_timer_end');
+      localStorage.removeItem('wavelink_last_playback_session');
       try {
         const keysToRemove: string[] = [];
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
-          if (k && (k.startsWith('comic_audio_user_speed_') || k.startsWith('wavelink_cache_'))) {
+          if (
+            k &&
+            (k.startsWith('comic_audio_user_speed_') ||
+              k.startsWith('wavelink_cache_') ||
+              k.startsWith('wavelink_progress_'))
+          ) {
             keysToRemove.push(k);
           }
         }

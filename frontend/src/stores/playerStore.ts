@@ -14,7 +14,14 @@ import { formatTime } from '@/lib/utils';
 import { AudioEngineType } from '@/lib/audio/AudioEngine';
 import { HtmlAudioEngine } from '@/lib/audio/HtmlAudioEngine';
 import { YouTubeEngine } from '@/lib/audio/YouTubeEngine';
-import { getAudioEngineMode, isIOSDevice, isVideoStreamFailed } from '@/lib/streamConfig';
+import { getAudioEngineMode, isIOSDevice, isVideoStreamFailed, clearVideoStreamFailed } from '@/lib/streamConfig';
+import {
+  clearLastPlaybackSession,
+  readLastPlaybackSession,
+  readLocalProgressSnapshot,
+  saveLastPlaybackSession,
+  saveLocalProgressSnapshot,
+} from '@/lib/progressSnapshot';
 
 // Global engine instances
 declare global {
@@ -47,6 +54,8 @@ let sleepFadeTimer: ReturnType<typeof setInterval> | null = null;
 let currentPlayerUserId: number | string | null = null;
 let isAdvancingEpisode = false;
 let lastLocalSaveTs = 0;
+let lastServerSaveAt = 0;
+let lastServerSavedPos = -1;
 let lastStreamMediaSessionTs = 0;
 let lastHtmlTimeUiUpdateAt = 0;
 let ytTrackSwitchUntil = 0;
@@ -196,6 +205,7 @@ interface PlayerState {
   syncUserPlaybackRate: (userId?: number | string | null) => void;
   cycleSpeed: (userId?: number | string | null) => void;
   setSleepTimer: (minutes: number | null) => void;
+  hydrateLastPlaybackSession: () => void;
   close: () => void;
   reset: () => void;
   setYtReady: (ready: boolean) => void;
@@ -309,6 +319,47 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   setScreenLocked: (isScreenLocked: boolean) => set({ isScreenLocked }),
   setYtReady: (isYtReady: boolean) => set({ isYtReady }),
+
+  hydrateLastPlaybackSession: () => {
+    if (get().currentAudio) return;
+    const session = readLastPlaybackSession();
+    if (!session) return;
+    const latestSnap = readLocalProgressSnapshot(session.audio.id);
+    let targetEpisode = session.episode;
+    let targetPos = session.positionSeconds;
+    let targetDur = session.duration || targetEpisode.duration || 14400;
+
+    if (latestSnap && latestSnap.updatedAt >= session.updatedAt && latestSnap.positionSeconds > 0) {
+      const matchedEp =
+        session.audio.episodes?.find((ep) => String(ep.id) === String(latestSnap.episodeId)) ||
+        session.episode;
+      if (matchedEp) {
+        targetEpisode = matchedEp;
+        targetDur =
+          matchedEp.duration || (matchedEp.endSeconds - matchedEp.startSeconds) || latestSnap.duration || 14400;
+        targetPos = Math.max(0, Math.min(latestSnap.positionSeconds, targetDur));
+      }
+    }
+
+    set({
+      currentAudio: {
+        ...session.audio,
+        lastPositionSeconds: targetPos,
+        currentEpisodeId: targetEpisode.id,
+        currentEpisodeNumber: targetEpisode.episodeNumber,
+        currentEpisodeTitle: targetEpisode.title,
+      },
+      currentEpisode: {
+        ...targetEpisode,
+        positionSeconds: targetPos,
+      },
+      currentTime: targetPos,
+      duration: targetDur,
+      isPlaying: false,
+      isBuffering: false,
+      isExplicitlyPaused: true,
+    });
+  },
 
   setAudioElement: (el: HTMLAudioElement | null) => {
     htmlAudioEngine.attachElement(el);
@@ -536,8 +587,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     });
 
     if (targetEngine === 'stream' && htmlAudioEngine.isReady()) {
-      stopBackgroundAudio();
-      stopMediaSessionKeeper();
       void htmlAudioEngine.load({
         audioId: audio.id,
         videoId: audio.youtubeVideoId,
@@ -549,6 +598,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       });
       startPolling(); // Used for sleep timer check in stream mode
       startHeartbeat();
+      startBackgroundAudio({ engine: 'stream' });
+      startMediaSessionKeeper(onWorkerMediaTick);
     } else {
       rateCoordinator.onVideoLoaded(audio.youtubeVideoId);
 
@@ -601,10 +652,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       if (nextPlaying) {
         startPolling();
         startHeartbeat();
+        startBackgroundAudio({ engine: 'stream' });
+        startMediaSessionKeeper(onWorkerMediaTick);
       } else {
         saveCurrentProgress();
         stopPolling();
         stopHeartbeat();
+        stopBackgroundAudio();
+        stopMediaSessionKeeper();
       }
       updateMediaSession(nextPlaying, currentAudio, state.currentEpisode, state.currentTime, state.duration, state.playbackRate);
       return;
@@ -641,13 +696,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   pause: () => {
     const state = get();
+    const livePos = getLivePlaybackPositionSeconds();
     saveCurrentProgress();
     if (isStreamEngineActive(state)) {
       htmlAudioEngine.pause();
-      set({ isPlaying: false, isBuffering: false, isExplicitlyPaused: true });
+      set({ isPlaying: false, isBuffering: false, isExplicitlyPaused: true, currentTime: livePos });
       stopPolling();
       stopHeartbeat();
-      updateMediaSession(false, state.currentAudio, state.currentEpisode, state.currentTime, state.duration, state.playbackRate);
+      stopBackgroundAudio();
+      stopMediaSessionKeeper();
+      updateMediaSession(false, state.currentAudio, state.currentEpisode, livePos, state.duration, state.playbackRate);
       return;
     }
 
@@ -658,23 +716,47 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         // Ignore
       }
     }
-    set({ isPlaying: false, isBuffering: false, isExplicitlyPaused: true });
+    set({ isPlaying: false, isBuffering: false, isExplicitlyPaused: true, currentTime: livePos });
     stopPolling();
     stopHeartbeat();
     stopBackgroundAudio();
     stopMediaSessionKeeper();
-    updateMediaSession(false, get().currentAudio, get().currentEpisode, get().currentTime, get().duration, get().playbackRate);
+    updateMediaSession(false, get().currentAudio, get().currentEpisode, livePos, get().duration, get().playbackRate);
   },
 
   resume: () => {
     const state = get();
-    if (isStreamEngineActive(state)) {
-      void htmlAudioEngine.play();
-      set({ isPlaying: true, isExplicitlyPaused: false });
-      startPolling();
-      startHeartbeat();
-      updateMediaSession(true, state.currentAudio, state.currentEpisode, state.currentTime, state.duration, state.playbackRate);
-      return;
+    if (state.currentAudio) {
+      // If a transient background drop pushed playback to YouTube earlier and network is back,
+      // recover into stream mode (which survives screen lock) instead of staying stuck on YouTube.
+      const configuredMode = getAudioEngineMode();
+      const canRecoverStream =
+        state.activeEngine === 'youtube' &&
+        configuredMode === 'stream' &&
+        htmlAudioEngine.isReady() &&
+        state.currentAudio.streamStatus !== 'FAILED' &&
+        (typeof navigator === 'undefined' || navigator.onLine !== false);
+
+      if (canRecoverStream) {
+        clearVideoStreamFailed(state.currentAudio.youtubeVideoId);
+        get().play(state.currentAudio, state.currentEpisode, state.currentTime);
+        return;
+      }
+
+      if (isStreamEngineActive(state)) {
+        if (htmlAudioEngine.getLoadedVideoId() !== state.currentAudio.youtubeVideoId) {
+          get().play(state.currentAudio, state.currentEpisode, state.currentTime);
+          return;
+        }
+        void htmlAudioEngine.play();
+        set({ isPlaying: true, isExplicitlyPaused: false });
+        startPolling();
+        startHeartbeat();
+        startBackgroundAudio({ engine: 'stream' });
+        startMediaSessionKeeper(onWorkerMediaTick);
+        updateMediaSession(true, state.currentAudio, state.currentEpisode, state.currentTime, state.duration, state.playbackRate);
+        return;
+      }
     }
 
     if (ytPlayerInstance) {
@@ -926,6 +1008,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('wavelink_sleep_timer_end');
     }
+    clearLastPlaybackSession();
     set({
       currentAudio: null,
       currentEpisode: null,
@@ -971,6 +1054,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('wavelink_sleep_timer_end');
     }
+    clearLastPlaybackSession();
     const storedRate = getStoredPlaybackRate();
     rateCoordinator.setDesiredRate(storedRate, 'store_reset');
     set({
@@ -1090,6 +1174,16 @@ htmlAudioEngine.on('time', (absTime, mediaDur) => {
       saveLocalSnapshot(store.currentAudio, ep, epPos, store.duration);
     }
 
+    // Push live background playback progress to server at least every 15s of actual audio playback,
+    // independent of main-thread setInterval throttling on Android Chrome / WebView.
+    if (
+      store.isPlaying &&
+      now - lastServerSaveAt >= 15000 &&
+      Math.abs(epPos - lastServerSavedPos) >= 3
+    ) {
+      saveProgressFor(store.currentAudio, ep, epPos, store.duration);
+    }
+
     if (now - lastStreamMediaSessionTs >= 3000 && store.isPlaying) {
       lastStreamMediaSessionTs = now;
       updateMediaSession(true, store.currentAudio, ep, epPos, store.duration, store.playbackRate);
@@ -1178,10 +1272,61 @@ rateCoordinator.subscribe({
   },
 });
 
+function getLivePlaybackPositionSeconds(): number {
+  const store = usePlayerStore.getState();
+  const { currentAudio, currentEpisode, currentTime, duration } = store;
+  if (!currentAudio || !currentEpisode) return currentTime || 0;
+
+  const startSec = currentEpisode.startSeconds || 0;
+  const maxDur = duration || currentEpisode.duration || 14400;
+
+  if (
+    isStreamEngineActive(store) &&
+    htmlAudioEngine.getLoadedVideoId() === currentAudio.youtubeVideoId
+  ) {
+    const absTime = htmlAudioEngine.getTime();
+    if (absTime > 0 || startSec === 0) {
+      const epPos = Math.round(absTime - startSec);
+      if (epPos >= 0) {
+        return Math.min(epPos, maxDur);
+      }
+    }
+  } else if (ytPlayerInstance && typeof ytPlayerInstance.getCurrentTime === 'function') {
+    try {
+      const absTime = ytPlayerInstance.getCurrentTime();
+      if (typeof absTime === 'number' && absTime >= 0) {
+        const epPos = Math.round(absTime - startSec);
+        if (epPos >= 0) {
+          return Math.min(epPos, maxDur);
+        }
+      }
+    } catch {}
+  }
+
+  return Math.max(0, currentTime || 0);
+}
+
 function onWorkerMediaTick() {
   const store = usePlayerStore.getState();
-  if (!store.isPlaying || store.isExplicitlyPaused) return;
-  if (isStreamEngineActive(store)) return;
+  if (!store.isPlaying || store.isExplicitlyPaused || !store.currentAudio) return;
+
+  const now = Date.now();
+  if (isStreamEngineActive(store)) {
+    const livePos = getLivePlaybackPositionSeconds();
+    saveLocalSnapshot(store.currentAudio, store.currentEpisode!, livePos, store.duration);
+    if (now - lastServerSaveAt >= 15000 && Math.abs(livePos - lastServerSavedPos) >= 3) {
+      saveCurrentProgress();
+    }
+    updateMediaSession(
+      true,
+      store.currentAudio,
+      store.currentEpisode,
+      livePos,
+      store.duration,
+      store.playbackRate
+    );
+    return;
+  }
 
   let currentPos = store.currentTime;
   if (ytPlayerInstance && typeof ytPlayerInstance.getCurrentTime === 'function') {
@@ -1194,6 +1339,10 @@ function onWorkerMediaTick() {
         usePlayerStore.setState({ currentTime: epPos });
       }
     } catch {}
+  }
+
+  if (now - lastServerSaveAt >= 15000 && Math.abs(currentPos - lastServerSavedPos) >= 3) {
+    saveCurrentProgress();
   }
 
   // Re-enforce playback rate on each worker tick to catch background rate resets
@@ -1364,19 +1513,19 @@ function navigateToAppRoute(path: string) {
 }
 
 function saveLocalSnapshot(audio: AudioItem, episode: Episode, currentTime: number, duration: number) {
-  if (typeof localStorage === 'undefined' || !audio || !episode) return;
-  try {
-    localStorage.setItem(
-      `wavelink_progress_${audio.id}`,
-      JSON.stringify({
-        audioId: audio.id,
-        episodeId: episode.id,
-        positionSeconds: currentTime,
-        duration,
-        updatedAt: Date.now(),
-      })
-    );
-  } catch {}
+  if (!audio || !episode) return;
+  const dur = duration || episode.duration || (episode.endSeconds - episode.startSeconds) || 14400;
+  const percent = Math.min(100, Math.round((currentTime / Math.max(1, dur)) * 100));
+  saveLocalProgressSnapshot({
+    audioId: audio.id,
+    episodeId: episode.id,
+    episodeNumber: episode.episodeNumber,
+    positionSeconds: currentTime,
+    duration: dur,
+    progressPercent: percent,
+    updatedAt: Date.now(),
+  });
+  saveLastPlaybackSession(audio, episode, currentTime, dur);
 }
 
 let lastHistoryTrackKey = '';
@@ -1400,6 +1549,9 @@ function saveProgressFor(audio: AudioItem, episode: Episode, currentTime: number
   if (isCompleted) episode.completed = true;
 
   saveLocalSnapshot(audio, episode, currentTime, dur);
+
+  lastServerSaveAt = Date.now();
+  lastServerSavedPos = currentTime;
 
   api.progress.updateProgress({
     audioId: audio.id,
@@ -1453,17 +1605,19 @@ function saveProgressFor(audio: AudioItem, episode: Episode, currentTime: number
 }
 
 function saveCurrentProgress() {
-  const { currentAudio, currentEpisode, currentTime, duration } = usePlayerStore.getState();
+  const { currentAudio, currentEpisode, duration } = usePlayerStore.getState();
   if (!currentAudio || !currentEpisode) return;
-  saveProgressFor(currentAudio, currentEpisode, currentTime, duration);
+  const livePos = getLivePlaybackPositionSeconds();
+  saveProgressFor(currentAudio, currentEpisode, livePos, duration);
 }
 
 function flushProgressWithKeepalive() {
-  const { currentAudio, currentEpisode, currentTime, duration } = usePlayerStore.getState();
+  const { currentAudio, currentEpisode, duration } = usePlayerStore.getState();
   if (!currentAudio || !currentEpisode) return;
+  const livePos = getLivePlaybackPositionSeconds();
   const dur = duration || currentEpisode.duration || (currentEpisode.endSeconds - currentEpisode.startSeconds) || 14400;
-  const percent = Math.min(100, Math.round((currentTime / dur) * 100));
-  saveLocalSnapshot(currentAudio, currentEpisode, currentTime, dur);
+  const percent = Math.min(100, Math.round((livePos / Math.max(1, dur)) * 100));
+  saveLocalSnapshot(currentAudio, currentEpisode, livePos, dur);
 
   try {
     const token = typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null;
@@ -1478,7 +1632,7 @@ function flushProgressWithKeepalive() {
         body: JSON.stringify({
           audioId: currentAudio.id,
           episodeId: currentEpisode.id,
-          positionSeconds: currentTime,
+          positionSeconds: livePos,
           progressPercent: percent,
           completed: percent >= 95,
         }),
@@ -1489,9 +1643,12 @@ function flushProgressWithKeepalive() {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
-    saveCurrentProgress();
+    flushProgressWithKeepalive();
   });
   window.addEventListener('pagehide', () => {
+    flushProgressWithKeepalive();
+  });
+  document.addEventListener('freeze', () => {
     flushProgressWithKeepalive();
   });
   window.__playerStore = usePlayerStore;
@@ -1502,19 +1659,28 @@ if (typeof window !== 'undefined') {
     if (document.visibilityState === 'hidden') {
       if (store.currentAudio && store.currentEpisode) {
         saveCurrentProgress();
+        flushProgressWithKeepalive();
       }
       return;
     }
 
     if (document.visibilityState === 'visible') {
       if (isStreamEngineActive(store)) {
+        const livePos = getLivePlaybackPositionSeconds();
+        if (store.currentAudio && livePos !== store.currentTime) {
+          usePlayerStore.setState({ currentTime: livePos });
+        }
+        // Recover unexpected OS background pause if user never pressed Pause
+        if (store.isPlaying && !store.isExplicitlyPaused && htmlAudioEngine.isPaused()) {
+          void htmlAudioEngine.play();
+        }
         // Refresh mediaSession position when user returns to foreground
         if (store.currentAudio) {
           updateMediaSession(
             store.isPlaying,
             store.currentAudio,
             store.currentEpisode,
-            store.currentTime,
+            livePos,
             store.duration,
             store.playbackRate
           );

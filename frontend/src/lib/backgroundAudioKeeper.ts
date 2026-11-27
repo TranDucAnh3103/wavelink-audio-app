@@ -230,14 +230,16 @@ function registerVisibilityHandler(): void {
 
   visibilityHandler = () => {
     if (document.visibilityState === 'visible' && isRunning) {
-      // Resume AudioContext ngay lập tức khi tab visible
-      if (silentAudioCtx && silentAudioCtx.state === 'suspended') {
-        silentAudioCtx.resume().catch(() => {});
-      }
-      // Resume native audio anchor nếu bị tạm ngưng
-      const anchor = document.getElementById('wl-native-audio-anchor') as HTMLAudioElement;
-      if (anchor && anchor.paused) {
-        anchor.play().catch(() => {});
+      if (currentEngineMode !== 'stream') {
+        // Resume AudioContext ngay lập tức khi tab visible
+        if (silentAudioCtx && silentAudioCtx.state === 'suspended') {
+          silentAudioCtx.resume().catch(() => {});
+        }
+        // Resume native audio anchor nếu bị tạm ngưng
+        const anchor = document.getElementById('wl-native-audio-anchor') as HTMLAudioElement;
+        if (anchor && anchor.paused) {
+          anchor.play().catch(() => {});
+        }
       }
       // Reacquire WakeLock only when explicitly enabled by user/options
       if (shouldKeepScreenAwake(currentKeepScreenAwake) && !wakeLockSentinel) {
@@ -312,13 +314,28 @@ export function startBackgroundAudio(options?: BackgroundAudioOptions): void {
     void releaseWakeLock();
   }
 
-  // Stream mode plays directly on native <audio>; skip battery-heavy silent audio loops & SW ping.
+  // Stream mode plays directly on native <audio>: skip battery-heavy silent audio loops/anchors,
+  // but keep lightweight SW heartbeat & visibility handler alive so mobile OS preserves audio context.
   if (currentEngineMode === 'stream') {
-    teardownSilentKeepaliveNodes();
-    if (visibilityHandler && typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', visibilityHandler);
-      visibilityHandler = null;
+    if (silentSource) {
+      try {
+        silentSource.stop();
+        silentSource.disconnect();
+      } catch {}
+      silentSource = null;
     }
+    if (gainNode) {
+      try {
+        gainNode.disconnect();
+      } catch {}
+      gainNode = null;
+    }
+    if (silentAudioCtx && silentAudioCtx.state !== 'closed') {
+      silentAudioCtx.suspend().catch(() => {});
+    }
+    stopNativeAudioAnchor();
+    registerVisibilityHandler();
+    startSwHeartbeat();
     return;
   }
 
