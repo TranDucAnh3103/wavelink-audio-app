@@ -170,14 +170,44 @@ export function extractYouTubeId(url: string): string | null {
  */
 export function getOptimizedThumbnailUrl(
   url?: string | null,
-  variant: 'card' | 'hero' = 'card'
+  variant: 'card' | 'hero' | 'avatar' = 'card'
 ): string {
   if (!url) return '/wavelink-icon.png';
-  if (variant === 'card') {
-    return url.replace(
-      /^(https:\/\/(?:img\.youtube\.com|i\.ytimg\.com)\/vi\/[a-zA-Z0-9_-]{11}\/)(?:maxresdefault|sddefault)\.jpg$/i,
-      '$1hqdefault.jpg'
-    );
+
+  const ytMatch = url.match(
+    /^https:\/\/(?:img\.youtube\.com|i\.ytimg\.com)\/vi(?:_webp)?\/([a-zA-Z0-9_-]{11})\/[^/?#]+(?:\?.*)?$/i
+  );
+
+  if (ytMatch) {
+    const videoId = ytMatch[1];
+    if (variant === 'avatar') {
+      return `https://i.ytimg.com/vi_webp/${videoId}/default.webp`;
+    }
+    if (variant === 'card') {
+      return `https://i.ytimg.com/vi_webp/${videoId}/mqdefault.webp`;
+    }
+    if (variant === 'hero') {
+      return `https://i.ytimg.com/vi_webp/${videoId}/hqdefault.webp`;
+    }
   }
+
   return url;
+}
+
+export function handleImageFallback(
+  event: { currentTarget: HTMLImageElement },
+  originalUrl?: string | null
+): void {
+  const img = event.currentTarget;
+  if (!img.dataset.fallbackStage) {
+    if (originalUrl && img.src !== originalUrl && !originalUrl.startsWith('data:')) {
+      img.dataset.fallbackStage = 'original';
+      img.src = originalUrl;
+      return;
+    }
+  }
+  if (img.dataset.fallbackStage !== 'icon') {
+    img.dataset.fallbackStage = 'icon';
+    img.src = '/wavelink-icon.png';
+  }
 }

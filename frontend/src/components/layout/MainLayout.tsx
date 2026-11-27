@@ -1,12 +1,17 @@
-import React, { Suspense, useEffect } from 'react';
+import React, { Suspense, lazy, useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Header } from './Header';
 import { Footer } from './Footer';
 import { SidebarNav } from './SidebarNav';
-import { MiniPlayer } from './MiniPlayer';
 import { AudioEngineHost } from './AudioEngineHost';
-import { ScreenLockOverlay } from './ScreenLockOverlay';
 import { LoadingState } from '@/components/common/LoadingState';
+
+const MiniPlayer = lazy(() =>
+  import('./MiniPlayer').then((m) => ({ default: m.MiniPlayer }))
+);
+const ScreenLockOverlay = lazy(() =>
+  import('./ScreenLockOverlay').then((m) => ({ default: m.ScreenLockOverlay }))
+);
 import { ToastContainer } from '@/components/ui/Toast';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -58,11 +63,17 @@ export const MainLayout: React.FC = () => {
         </Suspense>
       </main>
 
-      {!isAuthPage && <MiniPlayer />}
+      {!isAuthPage && hasCurrentAudio && (
+        <Suspense fallback={null}>
+          <MiniPlayer />
+        </Suspense>
+      )}
       {!isAuthPage && <Footer />}
 
       {isScreenLocked && hasCurrentAudio && (
-        <ScreenLockOverlay onClose={() => setScreenLocked(false)} />
+        <Suspense fallback={null}>
+          <ScreenLockOverlay onClose={() => setScreenLocked(false)} />
+        </Suspense>
       )}
 
       <AudioEngineHost />

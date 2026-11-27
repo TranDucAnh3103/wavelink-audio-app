@@ -1,9 +1,9 @@
 # ==============================================================================
 # WaveLink Audio App - Production LiteSpeed & Apache Configuration
 # - Hỗ trợ Single Page Application (SPA) Routing (React Router v6)
-# - Tránh xung đột điều hướng /student-login và các deep link
-# - Tối ưu bộ đệm Browser Caching cho Assets băm tên
-# - Tăng tốc nén Gzip / Brotli & Bảo mật HTTP Headers
+# - Phục vụ trực tiếp SEO & Agentic Discovery files (robots.txt, sitemap.xml, llms.txt, ai-catalog.json)
+# - Tối ưu bfcache & Browser Caching cho Assets băm tên
+# - Tăng tốc nén Gzip / Brotli & Bảo mật HTTP Headers (CSP linh hoạt Cloudflare Tunnel)
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -21,6 +21,9 @@ Options -Indexes -MultiViews
 
   # Bỏ qua index.html để tránh lặp
   RewriteRule ^index\.html$ - [L]
+
+  # Phục vụ trực tiếp các file SEO / Agentic Discovery
+  RewriteRule ^(robots\.txt|sitemap\.xml|llms\.txt|ai-catalog\.json|\.well-known/.*)$ - [L]
 
   # Bỏ qua nếu người dùng truy cập trực tiếp vào file hoặc thư mục vật lý có thật
   RewriteCond %{REQUEST_FILENAME} -f [OR]
@@ -40,12 +43,17 @@ Options -Indexes -MultiViews
   # Mặc định cache 1 giờ
   ExpiresDefault "access plus 1 hour"
 
-  # HTML & Service Worker: KHÔNG CACHE để luôn nhận bản cập nhật mới nhất
+  # HTML: revalidate mỗi lần điều hướng (vẫn giữ bfcache)
   ExpiresByType text/html "access plus 0 seconds"
-  ExpiresByType application/javascript "access plus 0 seconds"
+
+  # SEO / Agentic Discovery files
+  ExpiresByType text/xml "access plus 1 hour"
+  ExpiresByType application/xml "access plus 1 hour"
+  ExpiresByType application/json "access plus 1 hour"
 
   # Static Assets có mã băm (Vite hash: /assets/*): Cache 1 năm bất biến
   ExpiresByType text/css "access plus 1 year"
+  ExpiresByType application/javascript "access plus 1 year"
   ExpiresByType application/x-javascript "access plus 1 year"
   ExpiresByType font/ttf "access plus 1 year"
   ExpiresByType font/woff "access plus 1 year"
@@ -58,37 +66,46 @@ Options -Indexes -MultiViews
 </IfModule>
 
 # ------------------------------------------------------------------------------
-# 4. KIỂM SOÁT HEADER CACHE-CONTROL
+# 4. KIỂM SOÁT HEADER CACHE-CONTROL & BẢO MẬT
 # ------------------------------------------------------------------------------
 <IfModule mod_headers.c>
-  # Đảm bảo index.html và sw.js luôn được revalidate
+  # HTML: bỏ no-store để bật Back/Forward Cache (bfcache) trên trình duyệt
   <FilesMatch "\.(html|htm)$">
-    Header set Cache-Control "no-cache, no-store, must-revalidate"
-    Header set Pragma "no-cache"
-    Header set Expires 0
+    Header set Cache-Control "no-cache, must-revalidate"
   </FilesMatch>
 
+  # Service Worker & Runtime Env Config: luôn lấy bản mới nhất
   <FilesMatch "^(sw\.js|env-config\.js)$">
     Header set Cache-Control "no-cache, no-store, must-revalidate"
-    Header set Pragma "no-cache"
-    Header set Expires 0
   </FilesMatch>
 
-  # Assets trong thư mục assets được cache lâu dài
-  <FilesMatch "\.(js|css|woff2|woff|ttf|png|jpg|jpeg|webp|svg)$">
+  # SEO & Agentic files: cache ngắn hạn
+  <FilesMatch "^(robots\.txt|sitemap\.xml|llms\.txt|ai-catalog\.json)$">
+    Header set Cache-Control "public, max-age=3600"
+  </FilesMatch>
+
+  # Assets tĩnh (hashed bundle, fonts, images) được cache lâu dài trừ sw.js & env-config.js
+  <FilesMatch "\.(css|woff2|woff|ttf|png|jpg|jpeg|webp|svg)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "^(?!sw\.js$)(?!env-config\.js$).+\.js$">
     Header set Cache-Control "public, max-age=31536000, immutable"
   </FilesMatch>
 
-  # Các header bảo mật cơ bản
+  # HTTP Security Headers (Lighthouse Best Practices)
   Header always set X-Content-Type-Options "nosniff"
-  Header always set X-XSS-Protection "1; mode=block"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Cross-Origin-Opener-Policy "same-origin-allow-popups"
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com https://www.youtube.com https://s.ytimg.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' blob: https://*.trycloudflare.com https://wavelink-audio-app-backend-latest.onrender.com https://*.googlevideo.com; connect-src 'self' https://*.trycloudflare.com wss://*.trycloudflare.com https://wavelink-audio-app-backend-latest.onrender.com wss://wavelink-audio-app-backend-latest.onrender.com https://accounts.google.com https://www.googleapis.com https://noembed.com https://www.youtube.com https://cloudflareinsights.com https://static.cloudflareinsights.com; frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com https://accounts.google.com; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com; frame-ancestors 'self';"
 </IfModule>
 
 # ------------------------------------------------------------------------------
 # 5. BẬT NÉN GZIP / BROTLI NẾU MÁY CHỦ HỖ TRỢ
 # ------------------------------------------------------------------------------
 <IfModule mod_deflate.c>
-  AddOutputFilterByType DEFLATE text/plain text/html text/xml text/css
+  AddOutputFilterByType DEFLATE text/plain text/html text/xml text/css text/markdown
   AddOutputFilterByType DEFLATE application/xml application/xhtml+xml application/rss+xml
   AddOutputFilterByType DEFLATE application/javascript application/x-javascript
   AddOutputFilterByType DEFLATE application/json

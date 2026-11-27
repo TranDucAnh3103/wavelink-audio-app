@@ -9,7 +9,7 @@ import {
   getRelatedAudios,
   RelatedFilterMode,
 } from '@/lib/relatedAudios';
-import { getOptimizedThumbnailUrl } from '@/lib/utils';
+import { getOptimizedThumbnailUrl, handleImageFallback } from '@/lib/utils';
 import { AudioItem } from '@/types';
 
 export const RELATED_BATCH_SIZE = 10;
@@ -271,6 +271,7 @@ export const RelatedAudiosSection: React.FC<RelatedAudiosSectionProps> = ({ curr
                   height={200}
                   loading="lazy"
                   decoding="async"
+                  onError={(e) => handleImageFallback(e, item.thumbnailUrl)}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent" />

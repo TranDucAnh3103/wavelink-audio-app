@@ -2,10 +2,14 @@ import React, { lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { HomePage } from '@/pages/HomePage';
-import { LibraryPage } from '@/pages/LibraryPage';
-import { PlayerPage } from '@/pages/PlayerPage';
 import { AdminGuard } from '@/components/admin/AdminGuard';
 
+const LibraryPage = lazy(() =>
+  import('@/pages/LibraryPage').then((m) => ({ default: m.LibraryPage }))
+);
+const PlayerPage = lazy(() =>
+  import('@/pages/PlayerPage').then((m) => ({ default: m.PlayerPage }))
+);
 const UploadPage = lazy(() => import('@/pages/UploadPage').then((m) => ({ default: m.UploadPage })));
 const CommunityPage = lazy(() =>
   import('@/pages/CommunityPage').then((m) => ({ default: m.CommunityPage }))

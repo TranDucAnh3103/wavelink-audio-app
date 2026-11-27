@@ -1,0 +1,17 @@
+User-agent: *
+Allow: /
+Allow: /home
+Allow: /library
+Allow: /player/
+Allow: /community
+Allow: /membership
+Allow: /profile/
+Disallow: /api/
+Disallow: /admin/
+Disallow: /settings
+Disallow: /notifications
+Disallow: /upload
+Disallow: /login
+Disallow: /register
+
+Sitemap: https://wavelink-audio-app.zhost.education/sitemap.xml

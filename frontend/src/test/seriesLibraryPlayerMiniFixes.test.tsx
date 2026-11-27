@@ -211,7 +211,7 @@ describe('Library Return-Position Restoration & Player Resilience & MiniPlayer P
     );
 
     expect(screen.getByText('Đang tải dữ liệu...')).toBeInTheDocument();
-    expect(screen.getByTestId('mini-player-card')).toBeInTheDocument();
+    expect(await screen.findByTestId('mini-player-card')).toBeInTheDocument();
     expect(screen.getByText('MiniPlayer Persistent Audio')).toBeInTheDocument();
   });
 });

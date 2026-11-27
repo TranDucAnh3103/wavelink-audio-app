@@ -2,9 +2,51 @@
 <html lang="vi" class="h-full">
 <head>
   <meta charset="utf-8">
-  <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport">
-  <link rel="icon" type="image/png" href="/public/wavelink-icon.png">
-  <title>WaveLink</title>
+  <meta content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" name="viewport">
+  <link rel="icon" type="image/png" href="/icon-192.png">
+  <title>WaveLink — Nghe Audio, Sách Nói &amp; Podcast YouTube Tắt Màn Hình</title>
+  <meta name="description" content="WaveLink là nền tảng nghe audio, sách nói, truyện audio và podcast YouTube phát nền tắt màn hình miễn phí, hỗ trợ tạo danh sách tập và cộng đồng chia sẻ.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://wavelink-audio-app.zhost.education/">
+
+  <!-- Open Graph & Twitter Card -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="WaveLink Audio">
+  <meta property="og:locale" content="vi_VN">
+  <meta property="og:title" content="WaveLink — Nghe Audio, Sách Nói &amp; Podcast YouTube Tắt Màn Hình">
+  <meta property="og:description" content="Nghe sách nói, truyện audio và podcast YouTube chạy nền tắt màn hình mượt mà trên mọi thiết bị.">
+  <meta property="og:url" content="https://wavelink-audio-app.zhost.education/">
+  <meta property="og:image" content="https://wavelink-audio-app.zhost.education/wavelink-icon.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="WaveLink — Nghe Audio, Sách Nói &amp; Podcast YouTube Tắt Màn Hình">
+  <meta name="twitter:description" content="Nghe sách nói, truyện audio và podcast YouTube chạy nền tắt màn hình mượt mà.">
+  <meta name="twitter:image" content="https://wavelink-audio-app.zhost.education/wavelink-icon.png">
+
+  <!-- Structured Data (JSON-LD) -->
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "name": "WaveLink Audio",
+          "url": "https://wavelink-audio-app.zhost.education/",
+          "inLanguage": "vi-VN",
+          "potentialAction": {
+            "@type": "SearchAction",
+            "target": "https://wavelink-audio-app.zhost.education/library?q={search_term_string}",
+            "query-input": "required name=search_term_string"
+          }
+        },
+        {
+          "@type": "Organization",
+          "name": "WaveLink Audio",
+          "url": "https://wavelink-audio-app.zhost.education/",
+          "logo": "https://wavelink-audio-app.zhost.education/wavelink-icon.png"
+        }
+      ]
+    }
+  </script>
 
   <!-- PWA Manifest (Android: nhận diện đây là audio app, ưu tiên process khi background) -->
   <link rel="manifest" href="/manifest.json">
@@ -17,7 +59,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="WaveLink">
-  <link rel="apple-touch-icon" href="/wavelink-icon.png">
+  <link rel="apple-touch-icon" href="/icon-192.png">
 
   <!-- Anti-FOUC theme initializer -->
   <script>
@@ -34,20 +76,32 @@
     })();
   </script>
 
-  <!-- Google Identity Services SDK -->
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-
-  <!-- Fonts: Baloo 2 (Comic Display), Nunito (Comic UI Sans) & JetBrains Mono (100% Vietnamese) -->
+  <!-- Preconnect critical third-party origins -->
+  <link rel="preconnect" href="https://i.ytimg.com" crossorigin>
+  <link rel="preconnect" href="https://img.youtube.com" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=JetBrains+Mono:wght@500;700&family=Nunito:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,600&display=swap" rel="stylesheet">
+  <link rel="dns-prefetch" href="https://perth-obj-blackberry-favor.trycloudflare.com">
 
-  <!-- WaveLink Runtime Environment Config (Web Hosting Production) -->
-  <script src="/env-config.js?v=2"></script>
+  <!-- Fonts: Non-render-blocking async load with trimmed weights -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=JetBrains+Mono:wght@500;700&family=Nunito:wght@400;600;700;800&display=swap" media="print" onload="this.media='all'">
+  <noscript>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=JetBrains+Mono:wght@500;700&family=Nunito:wght@400;600;700;800&display=swap">
+  </noscript>
+
+  <!-- WaveLink Runtime Environment Config (deferred so it never blocks HTML parse, executes before module scripts) -->
+  <script defer src="/env-config.js?v=2"></script>
 </head>
 
 <body class="flex flex-col min-h-screen">
-  <div id="root"></div>
+  <div id="root">
+    <div style="min-height:100vh;background:#F6F5F0;color:#111113;font-family:system-ui,-apple-system,sans-serif;padding:76px 16px 24px;box-sizing:border-box;">
+      <div style="max-width:1280px;margin:0 auto;">
+        <h1 style="font-size:1.125rem;font-weight:900;margin:0 0 8px;">WaveLink — Nghe Audio, Sách Nói &amp; Podcast YouTube Tắt Màn Hình</h1>
+        <p style="font-size:0.875rem;color:#52525B;margin:0;">Đang tải kho truyện audio và danh sách phát...</p>
+      </div>
+    </div>
+  </div>
   <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

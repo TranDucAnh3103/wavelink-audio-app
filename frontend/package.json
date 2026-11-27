@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "dev:vite": "vite",
-    "build:vite": "tsc && vite build",
+    "build:vite": "node scripts/generate-sitemap.mjs && tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

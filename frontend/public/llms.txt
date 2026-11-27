@@ -1,0 +1,16 @@
+# WaveLink Audio
+
+> WaveLink là nền tảng nghe audio, sách nói, truyện audio và podcast từ YouTube phát nền ngay cả khi tắt màn hình, hỗ trợ chia tập thông minh, lưu tiến trình nghe và đồng bộ trên nhiều thiết bị.
+
+## Core Pages
+
+- [Trang chủ WaveLink](https://wavelink-audio-app.zhost.education/home): Khám phá Top audio phổ biến nhất, thể loại, bộ truyện nhiều phần, từ khóa nổi bật và lịch sử vừa cày.
+- [Thư viện Audio](https://wavelink-audio-app.zhost.education/library): Tìm kiếm và lọc toàn bộ sách nói, truyện audio và podcast theo thể loại, tác giả hoặc độ dài.
+- [Cộng đồng chia sẻ](https://wavelink-audio-app.zhost.education/community): Thảo luận, bình luận và chia sẻ đề xuất audio cùng cộng đồng người nghe WaveLink.
+- [Gói thành viên VIP](https://wavelink-audio-app.zhost.education/membership): Thông tin quyền lợi thành viên và gói nâng cấp trải nghiệm nghe audio.
+
+## Discovery & Machine-Readable Resources
+
+- [Sitemap XML](https://wavelink-audio-app.zhost.education/sitemap.xml): Danh sách URL công khai phục vụ lập chỉ mục tìm kiếm.
+- [Robots Policy](https://wavelink-audio-app.zhost.education/robots.txt): Quy tắc thu thập dữ liệu cho công cụ tìm kiếm và trình duyệt AI.
+- [AI Catalog (Well-Known)](https://wavelink-audio-app.zhost.education/.well-known/ai-catalog.json): Manifest chuẩn ARD v0.91 mô tả các điểm truy cập chính của WaveLink Audio.
