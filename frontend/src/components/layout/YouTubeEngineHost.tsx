@@ -82,6 +82,7 @@ export const YouTubeEngineHost: React.FC = () => {
             }
           },
           onStateChange: (event: { data: number }) => {
+            if (usePlayerStore.getState().activeEngine !== 'youtube') return;
             const state = event.data;
             const stateNames: Record<number, string> = {
               [-1]: 'UNSTARTED',
@@ -94,7 +95,15 @@ export const YouTubeEngineHost: React.FC = () => {
             const stateName = stateNames[state] || 'UNKNOWN';
 
             if (state === window.YT?.PlayerState?.PLAYING) {
-              usePlayerStore.setState({ isPlaying: true, isSeeking: false });
+              usePlayerStore.setState({
+                isPlaying: true,
+                isBuffering: false,
+                isSeeking: false,
+                isRetrying: false,
+                retryAttempt: 0,
+                playbackError: null,
+                bufferingStartedAt: null,
+              });
               if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
                 navigator.mediaSession.playbackState = 'playing';
               }
@@ -123,7 +132,11 @@ export const YouTubeEngineHost: React.FC = () => {
                   const delay = Math.pow(2, backgroundResumeAttempts.current - 1) * 500;
                   if (backgroundResumeTimer.current) clearTimeout(backgroundResumeTimer.current);
                   backgroundResumeTimer.current = setTimeout(() => {
-                    if (playerRef.current && !usePlayerStore.getState().isExplicitlyPaused) {
+                    if (
+                      playerRef.current &&
+                      usePlayerStore.getState().activeEngine === 'youtube' &&
+                      !usePlayerStore.getState().isExplicitlyPaused
+                    ) {
                       try {
                         playerRef.current.playVideo();
                       } catch {}
@@ -136,17 +149,30 @@ export const YouTubeEngineHost: React.FC = () => {
                   backgroundResumeAttempts.current = 0;
                 }, 10000);
               } else {
-                usePlayerStore.setState({ isPlaying: false });
+                usePlayerStore.setState({ isPlaying: false, isBuffering: false });
               }
-            } else if (state === 3) { // BUFFERING
+            } else if (state === 3 || state === -1) { // BUFFERING / UNSTARTED
+              const currentStore = usePlayerStore.getState();
+              if (currentStore.isPlaying && !currentStore.isExplicitlyPaused) {
+                usePlayerStore.setState({
+                  isBuffering: true,
+                  bufferingStartedAt: currentStore.bufferingStartedAt ?? Date.now(),
+                });
+              }
               // YouTube thường reset playbackRate về 1.0 trong quá trình buffer / recover
-              const bufferRate = usePlayerStore.getState().playbackRate || 1.0;
-              if (bufferRate !== 1.0) {
-                setTimeout(() => {
-                  if (playerRef.current && usePlayerStore.getState().playbackRate === bufferRate) {
-                    rateCoordinator.enforceRateWithRetries(bufferRate, 'buffering_rate_enforce');
-                  }
-                }, 600);
+              if (state === 3) {
+                const bufferRate = currentStore.playbackRate || 1.0;
+                if (bufferRate !== 1.0) {
+                  setTimeout(() => {
+                    if (
+                      playerRef.current &&
+                      usePlayerStore.getState().activeEngine === 'youtube' &&
+                      usePlayerStore.getState().playbackRate === bufferRate
+                    ) {
+                      rateCoordinator.enforceRateWithRetries(bufferRate, 'buffering_rate_enforce');
+                    }
+                  }, 600);
+                }
               }
             } else if (state === window.YT?.PlayerState?.ENDED) {
               const currentStore = usePlayerStore.getState();
@@ -160,7 +186,7 @@ export const YouTubeEngineHost: React.FC = () => {
               }
               // Chỉ kích hoạt khi đang phát tự nhiên và không do người dùng chủ động tắt, dừng hoặc tua/chuyển bài
               if (currentStore.isPlaying && !currentStore.isExplicitlyPaused && currentStore.currentAudio) {
-                usePlayerStore.setState({ isPlaying: false });
+                usePlayerStore.setState({ isPlaying: false, isBuffering: false });
                 handleEpisodeComplete();
               }
             }
@@ -168,11 +194,13 @@ export const YouTubeEngineHost: React.FC = () => {
             rateCoordinator.onStateChange(state, stateName);
           },
           onPlaybackRateChange: (event: { data: number }) => {
+            if (usePlayerStore.getState().activeEngine !== 'youtube') return;
             if (event && typeof event.data === 'number' && event.data > 0) {
               rateCoordinator.onRateConfirmedByYouTube(event.data);
             }
           },
           onError: (event: { data: number }) => {
+            if (usePlayerStore.getState().activeEngine !== 'youtube') return;
             let msg = 'Lỗi khi phát âm thanh YouTube';
             if (event.data === 101 || event.data === 150) {
               msg = 'Video này không cho phép nhúng phát bên ngoài YouTube.';
@@ -180,7 +208,7 @@ export const YouTubeEngineHost: React.FC = () => {
               msg = 'Không tìm thấy video hoặc video đã bị gỡ bỏ.';
             }
             toast.error(msg);
-            usePlayerStore.setState({ isPlaying: false });
+            usePlayerStore.setState({ isPlaying: false, isBuffering: false, playbackError: msg });
           },
         },
       });
@@ -190,18 +218,25 @@ export const YouTubeEngineHost: React.FC = () => {
       initYT();
     };
 
+    let readyInterval: ReturnType<typeof setInterval> | null = null;
     if (window.YT && window.YT.Player) {
       initYT();
     } else {
       // Polling fallback bảo đảm khởi tạo thành công trên Safari / Edge / Firefox khi script nạp trễ
       let attempts = 0;
-      const readyInterval = setInterval(() => {
+      readyInterval = setInterval(() => {
+        if (typeof window === 'undefined') {
+          if (readyInterval) clearInterval(readyInterval);
+          return;
+        }
         attempts++;
         if (window.YT && window.YT.Player) {
-          clearInterval(readyInterval);
+          if (readyInterval) clearInterval(readyInterval);
+          readyInterval = null;
           initYT();
         } else if (attempts > 50) {
-          clearInterval(readyInterval);
+          if (readyInterval) clearInterval(readyInterval);
+          readyInterval = null;
         }
       }, 100);
     }
@@ -209,14 +244,23 @@ export const YouTubeEngineHost: React.FC = () => {
     // 3. Listener duy trì phát audio, kiểm tra hẹn giờ ngủ và cưỡng chế tốc độ khi ẩn tab / chuyển app / quay lại app
     const handleVisibilityChange = () => {
       const store = usePlayerStore.getState();
-      const desiredRate = store.playbackRate || 1.0;
+      if (store.activeEngine !== 'youtube') return;
 
       // Kiểm tra ngay sleep timer khi app hiển thị lại hoặc chuyển trạng thái
-      if (store.sleepTimerEndTimestamp && Date.now() >= store.sleepTimerEndTimestamp) {
+      if (
+        store.sleepTimerMode !== 'end_of_episode' &&
+        store.sleepTimerEndTimestamp &&
+        Date.now() >= store.sleepTimerEndTimestamp
+      ) {
         if (typeof localStorage !== 'undefined') {
           localStorage.removeItem('wavelink_sleep_timer_end');
+          localStorage.removeItem('wavelink_sleep_timer_mode');
         }
-        usePlayerStore.setState({ sleepTimerMinutes: null, sleepTimerEndTimestamp: null });
+        usePlayerStore.setState({
+          sleepTimerMode: null,
+          sleepTimerMinutes: null,
+          sleepTimerEndTimestamp: null,
+        });
         store.pause();
         stopBackgroundAudio();
         toast.info('Đã tự động tắt audio theo hẹn giờ ngủ.');
@@ -225,7 +269,7 @@ export const YouTubeEngineHost: React.FC = () => {
 
       if (document.hidden) {
         // App / Tab chuyển sang chạy nền
-        if (store.isPlaying && !store.isExplicitlyPaused) {
+        if (store.isPlaying && !store.isExplicitlyPaused && usePlayerStore.getState().activeEngine === 'youtube') {
           startBackgroundAudio();
           if (playerRef.current) {
             try {
@@ -245,6 +289,7 @@ export const YouTubeEngineHost: React.FC = () => {
         }
         // Enforce rate sau delay để YouTube player kịp recover từ background
         setTimeout(() => {
+          if (usePlayerStore.getState().activeEngine !== 'youtube') return;
           const currentYtRate = playerRef.current?.getPlaybackRate?.();
           const latestDesiredRate = usePlayerStore.getState().playbackRate || 1.0;
           if (Math.abs((currentYtRate || 1.0) - latestDesiredRate) > 0.05 || latestDesiredRate !== 1.0) {
@@ -256,13 +301,22 @@ export const YouTubeEngineHost: React.FC = () => {
 
     const handleWindowFocus = () => {
       const store = usePlayerStore.getState();
-      const desiredRate = store.playbackRate || 1.0;
+      if (store.activeEngine !== 'youtube') return;
 
-      if (store.sleepTimerEndTimestamp && Date.now() >= store.sleepTimerEndTimestamp) {
+      if (
+        store.sleepTimerMode !== 'end_of_episode' &&
+        store.sleepTimerEndTimestamp &&
+        Date.now() >= store.sleepTimerEndTimestamp
+      ) {
         if (typeof localStorage !== 'undefined') {
           localStorage.removeItem('wavelink_sleep_timer_end');
+          localStorage.removeItem('wavelink_sleep_timer_mode');
         }
-        usePlayerStore.setState({ sleepTimerMinutes: null, sleepTimerEndTimestamp: null });
+        usePlayerStore.setState({
+          sleepTimerMode: null,
+          sleepTimerMinutes: null,
+          sleepTimerEndTimestamp: null,
+        });
         store.pause();
         stopBackgroundAudio();
         toast.info('Đã tự động tắt audio theo hẹn giờ ngủ.');
@@ -278,6 +332,7 @@ export const YouTubeEngineHost: React.FC = () => {
         } catch {}
       }
       setTimeout(() => {
+        if (usePlayerStore.getState().activeEngine !== 'youtube') return;
         const currentYtRate = playerRef.current?.getPlaybackRate?.();
         const latestDesiredRate = usePlayerStore.getState().playbackRate || 1.0;
         if (Math.abs((currentYtRate || 1.0) - latestDesiredRate) > 0.05 || latestDesiredRate !== 1.0) {
@@ -291,6 +346,10 @@ export const YouTubeEngineHost: React.FC = () => {
     window.addEventListener('pageshow', handleWindowFocus);
 
     return () => {
+      if (readyInterval) {
+        clearInterval(readyInterval);
+        readyInterval = null;
+      }
       if (backgroundResumeTimer.current) {
         clearTimeout(backgroundResumeTimer.current);
         backgroundResumeTimer.current = null;

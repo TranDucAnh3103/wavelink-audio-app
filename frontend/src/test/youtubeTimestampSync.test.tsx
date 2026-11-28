@@ -336,7 +336,9 @@ describe('Bidirectional YouTube <-> App Sync UI', () => {
 
     await waitFor(() => {
       expect(getAudiosSpy).toHaveBeenCalledWith({ search: 'ytSync18901' }, true);
-      expect(screen.getByTestId('route-location')).toHaveTextContent('/player/189?t=33825');
+      expect(screen.getByTestId('route-location')).toHaveTextContent(
+        '/player/kich-hoat-he-thong-diem-danh-10-lan-mot-ngay-189?t=33825'
+      );
     });
 
     // When video is not yet imported, redirect to /upload?url=...

@@ -61,7 +61,7 @@
   <meta name="apple-mobile-web-app-title" content="WaveLink">
   <link rel="apple-touch-icon" href="/icon-192.png">
 
-  <!-- Anti-FOUC theme initializer -->
+  <!-- Anti-FOUC theme & Mobile WebView zoom-lock initializer -->
   <script>
     (function () {
       try {
@@ -71,6 +71,12 @@
           document.documentElement.classList.add('dark', 'dark-comic');
           var m = document.querySelector('meta[name="theme-color"]');
           if (m) m.setAttribute('content', '#141418');
+        }
+        var isWv = Boolean(window.ReactNativeWebView) || /\bwv\b|; wv\)|FBAN|FBAV|Zalo|Line\/|Instagram/i.test(navigator.userAgent || '');
+        if (isWv) {
+          document.documentElement.classList.add('wavelink-mobile-webview');
+          var vp = document.querySelector('meta[name="viewport"]');
+          if (vp) vp.setAttribute('content', 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
         }
       } catch (e) {}
     })();
@@ -95,12 +101,59 @@
 
 <body class="flex flex-col min-h-screen">
   <div id="root">
-    <div style="min-height:100vh;background:#F6F5F0;color:#111113;font-family:system-ui,-apple-system,sans-serif;padding:76px 16px 24px;box-sizing:border-box;">
-      <div style="max-width:1280px;margin:0 auto;">
-        <h1 style="font-size:1.125rem;font-weight:900;margin:0 0 8px;">WaveLink — Nghe Audio, Sách Nói &amp; Podcast YouTube Tắt Màn Hình</h1>
-        <p style="font-size:0.875rem;color:#52525B;margin:0;">Đang tải kho truyện audio và danh sách phát...</p>
+    <style>
+      .wl-boot-shell{min-height:100vh;background:#F6F5F0;color:#111113;padding:72px 16px 32px;box-sizing:border-box}
+      .wl-boot-wrap{max-width:72rem;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+      .wl-boot-card{background:#FFFFFF;border:2px solid #111113;border-radius:14px;box-shadow:3px 3px 0 #111113}
+      .wl-boot-sk{background:linear-gradient(90deg,#E5E4DF 25%,#EEEDE8 50%,#E5E4DF 75%);background-size:200% 100%;animation:wl-shimmer 1.2s infinite linear;border-radius:8px}
+      .wl-boot-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+      @media(min-width:640px){.wl-boot-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+      @media(min-width:768px){.wl-boot-shell{padding-left:92px}.wl-boot-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+      @media(min-width:1024px){.wl-boot-shell{padding-left:256px}.wl-boot-grid{grid-template-columns:repeat(5,minmax(0,1fr))}}
+      html.dark .wl-boot-shell{background:#141418;color:#F4F4F5}
+      html.dark .wl-boot-card{background:#1E1F26;border-color:#2D2E38;box-shadow:3px 3px 0 #09090B}
+      html.dark .wl-boot-sk{background:linear-gradient(90deg,#262832 25%,#323544 50%,#262832 75%);background-size:200% 100%}
+      @keyframes wl-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+    </style>
+    <div class="wl-boot-shell" aria-busy="true" aria-label="Đang tải WaveLink Audio">
+      <div class="wl-boot-wrap">
+        <div class="wl-boot-card" style="padding:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+          <div style="display:flex;flex-direction:column;gap:8px;flex:1;">
+            <div class="wl-boot-sk" style="height:12px;width:130px;"></div>
+            <div class="wl-boot-sk" style="height:16px;width:230px;max-width:100%;"></div>
+          </div>
+          <div class="wl-boot-sk" style="height:26px;width:64px;"></div>
+        </div>
+        <div class="wl-boot-card" style="padding:16px;display:flex;gap:14px;align-items:center;">
+          <div class="wl-boot-sk" style="width:96px;height:112px;flex-shrink:0;"></div>
+          <div style="display:flex;flex-direction:column;gap:10px;flex:1;">
+            <div class="wl-boot-sk" style="height:14px;width:90px;"></div>
+            <div class="wl-boot-sk" style="height:18px;width:85%;"></div>
+            <div class="wl-boot-sk" style="height:12px;width:55%;"></div>
+            <div class="wl-boot-sk" style="height:10px;width:100%;margin-top:6px;"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;overflow:hidden;">
+          <div class="wl-boot-sk" style="height:32px;width:84px;flex-shrink:0;"></div>
+          <div class="wl-boot-sk" style="height:32px;width:92px;flex-shrink:0;"></div>
+          <div class="wl-boot-sk" style="height:32px;width:88px;flex-shrink:0;"></div>
+          <div class="wl-boot-sk" style="height:32px;width:96px;flex-shrink:0;"></div>
+        </div>
+        <div class="wl-boot-grid">
+          <div style="display:flex;flex-direction:column;gap:8px;"><div class="wl-boot-card wl-boot-sk" style="aspect-ratio:3/4;"></div><div class="wl-boot-sk" style="height:14px;width:90%;"></div></div>
+          <div style="display:flex;flex-direction:column;gap:8px;"><div class="wl-boot-card wl-boot-sk" style="aspect-ratio:3/4;"></div><div class="wl-boot-sk" style="height:14px;width:80%;"></div></div>
+          <div style="display:flex;flex-direction:column;gap:8px;"><div class="wl-boot-card wl-boot-sk" style="aspect-ratio:3/4;"></div><div class="wl-boot-sk" style="height:14px;width:85%;"></div></div>
+          <div style="display:flex;flex-direction:column;gap:8px;"><div class="wl-boot-card wl-boot-sk" style="aspect-ratio:3/4;"></div><div class="wl-boot-sk" style="height:14px;width:75%;"></div></div>
+          <div style="display:flex;flex-direction:column;gap:8px;"><div class="wl-boot-card wl-boot-sk" style="aspect-ratio:3/4;"></div><div class="wl-boot-sk" style="height:14px;width:82%;"></div></div>
+        </div>
       </div>
     </div>
+    <noscript>
+      <div style="padding:24px;max-width:1280px;margin:0 auto;">
+        <h1>WaveLink — Nghe Audio, Sách Nói &amp; Podcast YouTube Tắt Màn Hình</h1>
+        <p>Vui lòng bật JavaScript để nghe kho truyện audio và danh sách phát trên WaveLink.</p>
+      </div>
+    </noscript>
   </div>
   <script type="module" src="/src/main.tsx"></script>
 </body>

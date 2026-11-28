@@ -2,9 +2,9 @@ package audio
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -48,15 +48,7 @@ func (h *Handler) notifyTaxonomyChanged() {
 }
 
 func (h *Handler) loadSiteConfig() domain.SiteConfig {
-	cfg := logic.DefaultSiteConfig()
-	var s domain.SystemSetting
-	if err := h.db.Session(&gorm.Session{}).Where("`key` = ?", "site_config").Take(&s).Error; err == nil && s.Value != "" {
-		_ = json.Unmarshal([]byte(s.Value), &cfg)
-	}
-	if cfg.FreeImportDailyLimit <= 0 {
-		cfg.FreeImportDailyLimit = logic.MaxFreeImportsPerDay
-	}
-	return cfg
+	return middleware.GetSiteConfig(h.db)
 }
 
 // ConfigureStream wires direct audio stream token issuing, cache warming, and probing.
@@ -89,8 +81,8 @@ type ImportYouTubeRequest struct {
 
 type UpdateAudioRequest struct {
 	Title                string   `json:"title"`
-	Author               string   `json:"author"`
-	Description          string   `json:"description"`
+	Author               *string  `json:"author"`
+	Description          *string  `json:"description"`
 	CategoryID           uint     `json:"categoryId"`
 	Tags                 []string `json:"tags"`
 	Status               string   `json:"status"`
@@ -98,7 +90,7 @@ type UpdateAudioRequest struct {
 	FreeEpisodesCount    *int     `json:"freeEpisodesCount"`
 	YoutubeURL           string   `json:"youtubeUrl"`
 	YoutubeVideoID       string   `json:"youtubeVideoId"`
-	ThumbnailURL         string   `json:"thumbnailUrl"`
+	ThumbnailURL         *string  `json:"thumbnailUrl"`
 	TotalDurationSeconds *int     `json:"totalDurationSeconds"`
 }
 
@@ -162,7 +154,7 @@ func (h *Handler) ListAudios(c *gin.Context) {
 	if isCatalog {
 		query = h.db.Model(&domain.Audio{}).
 			Preload("Category").
-			Select("youtube_videos.id, youtube_videos.youtube_video_id, youtube_videos.youtube_url, youtube_videos.title, youtube_videos.author_name, youtube_videos.thumbnail_url, youtube_videos.duration_seconds, youtube_videos.category_id, youtube_videos.status, youtube_videos.is_vip_only, youtube_videos.created_at")
+			Select("youtube_videos.id, youtube_videos.youtube_video_id, youtube_videos.youtube_url, youtube_videos.title, youtube_videos.author_name, youtube_videos.thumbnail_url, youtube_videos.duration_seconds, youtube_videos.category_id, youtube_videos.status, youtube_videos.is_vip_only, youtube_videos.free_episodes_count, youtube_videos.created_at")
 	} else {
 		query = h.db.Model(&domain.Audio{}).Preload("Category").Preload("Tags")
 		if isLite {
@@ -224,27 +216,83 @@ func (h *Handler) ListAudios(c *gin.Context) {
 	}
 
 	var audios []domain.Audio
-	if sortBy == "popular" {
-		if isLite {
-			query = query.Select("youtube_videos.id, youtube_videos.youtube_video_id, youtube_videos.youtube_url, youtube_videos.title, youtube_videos.author_name, youtube_videos.channel_id, youtube_videos.thumbnail_url, youtube_videos.duration_seconds, youtube_videos.category_id, youtube_videos.status, youtube_videos.stream_status, youtube_videos.stream_checked_at, youtube_videos.audio_mime, youtube_videos.is_vip_only, youtube_videos.free_episodes_count, youtube_videos.created_by, youtube_videos.created_at, youtube_videos.updated_at")
-		} else {
-			query = query.Select("youtube_videos.*")
+	if status == "listening" && userID > 0 && sortBy != "popular" {
+		type idRow struct {
+			ID uint `gorm:"column:id"`
 		}
-		query = query.
-			Joins("LEFT JOIN (SELECT audio_id, COUNT(DISTINCT user_id) as v_cnt FROM listening_progress WHERE progress_percent >= 15.0 GROUP BY audio_id) vp ON vp.audio_id = youtube_videos.id").
-			Order("COALESCE(vp.v_cnt, 0) DESC, youtube_videos.created_at DESC")
+		var idRows []idRow
+		if err := query.Select("DISTINCT youtube_videos.id as id").Scan(&idRows).Error; err != nil {
+			response.Internal(c, "Lỗi truy vấn danh sách Audio đang nghe: "+err.Error())
+			return
+		}
+		candidateIDs := make([]uint, 0, len(idRows))
+		seenCand := make(map[uint]bool, len(idRows))
+		for _, r := range idRows {
+			if r.ID > 0 && !seenCand[r.ID] {
+				seenCand[r.ID] = true
+				candidateIDs = append(candidateIDs, r.ID)
+			}
+		}
+
+		sortedIDs := h.sortListeningAudioIDs(userID, candidateIDs)
+		pageIDs := sortedIDs
+		if hasPagination {
+			start := (page - 1) * limit
+			if start >= len(sortedIDs) {
+				pageIDs = nil
+			} else {
+				end := start + limit
+				if end > len(sortedIDs) {
+					end = len(sortedIDs)
+				}
+				pageIDs = sortedIDs[start:end]
+			}
+		}
+
+		if len(pageIDs) > 0 {
+			var fetched []domain.Audio
+			fetchQuery := h.db.Model(&domain.Audio{}).Preload("Category").Preload("Tags")
+			if isLite {
+				fetchQuery = fetchQuery.Omit("description")
+			}
+			if err := fetchQuery.Where("id IN ?", pageIDs).Find(&fetched).Error; err != nil {
+				response.Internal(c, "Lỗi truy vấn danh sách Audio: "+err.Error())
+				return
+			}
+			byID := make(map[uint]domain.Audio, len(fetched))
+			for _, a := range fetched {
+				byID[a.ID] = a
+			}
+			audios = make([]domain.Audio, 0, len(pageIDs))
+			for _, pid := range pageIDs {
+				if a, ok := byID[pid]; ok {
+					audios = append(audios, a)
+				}
+			}
+		}
 	} else {
-		query = query.Order("youtube_videos.created_at DESC")
-	}
+		if sortBy == "popular" {
+			if isLite {
+				query = query.Select("youtube_videos.id, youtube_videos.youtube_video_id, youtube_videos.youtube_url, youtube_videos.title, youtube_videos.author_name, youtube_videos.channel_id, youtube_videos.thumbnail_url, youtube_videos.duration_seconds, youtube_videos.category_id, youtube_videos.status, youtube_videos.stream_status, youtube_videos.stream_checked_at, youtube_videos.audio_mime, youtube_videos.is_vip_only, youtube_videos.free_episodes_count, youtube_videos.created_by, youtube_videos.created_at, youtube_videos.updated_at")
+			} else {
+				query = query.Select("youtube_videos.*")
+			}
+			query = query.
+				Joins("LEFT JOIN (SELECT audio_id, COUNT(DISTINCT user_id) as v_cnt FROM listening_progress WHERE progress_percent >= 15.0 GROUP BY audio_id) vp ON vp.audio_id = youtube_videos.id").
+				Order("COALESCE(vp.v_cnt, 0) DESC, youtube_videos.created_at DESC")
+		} else {
+			query = query.Order("youtube_videos.created_at DESC")
+		}
 
-	if hasPagination {
-		offset := (page - 1) * limit
-		query = query.Offset(offset).Limit(limit)
-	}
+		if hasPagination {
+			offset := (page - 1) * limit
+			query = query.Offset(offset).Limit(limit)
+		}
 
-	if err := query.Find(&audios).Error; err != nil {
-		response.Internal(c, "Lỗi truy vấn danh sách Audio: "+err.Error())
-		return
+		if err := query.Find(&audios).Error; err != nil {
+			response.Internal(c, "Lỗi truy vấn danh sách Audio: "+err.Error())
+			return
+		}
 	}
 
 	effLimit := limit
@@ -499,6 +547,98 @@ func (h *Handler) ListAudios(c *gin.Context) {
 		"limit":      effLimit,
 		"totalPages": totalPages,
 	})
+}
+
+// sortListeningAudioIDs ranks in-progress ("listening") audios by combining cumulative
+// listened duration with recency (7-day half-life decay), so deeply binged and recently
+// played stories lead while brief accidental clicks fall to the bottom.
+func (h *Handler) sortListeningAudioIDs(userID uint, candidateIDs []uint) []uint {
+	if len(candidateIDs) <= 1 || userID == 0 {
+		return candidateIDs
+	}
+
+	progSum := make(map[uint]int, len(candidateIDs))
+	lastActivity := make(map[uint]time.Time, len(candidateIDs))
+
+	var progs []domain.ListeningProgress
+	if err := h.db.Where("user_id = ? AND audio_id IN ?", userID, candidateIDs).Find(&progs).Error; err == nil {
+		for _, p := range progs {
+			progSum[p.AudioID] += p.PositionSeconds
+			if p.UpdatedAt.After(lastActivity[p.AudioID]) {
+				lastActivity[p.AudioID] = p.UpdatedAt
+			}
+		}
+	}
+
+	type histAgg struct {
+		AudioID uint `gorm:"column:audio_id"`
+		MaxID   uint `gorm:"column:max_id"`
+		Total   int  `gorm:"column:total"`
+	}
+	var aggs []histAgg
+	histSum := make(map[uint]int, len(candidateIDs))
+	maxIDs := make([]uint, 0, len(candidateIDs))
+	if err := h.db.Model(&domain.ListeningHistory{}).
+		Select("audio_id, MAX(id) as max_id, SUM(duration_listened) as total").
+		Where("user_id = ? AND audio_id IN ?", userID, candidateIDs).
+		Group("audio_id").
+		Scan(&aggs).Error; err == nil {
+		for _, ag := range aggs {
+			histSum[ag.AudioID] = ag.Total
+			if ag.MaxID > 0 {
+				maxIDs = append(maxIDs, ag.MaxID)
+			}
+		}
+	}
+
+	if len(maxIDs) > 0 {
+		var latestRows []domain.ListeningHistory
+		if err := h.db.Where("id IN ?", maxIDs).Find(&latestRows).Error; err == nil {
+			for _, rec := range latestRows {
+				if rec.CreatedAt.After(lastActivity[rec.AudioID]) {
+					lastActivity[rec.AudioID] = rec.CreatedAt
+				}
+			}
+		}
+	}
+
+	now := time.Now().UTC()
+	scoreByID := make(map[uint]float64, len(candidateIDs))
+	durByID := make(map[uint]int, len(candidateIDs))
+	for _, aID := range candidateIDs {
+		dur := progSum[aID]
+		if histSum[aID] > dur {
+			dur = histSum[aID]
+		}
+		durByID[aID] = dur
+
+		lastAt := lastActivity[aID]
+		ageDays := 3650.0
+		if !lastAt.IsZero() {
+			ageDays = math.Max(0, now.Sub(lastAt).Hours()/24.0)
+		}
+		scoreByID[aID] = float64(dur) / (1.0 + ageDays/7.0)
+	}
+
+	sorted := make([]uint, len(candidateIDs))
+	copy(sorted, candidateIDs)
+	sort.Slice(sorted, func(i, j int) bool {
+		idA, idB := sorted[i], sorted[j]
+		scoreA, scoreB := scoreByID[idA], scoreByID[idB]
+		if math.Abs(scoreA-scoreB) > 1e-6 {
+			return scoreA > scoreB
+		}
+		lastA, lastB := lastActivity[idA], lastActivity[idB]
+		if !lastA.Equal(lastB) {
+			return lastA.After(lastB)
+		}
+		if durByID[idA] != durByID[idB] {
+			return durByID[idA] > durByID[idB]
+		}
+		return idA > idB
+	})
+
+	return sorted
 }
 
 func (h *Handler) GetAudioByID(c *gin.Context) {
@@ -856,11 +996,11 @@ func (h *Handler) UpdateAudio(c *gin.Context) {
 	if req.Title != "" {
 		updates["title"] = req.Title
 	}
-	if req.Author != "" {
-		updates["author_name"] = req.Author
+	if req.Author != nil {
+		updates["author_name"] = *req.Author
 	}
-	if req.Description != "" {
-		updates["description"] = req.Description
+	if req.Description != nil {
+		updates["description"] = *req.Description
 	}
 	if req.CategoryID > 0 {
 		updates["category_id"] = req.CategoryID
@@ -875,8 +1015,8 @@ func (h *Handler) UpdateAudio(c *gin.Context) {
 		updates["free_episodes_count"] = *req.FreeEpisodesCount
 	}
 	if userRole == domain.RoleAdmin {
-		if strings.TrimSpace(req.ThumbnailURL) != "" {
-			updates["thumbnail_url"] = strings.TrimSpace(req.ThumbnailURL)
+		if req.ThumbnailURL != nil {
+			updates["thumbnail_url"] = strings.TrimSpace(*req.ThumbnailURL)
 		}
 		if req.TotalDurationSeconds != nil && *req.TotalDurationSeconds > 0 {
 			updates["duration_seconds"] = *req.TotalDurationSeconds
@@ -892,6 +1032,14 @@ func (h *Handler) UpdateAudio(c *gin.Context) {
 				return
 			}
 			vid := vidRes.MustGet()
+			if vid != audio.YoutubeVideoID {
+				var dup int64
+				h.db.Model(&domain.Audio{}).Where("youtube_video_id = ? AND id <> ?", vid, audio.ID).Count(&dup)
+				if dup > 0 {
+					response.BadRequest(c, "Video YouTube này đã tồn tại trên hệ thống")
+					return
+				}
+			}
 			updates["youtube_video_id"] = vid
 			updates["youtube_url"] = fmt.Sprintf("https://www.youtube.com/watch?v=%s", vid)
 			updates["stream_status"] = domain.StreamStatusUnknown
@@ -1022,6 +1170,8 @@ func (h *Handler) DeleteAudio(c *gin.Context) {
 		response.Internal(c, "Không thể xóa Audio: "+err.Error())
 		return
 	}
+	h.notifyTaxonomyChanged()
+	middleware.RecordAudit(h.db, c, "audio_delete", "audio", fmt.Sprint(audio.ID), audio.Title, "")
 	response.OK(c, gin.H{"message": "Đã xóa Audio thành công"}, nil)
 }
 
@@ -1042,13 +1192,15 @@ func (h *Handler) RefreshAudio(c *gin.Context) {
 	}
 
 	meta, err := external.FetchYouTubeMetadata(audio.YoutubeVideoID)
-	if err == nil {
-		h.db.Model(&audio).Updates(map[string]interface{}{
-			"title":         meta.Title,
-			"author_name":   meta.Author,
-			"thumbnail_url": meta.ThumbnailURL,
-		})
+	if err != nil {
+		response.BadRequest(c, "Không thể lấy thông tin từ YouTube: "+err.Error())
+		return
 	}
+	h.db.Model(&audio).Updates(map[string]interface{}{
+		"title":         meta.Title,
+		"author_name":   meta.Author,
+		"thumbnail_url": meta.ThumbnailURL,
+	})
 
 	h.db.Preload("Category").Preload("Tags").First(&audio, id)
 	response.OK(c, audio, nil)

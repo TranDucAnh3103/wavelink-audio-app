@@ -14,7 +14,7 @@ func IsOriginAllowed(origin, allowedOrigins string) (allowed bool, allowAll bool
 	wildcards := make([]string, 0)
 
 	for _, o := range origins {
-		trimmed := strings.TrimSpace(o)
+		trimmed := strings.TrimRight(strings.TrimSpace(o), "/")
 		if trimmed == "*" {
 			allowAll = true
 		} else if strings.Contains(trimmed, "*") {
@@ -68,9 +68,9 @@ func CORS(allowedOrigins string) gin.HandlerFunc {
 			c.Writer.Header().Set("Vary", "Origin")
 		}
 
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, Range")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, HEAD, PUT, DELETE")
-		c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, Range, If-None-Match")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, HEAD, PUT, PATCH, DELETE")
+		c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length, ETag, Content-Disposition, X-Refreshed-Token")
 		c.Writer.Header().Set("Access-Control-Max-Age", "86400")
 
 		if c.Request.Method == http.MethodOptions {

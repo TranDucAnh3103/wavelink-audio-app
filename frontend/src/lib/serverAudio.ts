@@ -1,4 +1,5 @@
 import { AudioItem, Category, SystemStats } from '@/types';
+import { extractAudioIdFromSlug } from './slug';
 
 const getBackendUrl = () => {
   if (process.env.BACKEND_INTERNAL_URL && process.env.BACKEND_INTERNAL_URL.trim().length > 0) {
@@ -34,9 +35,11 @@ async function fetchJsonWithTimeout<T>(url: string, revalidateSeconds: number, t
 }
 
 export async function fetchServerAudio(id: string | number): Promise<AudioItem | null> {
+  const resolvedId = extractAudioIdFromSlug(String(id));
+  if (!resolvedId) return null;
   const backendUrl = getBackendUrl();
   const data = await fetchJsonWithTimeout<{ success?: boolean; data?: AudioItem }>(
-    `${backendUrl}/api/v1/audios/${id}`,
+    `${backendUrl}/api/v1/audios/${resolvedId}`,
     60,
     3500
   );

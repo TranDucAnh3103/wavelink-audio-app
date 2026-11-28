@@ -194,6 +194,7 @@ func (h *Handler) GenerateEpisodes(c *gin.Context) {
 		return
 	}
 
+	middleware.RecordAudit(h.db, c, "episodes_generate", "audio", fmt.Sprint(audio.ID), audio.Title, fmt.Sprintf("%d tập", len(newEpisodes)))
 	response.OK(c, newEpisodes, nil)
 }
 
@@ -283,6 +284,7 @@ func (h *Handler) CreateEpisode(c *gin.Context) {
 		return
 	}
 
+	middleware.RecordAudit(h.db, c, "episode_create", "episode", fmt.Sprint(ep.ID), ep.Title, fmt.Sprintf("audio=%d", ep.AudioID))
 	response.Created(c, ep)
 }
 
@@ -382,6 +384,7 @@ func (h *Handler) UpdateEpisode(c *gin.Context) {
 
 	var ep domain.Episode
 	h.db.First(&ep, id)
+	middleware.RecordAudit(h.db, c, "episode_update", "episode", id, ep.Title, fmt.Sprintf("audio=%d", ep.AudioID))
 	response.OK(c, ep, nil)
 }
 
@@ -417,5 +420,6 @@ func (h *Handler) DeleteEpisode(c *gin.Context) {
 		response.Internal(c, "Không thể xóa tập")
 		return
 	}
+	middleware.RecordAudit(h.db, c, "episode_delete", "episode", fmt.Sprint(ep.ID), ep.Title, fmt.Sprintf("audio=%d", ep.AudioID))
 	response.OK(c, gin.H{"message": "Đã xóa tập thành công"}, nil)
 }

@@ -1,4 +1,11 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import { useSiteStatusStore } from '@/stores/siteStatusStore';
+
+let onLiveRecoveredCallback: (() => void) | null = null;
+
+export function registerLiveRecoveryHandler(fn: () => void) {
+  onLiveRecoveredCallback = fn;
+}
 
 const resolveApiBase = (): string => {
   // 1. Runtime Config: Đọc cấu hình môi trường động từ window.__ENV__ (phục vụ Web Hosting zHost không hardcode URL)
@@ -67,7 +74,7 @@ export const API_BASE = resolveApiBase();
 
 export const axiosClient = axios.create({
   baseURL: API_BASE,
-  timeout: 10000,
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -127,9 +134,24 @@ export function normalizeError(error: unknown): ApiError {
 }
 
 axiosClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    onLiveRecoveredCallback?.();
+    const reqUrl = response.config?.url || '';
+    if (!reqUrl.includes('/site-status') && !reqUrl.includes('/admin/')) {
+      const siteState = useSiteStatusStore.getState();
+      if (siteState.maintenanceMode) {
+        siteState.setMaintenance(false);
+      }
+    }
+    return response;
+  },
   (error) => {
     const normalized = normalizeError(error);
+    const details = normalized.details as { error?: { code?: string }; code?: string } | undefined;
+    const errCode = details?.error?.code || details?.code;
+    if (normalized.status === 503 && errCode === 'MAINTENANCE_MODE') {
+      useSiteStatusStore.getState().setMaintenance(true, normalized.message);
+    }
     if (normalized.status === 401) {
       // Optional: Handle token expiration
     }

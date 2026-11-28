@@ -175,7 +175,10 @@ describe('PlayerPage Collapsible Description & Related Audios Carousel', () => {
         <MemoryRouter initialEntries={['/player/189']}>
           <Routes>
             <Route path="/player/:id" element={<PlayerPage />} />
-            <Route path="/player/202" element={<LocationDisplay />} />
+            <Route
+              path="/player/kich-hoat-he-thong-diem-danh-10-lan-mot-ngay-phan-3-202"
+              element={<LocationDisplay />}
+            />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -203,9 +206,11 @@ describe('PlayerPage Collapsible Description & Related Audios Carousel', () => {
     fireEvent.click(authorTab);
     expect(screen.getAllByTestId('related-audio-card')).toHaveLength(6);
 
-    // Clicking first related card navigates to top match (202)
+    // Clicking first related card navigates to top match (202) with SEO slug
     fireEvent.click(screen.getAllByTestId('related-audio-card')[0]);
-    expect(screen.getByTestId('route-location')).toHaveTextContent('/player/202');
+    expect(screen.getByTestId('route-location')).toHaveTextContent(
+      '/player/kich-hoat-he-thong-diem-danh-10-lan-mot-ngay-phan-3-202'
+    );
   });
 });
 

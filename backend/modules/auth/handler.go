@@ -204,6 +204,17 @@ func (h *Handler) GetMe(c *gin.Context) {
 		})
 	}
 
+	jwtRole, _ := c.Get("jwtRole")
+	jwtMembership, _ := c.Get("jwtMembership")
+	if r, ok := jwtRole.(string); ok {
+		m, _ := jwtMembership.(string)
+		if r != user.Role || m != user.Membership {
+			if freshToken, err := middleware.GenerateToken(user, h.jwtSecret); err == nil && freshToken != "" {
+				c.Header("X-Refreshed-Token", freshToken)
+			}
+		}
+	}
+
 	response.OK(c, user, nil)
 }
 

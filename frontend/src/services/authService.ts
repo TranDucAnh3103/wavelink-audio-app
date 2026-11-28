@@ -3,12 +3,15 @@ import { User, LoginPayload, RegisterPayload, AuthResponse } from '@/types';
 
 export const authService = {
   async pingHealth(): Promise<boolean> {
-    try {
-      const res = await axiosClient.get('/health', { timeout: 2000 });
-      return res.status === 200;
-    } catch {
-      return false;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await axiosClient.get('/health', { timeout: 5000 });
+        if (res.status === 200) return true;
+      } catch {
+        // Retry once on transient failure
+      }
     }
+    return false;
   },
 
   async login(payload: LoginPayload): Promise<AuthResponse> {
@@ -63,6 +66,14 @@ export const authService = {
   async getMe(): Promise<User | null> {
     try {
       const res = await axiosClient.get<{ success: boolean; data: User }>('/auth/me');
+      const headers = res.headers as Record<string, unknown> | undefined;
+      const rawToken =
+        headers && typeof (headers as { get?: (k: string) => unknown }).get === 'function'
+          ? (headers as { get: (k: string) => unknown }).get('x-refreshed-token')
+          : headers?.['x-refreshed-token'];
+      if (typeof rawToken === 'string' && rawToken.trim().length > 0 && typeof localStorage !== 'undefined') {
+        localStorage.setItem('auth_token', rawToken.trim());
+      }
       if (res.data.success) {
         return res.data.data;
       }

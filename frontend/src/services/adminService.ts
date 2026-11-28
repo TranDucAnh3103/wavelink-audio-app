@@ -31,9 +31,10 @@ async function get<T>(url: string, params?: Record<string, unknown>): Promise<T>
 async function send<T>(
   method: 'post' | 'patch' | 'put' | 'delete',
   url: string,
-  body?: unknown
+  body?: unknown,
+  timeout?: number
 ): Promise<T> {
-  const res = await axiosClient.request<Envelope<T>>({ method, url, data: body });
+  const res = await axiosClient.request<Envelope<T>>({ method, url, data: body, timeout });
   return res.data.data;
 }
 
@@ -78,9 +79,9 @@ export const adminService = {
     blockSizeSeconds: number;
     isVipOnly: boolean;
     freeEpisodesCount: number;
-  }) => send<BatchImportResponse>('post', '/admin/audios/import-batch', body),
+  }) => send<BatchImportResponse>('post', '/admin/audios/import-batch', body, 120000),
   checkStreamsBatch: (ids?: number[]) =>
-    send<{ checked: number; ok: number; failed: number }>('post', '/admin/audios/check-streams', { ids }),
+    send<{ checked: number; ok: number; failed: number }>('post', '/admin/audios/check-streams', { ids }, 120000),
   importStats: () => get<ImportStatsResponse>('/admin/imports/stats'),
 
   audioEpisodes: (audioId: number) =>
@@ -113,7 +114,7 @@ export const adminService = {
     link?: string;
     type?: 'SYSTEM' | 'PROMOTION';
     audience: 'all' | 'vip' | 'free' | 'admin';
-  }) => send<{ targeted: number; delivered: number }>('post', '/admin/broadcast', body),
+  }) => send<{ targeted: number; delivered: number }>('post', '/admin/broadcast', body, 60000),
 
   async exportCsv(kind: 'users' | 'orders'): Promise<void> {
     const res = await axiosClient.get(`/admin/export/${kind}`, { responseType: 'blob' });

@@ -55,10 +55,15 @@ export const communityService = {
     };
   },
 
-  async getMessages(): Promise<CommunityMessage[]> {
+  async getMessages(options?: { limit?: number; all?: boolean }): Promise<CommunityMessage[]> {
     purgeLegacyCommunityStorage();
     try {
-      const res = await axiosClient.get<{ success: boolean; data: CommunityMessage[] }>('/community/messages');
+      const params: Record<string, unknown> = {};
+      if (options?.all) params.all = 'true';
+      if (options?.limit && options.limit > 0) params.limit = options.limit;
+      const res = await axiosClient.get<{ success: boolean; data: CommunityMessage[] }>('/community/messages', {
+        params: Object.keys(params).length > 0 ? params : undefined,
+      });
       if (res.data.success && Array.isArray(res.data.data)) {
         memoryMessages = res.data.data;
         return res.data.data;
@@ -70,7 +75,12 @@ export const communityService = {
     return [...memoryMessages];
   },
 
-  async sendMessage(message: string, sharedAudioId?: number, senderName?: string): Promise<CommunityMessage> {
+  async sendMessage(
+    message: string,
+    sharedAudioId?: number,
+    senderName?: string,
+    options?: { throwOnError?: boolean }
+  ): Promise<CommunityMessage> {
     try {
       const res = await axiosClient.post<{ success: boolean; data: CommunityMessage }>('/community/messages', {
         message,
@@ -80,7 +90,13 @@ export const communityService = {
       if (res.data.success && res.data.data) {
         return res.data.data;
       }
+      if (options?.throwOnError) {
+        throw new Error('Không thể gửi tin nhắn');
+      }
     } catch (err) {
+      if (options?.throwOnError) {
+        throw err;
+      }
       console.warn('sendMessage API error, fallback local creation', err);
     }
 
@@ -128,24 +144,14 @@ export const communityService = {
 
   // Admin moderation endpoints
   async deleteMessage(id: number | string): Promise<boolean> {
-    try {
-      await axiosClient.delete<{ success: boolean }>(`/community/messages/${id}`);
-    } catch (err) {
-      console.warn('deleteMessage API warning, ensuring local clean', err);
-    }
-
+    await axiosClient.delete<{ success: boolean }>(`/community/messages/${id}`);
     purgeLegacyCommunityStorage();
     memoryMessages = memoryMessages.filter((m) => String(m.id) !== String(id));
     return true;
   },
 
   async clearAllMessages(): Promise<boolean> {
-    try {
-      await axiosClient.delete<{ success: boolean }>('/community/messages');
-    } catch (err) {
-      console.warn('clearAllMessages API warning, ensuring local clear', err);
-    }
-
+    await axiosClient.delete<{ success: boolean }>('/community/messages');
     purgeLegacyCommunityStorage();
     memoryMessages = [];
     return true;

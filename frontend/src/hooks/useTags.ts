@@ -25,6 +25,7 @@ export function useCreateTag() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
+      queryClient.invalidateQueries({ queryKey: ['audios'] });
     },
   });
 }
@@ -39,6 +40,7 @@ export function useUpdateTag() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
+      queryClient.invalidateQueries({ queryKey: ['audios'] });
     },
   });
 }
@@ -63,6 +65,7 @@ export function useCleanupUnusedTags() {
     mutationFn: () => api.tag.cleanupUnusedTags(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
+      queryClient.invalidateQueries({ queryKey: ['audios'] });
     },
   });
 }
@@ -77,6 +80,7 @@ export function useDeleteTag() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
+      queryClient.invalidateQueries({ queryKey: ['audios'] });
     },
   });
 }

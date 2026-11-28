@@ -1,6 +1,7 @@
 package taxonomy
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -142,6 +143,7 @@ func (h *Handler) CreateCategory(c *gin.Context) {
 	}
 
 	h.InvalidateCache()
+	middleware.RecordAudit(h.db, c, "category_create", "category", fmt.Sprint(cat.ID), cat.Name, cat.Slug)
 	response.Created(c, cat)
 }
 
@@ -185,6 +187,7 @@ func (h *Handler) UpdateCategory(c *gin.Context) {
 		response.NotFound(c, "Không tìm thấy thể loại")
 		return
 	}
+	middleware.RecordAudit(h.db, c, "category_update", "category", id, updated.Name, updated.Slug)
 	response.OK(c, updated, nil)
 }
 
@@ -201,7 +204,11 @@ func (h *Handler) DeleteCategory(c *gin.Context) {
 
 	err = h.db.Transaction(func(tx *gorm.DB) error {
 		// Chuyển các audio thuộc thể loại bị xóa sang thể loại dự phòng để không bị mồ côi
-		if err := tx.Model(&domain.Audio{}).Where("category_id = ?", catID).Update("category_id", fallback.ID).Error; err != nil {
+		var targetCat interface{} = nil
+		if fallback.ID > 0 {
+			targetCat = fallback.ID
+		}
+		if err := tx.Model(&domain.Audio{}).Where("category_id = ?", catID).Update("category_id", targetCat).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&domain.Category{}, catID).Error
@@ -211,6 +218,7 @@ func (h *Handler) DeleteCategory(c *gin.Context) {
 		return
 	}
 	h.InvalidateCache()
+	middleware.RecordAudit(h.db, c, "category_delete", "category", fmt.Sprint(catID), "", fmt.Sprintf("fallback=%d", fallback.ID))
 	response.OK(c, gin.H{"message": "Đã xóa thể loại", "fallbackCategoryId": fallback.ID}, nil)
 }
 
@@ -249,6 +257,7 @@ func (h *Handler) MergeCategories(c *gin.Context) {
 	}
 
 	h.InvalidateCache()
+	middleware.RecordAudit(h.db, c, "category_merge", "category", fmt.Sprint(dst.ID), dst.Name, fmt.Sprintf("from=%d moved=%d", src.ID, moved))
 	response.OK(c, gin.H{"movedAudios": moved, "targetId": dst.ID}, nil)
 }
 
@@ -330,6 +339,7 @@ func (h *Handler) CreateTag(c *gin.Context) {
 	}
 
 	h.InvalidateCache()
+	middleware.RecordAudit(h.db, c, "tag_create", "tag", fmt.Sprint(tag.ID), tag.Name, tag.Slug)
 	response.Created(c, tag)
 }
 
@@ -372,6 +382,7 @@ func (h *Handler) UpdateTag(c *gin.Context) {
 
 	h.InvalidateCache()
 	h.db.First(&existing, id)
+	middleware.RecordAudit(h.db, c, "tag_update", "tag", id, existing.Name, existing.Slug)
 	response.OK(c, existing, nil)
 }
 
@@ -394,6 +405,7 @@ func (h *Handler) DeleteTag(c *gin.Context) {
 		return
 	}
 	h.InvalidateCache()
+	middleware.RecordAudit(h.db, c, "tag_delete", "tag", fmt.Sprint(tagID), "", "")
 	response.OK(c, gin.H{"message": "Đã xóa thẻ"}, nil)
 }
 
@@ -454,6 +466,7 @@ func (h *Handler) MergeTags(c *gin.Context) {
 	}
 
 	h.InvalidateCache()
+	middleware.RecordAudit(h.db, c, "tag_merge", "tag", fmt.Sprint(target.ID), target.Name, fmt.Sprintf("merged=%d", len(sources)))
 	response.OK(c, gin.H{"merged": len(sources), "targetId": target.ID}, nil)
 }
 
@@ -472,5 +485,6 @@ func (h *Handler) CleanupUnusedTags(c *gin.Context) {
 		return
 	}
 	h.InvalidateCache()
+	middleware.RecordAudit(h.db, c, "tag_cleanup", "tag", "unused", "Dọn thẻ trống", fmt.Sprintf("deleted=%d", res.RowsAffected))
 	response.OK(c, gin.H{"deleted": res.RowsAffected}, nil)
 }

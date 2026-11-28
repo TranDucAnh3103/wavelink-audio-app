@@ -484,6 +484,7 @@ const CreateUserSheet: React.FC<{ isOpen: boolean; onClose: () => void; onDone: 
       <Field label="Vai trò">
         <select value={role} onChange={(e) => setRole(e.target.value)} className="input-comic text-sm font-bold cursor-pointer">
           <option value="USER">Người dùng</option>
+          <option value="VIP">Hội viên VIP</option>
           <option value="ADMIN">Quản trị viên</option>
         </select>
       </Field>
@@ -522,7 +523,7 @@ const UserDetailSheet: React.FC<{
       setDetail(d);
       setName(d.user.username);
       setMail(d.user.email && !d.user.email.endsWith('@user.local') ? d.user.email : '');
-      setRole(d.user.role === 'ADMIN' ? 'ADMIN' : 'USER');
+      setRole(d.user.role || 'USER');
     } catch (err) {
       toast.error(errMessage(err));
       onClose();
@@ -734,6 +735,7 @@ const UserDetailSheet: React.FC<{
                   className="input-comic text-sm font-bold cursor-pointer"
                 >
                   <option value="USER">Người dùng</option>
+                  <option value="VIP">Hội viên VIP</option>
                   <option value="ADMIN">Quản trị viên</option>
                 </select>
               </Field>
@@ -745,7 +747,7 @@ const UserDetailSheet: React.FC<{
                     () =>
                       api.admin.updateUser(u.id, {
                         username: name,
-                        email: mail || undefined,
+                        email: mail.trim(),
                         role,
                       }),
                     'Đã lưu thông tin'

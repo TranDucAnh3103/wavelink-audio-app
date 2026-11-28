@@ -111,4 +111,44 @@ func TestCORSPreflightOPTIONS(t *testing.T) {
 	if w.Header().Get("Access-Control-Allow-Origin") != "https://wavelink-audio-app.zhost.education" {
 		t.Errorf("expected allow origin header for zHost, got '%s'", w.Header().Get("Access-Control-Allow-Origin"))
 	}
+
+	allowMethods := w.Header().Get("Access-Control-Allow-Methods")
+	if !stringsContains(allowMethods, "PATCH") {
+		t.Errorf("expected PATCH in Access-Control-Allow-Methods, got '%s'", allowMethods)
+	}
+	allowHeaders := w.Header().Get("Access-Control-Allow-Headers")
+	if !stringsContains(allowHeaders, "If-None-Match") {
+		t.Errorf("expected If-None-Match in Access-Control-Allow-Headers, got '%s'", allowHeaders)
+	}
+	exposeHeaders := w.Header().Get("Access-Control-Expose-Headers")
+	if !stringsContains(exposeHeaders, "X-Refreshed-Token") || !stringsContains(exposeHeaders, "ETag") {
+		t.Errorf("expected ETag and X-Refreshed-Token in Access-Control-Expose-Headers, got '%s'", exposeHeaders)
+	}
+}
+
+func TestCORSOriginTrailingSlashTrimmed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(CORS("http://localhost:3000/"))
+	r.GET("/ping", func(c *gin.Context) {
+		c.String(http.StatusOK, "pong")
+	})
+
+	req, _ := http.NewRequest(http.MethodGet, "/ping", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Header().Get("Access-Control-Allow-Origin") != "http://localhost:3000" {
+		t.Errorf("expected trailing-slash origin config to match, got '%s'", w.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func stringsContains(s, substr string) bool {
+	for i := 0; i+len(substr) <= len(s); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

@@ -1,7 +1,9 @@
 import React from 'react';
 import type { Metadata } from 'next';
+import { permanentRedirect } from 'next/navigation';
 import { fetchServerAudio } from '@/lib/serverAudio';
 import { getSiteUrl } from '@/lib/siteConfig';
+import { buildAudioSlug, extractAudioIdFromSlug } from '@/lib/slug';
 import { PlayerClient } from './player-client';
 
 const siteUrl = getSiteUrl();
@@ -12,10 +14,12 @@ interface PageProps {
   params: {
     id: string;
   };
+  searchParams?: Record<string, string | string[] | undefined>;
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const audio = await fetchServerAudio(params.id);
+  const audioId = extractAudioIdFromSlug(params.id);
+  const audio = await fetchServerAudio(audioId);
 
   if (!audio) {
     return {
@@ -23,6 +27,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       description: 'Trình phát audio từ video YouTube trên WaveLink.',
     };
   }
+
+  const canonicalSlug = buildAudioSlug(audio);
+  const canonicalUrl = `${siteUrl}/player/${canonicalSlug}`;
 
   const youtubeThumbnailMax = audio.youtubeVideoId
     ? `https://img.youtube.com/vi/${audio.youtubeVideoId}/maxresdefault.jpg`
@@ -54,12 +61,12 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     ].filter(Boolean),
     authors: [{ name: audio.author }],
     alternates: {
-      canonical: `${siteUrl}/player/${audio.id}`,
+      canonical: canonicalUrl,
     },
     openGraph: {
       type: 'music.song',
       locale: 'vi_VN',
-      url: `${siteUrl}/player/${audio.id}`,
+      url: canonicalUrl,
       title: `${audio.title} - ${audio.author}`,
       description: cleanDesc,
       siteName: 'WaveLink Audio',
@@ -88,8 +95,29 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
-export default async function PlayerRoutePage({ params }: PageProps) {
-  const audio = await fetchServerAudio(params.id);
+export default async function PlayerRoutePage({ params, searchParams }: PageProps) {
+  const audioId = extractAudioIdFromSlug(params.id);
+  const audio = await fetchServerAudio(audioId);
+
+  if (audio) {
+    const canonicalSlug = buildAudioSlug(audio);
+    if (params.id !== canonicalSlug) {
+      const qs = new URLSearchParams();
+      if (searchParams) {
+        for (const [key, value] of Object.entries(searchParams)) {
+          if (Array.isArray(value)) {
+            value.forEach((v) => qs.append(key, v));
+          } else if (value !== undefined) {
+            qs.set(key, value);
+          }
+        }
+      }
+      const querySuffix = qs.toString() ? `?${qs.toString()}` : '';
+      permanentRedirect(`/player/${canonicalSlug}${querySuffix}`);
+    }
+  }
+
+  const canonicalUrl = audio ? `${siteUrl}/player/${buildAudioSlug(audio)}` : siteUrl;
 
   const durationSeconds = audio?.totalDurationSeconds || 0;
   // ISO 8601 duration formatted string (PT#M#S)
@@ -112,7 +140,7 @@ export default async function PlayerRoutePage({ params }: PageProps) {
         '@graph': [
           {
             '@type': 'AudioObject',
-            '@id': `${siteUrl}/player/${audio.id}#audio`,
+            '@id': `${canonicalUrl}#audio`,
             name: audio.title,
             description: audio.description || audio.title,
             thumbnailUrl: [thumbnailUrl],
@@ -129,15 +157,15 @@ export default async function PlayerRoutePage({ params }: PageProps) {
             },
             potentialAction: {
               '@type': 'ListenAction',
-              target: [`${siteUrl}/player/${audio.id}`],
+              target: [canonicalUrl],
             },
           },
           {
             '@type': 'MusicRecording',
-            '@id': `${siteUrl}/player/${audio.id}#recording`,
+            '@id': `${canonicalUrl}#recording`,
             name: audio.title,
             duration: durationISO,
-            url: `${siteUrl}/player/${audio.id}`,
+            url: canonicalUrl,
             byArtist: {
               '@type': 'MusicGroup',
               name: audio.author,
@@ -145,7 +173,7 @@ export default async function PlayerRoutePage({ params }: PageProps) {
           },
           {
             '@type': 'VideoObject',
-            '@id': `${siteUrl}/player/${audio.id}#youtube-video`,
+            '@id': `${canonicalUrl}#youtube-video`,
             name: audio.title,
             description: audio.description || audio.title,
             thumbnailUrl: [thumbnailUrl],
@@ -175,7 +203,7 @@ export default async function PlayerRoutePage({ params }: PageProps) {
                 '@type': 'ListItem',
                 position: 3,
                 name: audio.title,
-                item: `${siteUrl}/player/${audio.id}`,
+                item: canonicalUrl,
               },
             ],
           },

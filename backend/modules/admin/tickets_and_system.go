@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"audio-app-backend/core/domain"
-	"audio-app-backend/core/logic"
 	"audio-app-backend/server/middleware"
 	"audio-app-backend/server/response"
 
@@ -131,6 +130,9 @@ func (h *Handler) UpdateTicket(c *gin.Context) {
 	if status == "RESOLVED" || status == "REJECTED" {
 		updates["resolved_by"] = middleware.GetCurrentUserID(c)
 		updates["resolved_at"] = &now
+	} else {
+		updates["resolved_by"] = 0
+		updates["resolved_at"] = nil
 	}
 
 	if err := h.db.Model(&ticket).Updates(updates).Error; err != nil {
@@ -187,15 +189,7 @@ func (h *Handler) ListAuditLogs(c *gin.Context) {
 // ---------- Dynamic System Settings ----------
 
 func (h *Handler) readSiteConfig() domain.SiteConfig {
-	cfg := logic.DefaultSiteConfig()
-	var s domain.SystemSetting
-	if err := h.db.Session(&gorm.Session{}).Where("`key` = ?", "site_config").Take(&s).Error; err == nil && s.Value != "" {
-		_ = json.Unmarshal([]byte(s.Value), &cfg)
-	}
-	if cfg.FreeImportDailyLimit <= 0 {
-		cfg.FreeImportDailyLimit = logic.MaxFreeImportsPerDay
-	}
-	return cfg
+	return middleware.GetSiteConfig(h.db)
 }
 
 func (h *Handler) GetSettings(c *gin.Context) {
@@ -227,6 +221,7 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		h.db.Create(&domain.SystemSetting{Key: "site_config", Value: string(raw), UpdatedAt: now})
 	}
 
+	middleware.InvalidateSiteConfigCache()
 	h.audit(c, "settings_update", "system", "site_config", "Cấu hình hệ thống",
 		fmt.Sprintf("limit=%d userImport=%v guestChat=%v maintenance=%v", req.FreeImportDailyLimit, req.AllowUserImport, req.AllowGuestChat, req.MaintenanceMode))
 	response.OK(c, req, nil)

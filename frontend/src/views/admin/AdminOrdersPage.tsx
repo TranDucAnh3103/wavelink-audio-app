@@ -138,7 +138,7 @@ export const AdminOrdersPage: React.FC = () => {
         <>
           <div className={cn('grid grid-cols-1 md:grid-cols-2 gap-3', loading && 'opacity-60')}>
             {data.items.map((o) => {
-              const canConfirm = o.status !== 'PAID' && o.status !== 'REFUNDED';
+              const canConfirm = o.status === 'PENDING';
               return (
                 <div key={o.id} className="card-comic-sm p-3.5 bg-[var(--surface-card)] flex flex-col gap-2.5">
                   <div className="flex items-start justify-between gap-2">

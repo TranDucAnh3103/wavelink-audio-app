@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { HomePage } from '@/pages/HomePage';
 import { getSiteUrl } from '@/lib/siteConfig';
 import { fetchServerHomeData } from '@/lib/serverAudio';
+import { buildPlayerPath } from '@/lib/slug';
 
 const siteUrl = getSiteUrl();
 
@@ -56,7 +57,7 @@ export default async function RootHomePage() {
               itemListElement: featuredItems.map((item, idx) => ({
                 '@type': 'ListItem',
                 position: idx + 1,
-                url: `${siteUrl}/player/${item.id}`,
+                url: `${siteUrl}${buildPlayerPath(item)}`,
                 name: item.title,
               })),
             },

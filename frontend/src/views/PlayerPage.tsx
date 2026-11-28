@@ -45,6 +45,7 @@ import { PlayerSkeleton } from '@/components/common/Skeletons';
 import { Modal } from '@/components/ui/Modal';
 import { Slider } from '@/components/ui/Slider';
 import { Equalizer } from '@/components/ui/Equalizer';
+import { PlaybackSpinner } from '@/components/ui/PlaybackSpinner';
 import { formatTime } from '@/lib/utils';
 import { toast } from '@/components/ui/Toast';
 import { Pagination } from '@/components/ui/Pagination';
@@ -64,6 +65,7 @@ import {
 } from '@/lib/youtubeSync';
 import { resumeAudioContextOnGesture } from '@/lib/backgroundAudioKeeper';
 import { peekLibraryReturnState } from '@/lib/libraryNavigationState';
+import { buildAudioSlug, buildPlayerPath, extractAudioIdFromSlug } from '@/lib/slug';
 import { AudioItem } from '@/types';
 
 export interface PlayerPageProps {
@@ -71,7 +73,8 @@ export interface PlayerPageProps {
 }
 
 export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
-  const { id } = useParams<{ id: string }>();
+  const { id: rawRouteId } = useParams<{ id: string }>();
+  const id = extractAudioIdFromSlug(rawRouteId);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
@@ -84,26 +87,61 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
     currentAudio,
     currentEpisode,
     isPlaying,
+    isBuffering,
+    isRetrying,
+    retryAttempt,
+    playbackError,
+    bufferingStartedAt,
     currentTime,
     duration,
     playbackRate,
+    sleepTimerMode,
     sleepTimerMinutes,
     sleepTimerEndTimestamp,
     play,
     pause,
     togglePlay,
+    retryPlayback,
     seekTo,
     skipSeconds,
     prevEpisode,
     nextEpisode,
     setPlaybackRate,
     setSleepTimer,
+    setSleepTimerEndOfEpisode,
     setScreenLocked,
   } = usePlayerStore();
 
   const playingFallbackAudio =
     currentAudio && id && String(currentAudio.id) === String(id) ? currentAudio : null;
   const audio = fetchedAudio || playingFallbackAudio;
+
+  // Chuẩn hóa URL sang SEO slug (/player/ten-truyen-189) và đồng bộ title/canonical trên client
+  React.useEffect(() => {
+    if (!audio?.id) return;
+    const expectedSlug = buildAudioSlug(audio);
+    if (
+      rawRouteId &&
+      expectedSlug &&
+      rawRouteId !== expectedSlug &&
+      extractAudioIdFromSlug(rawRouteId) === String(audio.id) &&
+      !searchParams.get('t')
+    ) {
+      const qs = searchParams.toString();
+      navigate(buildPlayerPath(audio, qs ? { query: qs } : undefined), { replace: true });
+    }
+    if (typeof document !== 'undefined' && audio.title) {
+      document.title = `${audio.title}${audio.author ? ` - ${audio.author}` : ''} | WaveLink Audio`;
+      const canonicalHref = `${window.location.origin}${buildPlayerPath(audio)}`;
+      let canonicalLink = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
+      if (!canonicalLink) {
+        canonicalLink = document.createElement('link');
+        canonicalLink.rel = 'canonical';
+        document.head.appendChild(canonicalLink);
+      }
+      canonicalLink.href = canonicalHref;
+    }
+  }, [audio?.id, audio?.title, audio?.author, rawRouteId, navigate, searchParams]);
 
   // Khi quay lại app từ khay ứng dụng / mạng vừa khôi phục, tự đồng bộ lại nếu dữ liệu bị lỗi hoặc chưa đầy đủ
   React.useEffect(() => {
@@ -203,6 +241,29 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   const isTargetAudioPlaying = Boolean(
     audio && currentAudio && String(currentAudio.id) === String(audio.id)
   );
+  const isTargetAudioBuffering = Boolean(isTargetAudioPlaying && isPlaying && isBuffering);
+  const [showStuckRetry, setShowStuckRetry] = useState(false);
+
+  React.useEffect(() => {
+    if (!isTargetAudioBuffering) {
+      setShowStuckRetry(false);
+      return;
+    }
+    if (isRetrying) {
+      setShowStuckRetry(true);
+      return;
+    }
+    const started = bufferingStartedAt || Date.now();
+    const elapsed = Date.now() - started;
+    if (elapsed >= 4000) {
+      setShowStuckRetry(true);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setShowStuckRetry(true);
+    }, Math.max(200, 4000 - elapsed));
+    return () => clearTimeout(timer);
+  }, [isTargetAudioBuffering, isRetrying, bufferingStartedAt]);
 
   const currentTimeRef = React.useRef(currentTime);
   currentTimeRef.current = currentTime;
@@ -257,7 +318,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   }, [audio?.id]);
 
   React.useEffect(() => {
-    if (!sleepTimerEndTimestamp) {
+    if (sleepTimerMode !== 'duration' || !sleepTimerEndTimestamp) {
       setSleepRemainingSec(0);
       return;
     }
@@ -268,7 +329,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
     updateRemaining();
     const timer = setInterval(updateRemaining, 1000);
     return () => clearInterval(timer);
-  }, [sleepTimerEndTimestamp]);
+  }, [sleepTimerMode, sleepTimerEndTimestamp]);
 
   React.useEffect(() => {
     const rawT = searchParams.get('t');
@@ -528,6 +589,14 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   const rawPercent = Math.min(100, Math.round((currentPosition / episodeDuration) * 100));
   const currentPercent = scrubPercent !== null ? scrubPercent : rawPercent;
 
+  const isEndOfEpisodeSleep = sleepTimerMode === 'end_of_episode';
+  const hasActiveSleepTimer = isEndOfEpisodeSleep || Boolean(sleepTimerMinutes);
+  const epRemainingAudioSec = Math.max(0, Math.round(episodeDuration - currentPosition));
+  const activePlaybackRate = Math.max(0.25, playbackRate || 1);
+  const epRemainingWallSec = Math.max(0, Math.round(epRemainingAudioSec / activePlaybackRate));
+  const epRemainingAudioLabel = formatTime(epRemainingAudioSec, epRemainingAudioSec >= 3600);
+  const epRemainingWallLabel = formatTime(epRemainingWallSec, epRemainingWallSec >= 3600);
+
   const handleMasterPlay = () => {
     resumeAudioContextOnGesture();
     if (isEpLocked(activeEp)) {
@@ -535,6 +604,10 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
       return;
     }
     if (isTargetAudioPlaying) {
+      if (isTargetAudioBuffering && (showStuckRetry || isRetrying)) {
+        retryPlayback();
+        return;
+      }
       togglePlay();
     } else {
       play(audio, activeEp, currentPosition);
@@ -549,6 +622,15 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
       audio.episodes?.[0];
     if (targetEp && isEpLocked(targetEp)) {
       handleLockedEpisodeAction('Tập cần nghe tiếp chỉ dành riêng cho thành viên VIP.');
+      return;
+    }
+    if (
+      targetEp &&
+      isTargetAudioPlaying &&
+      currentEpisode?.id === targetEp.id &&
+      (isTargetAudioBuffering || Boolean(playbackError))
+    ) {
+      retryPlayback();
       return;
     }
     if (targetEp) {
@@ -817,90 +899,86 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
             activeTab === 'player' ? 'flex' : 'hidden lg:flex'
           }`}
         >
-          {/* Vinyl Cover Presentation & Open Details Card */}
-          <div className="card-comic p-4 md:p-5 flex flex-col gap-3.5 relative">
-            <div className="relative w-full aspect-[16/10] max-h-64 rounded-xl border-2 border-[var(--border-ink)] overflow-hidden bg-[#111113] flex items-center justify-center shadow-comic-sm">
+          {/* 1. Compact Header Card: Cover, Title, Concise Inline Meta */}
+          <div className="card-comic p-3.5 md:p-5 flex flex-col gap-3 relative">
+            <div className="relative w-full aspect-[21/9] sm:aspect-[16/9] max-h-40 sm:max-h-56 rounded-xl border-2 border-[var(--border-ink)] overflow-hidden bg-[#111113] flex items-center justify-center shadow-comic-sm">
               <img
                 className="w-full h-full object-cover"
                 src={audio.thumbnailUrl || '/wavelink-icon.png'}
                 alt={audio.title}
                 width={640}
-                height={400}
+                height={360}
                 {...({ fetchpriority: 'high' } as Record<string, string>)}
                 decoding="sync"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/25" />
 
-              <div className="absolute top-2.5 right-2.5 z-10">
+              <div className="absolute top-2 right-2 z-10">
                 <span
-                  className={`badge-comic ${
-                    isTargetAudioPlaying && isPlaying ? 'badge-comic-red' : 'badge-comic-blue'
-                  } text-[10px]`}
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold tracking-wide backdrop-blur-sm ${
+                    isTargetAudioBuffering
+                      ? 'bg-[#FFE600] text-[#111113]'
+                      : isTargetAudioPlaying && isPlaying
+                        ? 'bg-[#E63946] text-white'
+                        : 'bg-black/60 text-white'
+                  }`}
                 >
-                  {isTargetAudioPlaying && isPlaying ? '● LIVE' : 'SẴN SÀNG'}
+                  {isTargetAudioBuffering
+                    ? isRetrying
+                      ? `● THỬ LẠI (${retryAttempt || 1})`
+                      : '● ĐANG TẢI...'
+                    : isTargetAudioPlaying && isPlaying
+                      ? '● ĐANG PHÁT'
+                      : 'SẴN SÀNG'}
                 </span>
               </div>
 
-              {/* Spinning Vinyl Disc */}
-              <div
-                className={`absolute -right-8 -bottom-8 w-36 h-36 rounded-full border-4 border-[#111113] bg-[#141418] shadow-comic flex items-center justify-center ${
-                  isTargetAudioPlaying && isPlaying ? 'spin-disc' : 'spin-disc spin-disc-paused'
-                } pointer-events-none opacity-90`}
-              >
-                <div className="w-24 h-24 rounded-full border border-gray-700 bg-[#1F1F24] flex items-center justify-center">
-                  <div className="w-12 h-12 rounded-full border-2 border-[#111113] bg-[#FFE600] flex items-center justify-center text-[#111113]">
-                    <Disc3 className="w-6 h-6" strokeWidth={2.5} />
-                  </div>
-                </div>
-              </div>
-
-              <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between text-white z-10">
-                <span className="badge-comic badge-comic-yellow text-[10px] text-[#111113]">
-                  TẬP {String(activeEp.episodeNumber || 1).padStart(2, '0')}: {currentPercent}%
+              <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between text-white z-10">
+                <span className="px-2 py-0.5 rounded-md bg-[#FFE600] text-[#111113] font-mono text-[10px] font-black shadow-sm">
+                  TẬP {String(activeEp.episodeNumber || 1).padStart(2, '0')} · {currentPercent}%
                 </span>
+                {(audio.isVIPOnly || audio.isVipOnly) && (
+                  <span className="px-2 py-0.5 rounded-md bg-[#8338EC] text-white text-[10px] font-black inline-flex items-center gap-1">
+                    <Crown className="w-3 h-3" strokeWidth={2.5} /> VIP
+                  </span>
+                )}
               </div>
             </div>
 
-            {/* Title, Author, Open Description & Tags (không bó khung lồng nhau) */}
-            <div className="flex flex-col gap-2.5">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="badge-comic badge-comic-blue text-[10px]">
-                  {audio.categoryName || 'Chung'}
-                </span>
-                {(audio.isVIPOnly || audio.isVipOnly) && (
-                  <span className="badge-comic badge-comic-purple text-[10px]">
-                    <Crown className="w-3 h-3" strokeWidth={2.5} /> VIP ONLY
-                  </span>
-                )}
-                <span className="badge-comic badge-comic-white text-[10px]">
-                  {audio.totalEpisodes || audio.episodes?.length || 1} TẬP
-                </span>
-                <span className="badge-comic badge-comic-white text-[10px]">
-                  {audio.formattedDuration || '24h 00m'}
-                </span>
-                {audio.viewCount !== undefined && audio.viewCount !== null && (
-                  <span className="badge-comic badge-comic-yellow text-[10px] font-mono">
-                    <Eye className="w-3 h-3" strokeWidth={2.5} />
-                    <span>{Number(audio.viewCount).toLocaleString('vi-VN')}</span>
-                  </span>
-                )}
-              </div>
-
-              <h1 className="font-extrabold text-lg md:text-xl text-[var(--ink-primary)] leading-snug">
+            <div className="flex flex-col gap-1.5">
+              <h1 className="font-extrabold text-base sm:text-xl text-[var(--ink-primary)] leading-snug line-clamp-2">
                 {audio.title}
               </h1>
 
-              {/* Hàng Tác giả & Nút nguồn YouTube + Đồng bộ YT trên 1 hàng gọn gàng */}
-              <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-[var(--border-ink)]/20 flex-wrap">
-                <span className="text-xs sm:text-sm font-semibold text-[var(--ink-secondary)] truncate">
+              {/* Plain-text metadata strip without heavy pill borders */}
+              <div className="flex items-center gap-x-2 gap-y-1 flex-wrap text-xs font-semibold text-[var(--ink-secondary)]">
+                <span className="text-[#3A86FF] font-extrabold">{audio.categoryName || 'Chung'}</span>
+                <span aria-hidden="true">·</span>
+                <span>{audio.totalEpisodes || audio.episodes?.length || 1} tập</span>
+                <span aria-hidden="true">·</span>
+                <span>{audio.formattedDuration || '24h 00m'}</span>
+                {audio.viewCount !== undefined && audio.viewCount !== null && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="inline-flex items-center gap-1 font-mono">
+                      <Eye className="w-3 h-3" strokeWidth={2.25} />
+                      {Number(audio.viewCount).toLocaleString('vi-VN')}
+                    </span>
+                  </>
+                )}
+              </div>
+
+              {/* Author + subtle borderless utility links */}
+              <div className="flex items-center justify-between gap-2 pt-1 flex-wrap text-xs">
+                <span className="font-semibold text-[var(--ink-secondary)] truncate">
                   Tác giả: <strong className="text-[var(--ink-primary)]">{audio.author || 'Chưa rõ'}</strong>
                 </span>
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-3 shrink-0">
                   <button
                     type="button"
                     data-testid="open-yt-sync-btn"
                     onClick={() => setIsYtSyncModalOpen(true)}
-                    className="btn-comic text-[11px] h-8 px-2.5 bg-[var(--surface-elevated)] hover:bg-[#FFE600] hover:text-[#111113] font-bold shrink-0 whitespace-nowrap"
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--ink-secondary)] hover:text-[#3A86FF] transition-colors cursor-pointer whitespace-nowrap"
                     title="Đồng bộ mốc thời gian nghe hai chiều giữa YouTube và WaveLink"
                   >
                     <Link2 className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
@@ -913,7 +991,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={handleOpenYouTubeSynced}
-                      className="btn-comic text-[11px] h-8 px-2.5 bg-[#FF0000] border-[#111113] text-white hover:bg-red-700 font-bold shrink-0 whitespace-nowrap"
+                      className="inline-flex items-center gap-1 text-[11px] font-bold text-[#E63946] hover:underline whitespace-nowrap"
                       title={
                         absoluteYouTubeSeconds > 0
                           ? `Mở trên YouTube tại ${formattedAbsoluteYouTube} (tự động đồng bộ mốc nghe)`
@@ -928,140 +1006,12 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                   )}
                 </div>
               </div>
-
-              {/* Mô tả hiển thị gọn mặc định (~3 dòng) kèm nút Xem thêm / Thu gọn */}
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] font-extrabold text-[var(--ink-primary)] uppercase">
-                  Mô tả video:
-                </span>
-                <div className="relative">
-                  <div
-                    className={`whitespace-pre-line text-xs sm:text-sm text-[var(--ink-secondary)] leading-relaxed break-words ${
-                      shouldCollapseDescription && !isDescriptionExpanded ? 'line-clamp-3' : ''
-                    }`}
-                  >
-                    {descriptionText ? (
-                      descriptionText
-                    ) : (
-                      <span className="italic text-[var(--ink-muted)]">
-                        Không có mô tả cho audio này.
-                      </span>
-                    )}
-                  </div>
-                  {shouldCollapseDescription && !isDescriptionExpanded && (
-                    <div
-                      aria-hidden="true"
-                      className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-[var(--surface-card)] to-transparent"
-                    />
-                  )}
-                </div>
-                {shouldCollapseDescription && (
-                  <button
-                    type="button"
-                    data-testid="toggle-description-btn"
-                    aria-expanded={isDescriptionExpanded}
-                    onClick={() => setIsDescriptionExpanded((prev) => !prev)}
-                    className="self-start inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] hover:bg-[#FFE600] hover:text-[#111113] text-[11px] font-extrabold text-[var(--ink-primary)] shadow-comic-sm transition-colors cursor-pointer"
-                  >
-                    {isDescriptionExpanded ? (
-                      <>
-                        <ChevronUp className="w-3.5 h-3.5 shrink-0" strokeWidth={2.5} />
-                        <span>Thu gọn mô tả</span>
-                      </>
-                    ) : (
-                      <>
-                        <ChevronDown className="w-3.5 h-3.5 shrink-0" strokeWidth={2.5} />
-                        <span>Xem thêm mô tả</span>
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
-
-              {/* Danh sách thẻ gắn (#Tags) */}
-              <div className="flex flex-col gap-1.5 pt-2 border-t border-[var(--border-ink)]/15">
-                <span className="text-[11px] font-extrabold text-[var(--ink-primary)] uppercase flex items-center gap-1">
-                  <Tag className="w-3.5 h-3.5 text-[#3A86FF]" strokeWidth={2.5} />
-                  <span>Thẻ gắn ({normalizedTags.length}):</span>
-                </span>
-                {normalizedTags.length > 0 ? (
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {normalizedTags.map((tagName) => (
-                      <button
-                        key={tagName}
-                        type="button"
-                        onClick={() => navigate(`/library?search=${encodeURIComponent(tagName)}`)}
-                        className="badge-comic badge-comic-white hover:bg-[#FFE600] hover:text-[#111113] transition-colors text-[10px] py-0.5 px-2 cursor-pointer font-bold"
-                      >
-                        #{tagName}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="text-[11px] italic text-[var(--ink-muted)]">
-                    Chưa gắn thẻ cho audio này.
-                  </span>
-                )}
-              </div>
             </div>
           </div>
 
-          {/* Resume Bar Shortcut (1 hàng đồng nhất) */}
-          <div className="card-comic-sm p-3 bg-[var(--surface-accent-soft)] flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-              <div className="w-9 h-9 rounded-lg border-2 border-[#111113] bg-[#FFE600] flex items-center justify-center text-[#111113] shrink-0 shadow-comic-sm">
-                <History className="w-4 h-4" strokeWidth={2.5} />
-              </div>
-              <div className="flex flex-col min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-extrabold uppercase text-[var(--ink-secondary)] truncate">
-                    Mốc nghe gần nhất
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleManualSyncRecent}
-                    className="badge-comic badge-comic-yellow text-[9px] font-mono shrink-0 flex items-center gap-1 cursor-pointer hover:bg-yellow-300 active:scale-95 transition-all"
-                    title="Chạm để đồng bộ mốc nghe ngay"
-                  >
-                    <RefreshCw
-                      className={`w-2.5 h-2.5 shrink-0 ${isTargetAudioPlaying && isPlaying ? 'animate-spin' : ''}`}
-                      strokeWidth={2.5}
-                    />
-                    <span>SYNC: {isTargetAudioPlaying && isPlaying ? `${syncCountdown}s` : '60s'}</span>
-                  </button>
-                </div>
-                <span className="text-xs font-bold text-[var(--ink-primary)] truncate mt-0.5">
-                  <strong>
-                    {syncedRecentInfo?.position ||
-                      (isTargetAudioPlaying && currentTime > 0
-                        ? formatTime(currentTime)
-                        : audio.formattedPosition || '00:00:00')}
-                  </strong>{' '}
-                  · Tập{' '}
-                  {syncedRecentInfo?.epNumber ||
-                    (isTargetAudioPlaying && currentEpisode
-                      ? currentEpisode.episodeNumber
-                      : audio.currentEpisodeNumber || 1)}{' '}
-                  <span className="text-[10px] font-mono">
-                    ({currentPercent}%)
-                    {absoluteYouTubeSeconds > 0 && ` · YT ${formattedAbsoluteYouTube}`}
-                  </span>
-                </span>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleResumeShortcut}
-              className="btn-comic btn-comic-primary text-xs h-9 px-3 shrink-0 whitespace-nowrap"
-            >
-              <Play className="w-3.5 h-3.5 fill-current shrink-0" strokeWidth={2.5} />
-              <span>Nghe tiếp</span>
-            </button>
-          </div>
-
-          {/* Main Playback Console */}
+          {/* 2. Main Playback Console (Centered Hero Play Control right above the fold) */}
           <div className="card-comic p-4 md:p-5 flex flex-col gap-3.5">
-            <div className="flex items-center justify-between gap-2 text-xs pb-2 border-b border-[var(--border-ink)]/30">
+            <div className="flex items-center justify-between gap-2 text-xs pb-2 border-b border-[var(--border-ink)]/15">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <Equalizer isPlaying={isTargetAudioPlaying && isPlaying} />
                 <span className="font-extrabold text-[var(--ink-primary)] truncate">
@@ -1071,154 +1021,95 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               <button
                 type="button"
                 onClick={handleManualSyncRecent}
-                className="badge-comic badge-comic-teal text-[9px] py-0.5 font-mono cursor-pointer hover:opacity-90 active:scale-95 transition-all flex items-center gap-1 shrink-0 whitespace-nowrap"
+                className="text-[11px] font-mono font-bold text-[#2A9D8F] hover:underline active:scale-95 transition-all flex items-center gap-1 shrink-0 whitespace-nowrap cursor-pointer"
                 title="Chạm để đồng bộ mốc nghe ngay"
               >
                 <RefreshCw
-                  className={`w-2.5 h-2.5 shrink-0 ${isTargetAudioPlaying && isPlaying ? 'animate-spin' : ''}`}
+                  className={`w-3 h-3 shrink-0 ${isTargetAudioPlaying && isPlaying ? 'animate-spin' : ''}`}
                   strokeWidth={2.5}
                 />
                 <span>SYNC: {syncCountdown}s</span>
               </button>
             </div>
 
-            {/* Hàng 3 nút phía trên thanh phát tiến trình: 1 hàng ngang, màn hình nhỏ hiện icon + số */}
-            <div
-              data-testid="player-upper-controls"
-              className="grid grid-cols-3 gap-2 pt-1"
-            >
-              <button
-                type="button"
-                onClick={() => setIsSpeedModalOpen(true)}
-                className="btn-comic btn-comic-yellow text-xs h-10 px-2 sm:px-3 font-black justify-center whitespace-nowrap"
-                title="Chọn tốc độ phát (x1, x1.5, x2...)"
-              >
-                <Gauge className="w-4 h-4 shrink-0" strokeWidth={2.5} />
-                <span className="hidden sm:inline">Tốc độ </span>
-                <span>{playbackRate}x</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  if (isTargetAudioPlaying) skipSeconds(-10);
-                  else play(audio, activeEp, Math.max(0, currentPosition - 10));
-                }}
-                className="btn-comic text-xs h-10 px-2 sm:px-3 font-extrabold justify-center whitespace-nowrap bg-[var(--surface-elevated)] hover:bg-[var(--surface-muted)]"
-                title="Tua lùi 10s"
-              >
-                <RotateCcw className="w-4 h-4 shrink-0" strokeWidth={2.5} />
-                <span className="sm:hidden">-10s</span>
-                <span className="hidden sm:inline">Tua lùi 10s</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  if (isTargetAudioPlaying) skipSeconds(10);
-                  else play(audio, activeEp, currentPosition + 10);
-                }}
-                className="btn-comic text-xs h-10 px-2 sm:px-3 font-extrabold justify-center whitespace-nowrap bg-[var(--surface-elevated)] hover:bg-[var(--surface-muted)]"
-                title="Tua tới 10s"
-              >
-                <RotateCw className="w-4 h-4 shrink-0" strokeWidth={2.5} />
-                <span className="sm:hidden">+10s</span>
-                <span className="hidden sm:inline">Tua tới 10s</span>
-              </button>
-            </div>
-
             {/* Scrub Bar */}
-            <div className="flex flex-col gap-2 pt-1">
-              <div className="flex items-center gap-2">
-                <div
-                  className="flex-1"
-                  onTouchStart={(e) => e.stopPropagation()}
-                  onTouchMove={(e) => e.stopPropagation()}
-                  onTouchEnd={(e) => e.stopPropagation()}
-                >
-                  <Slider
-                    disabled={isSeekLocked}
-                    value={currentPercent}
-                    min={0}
-                    max={100}
-                    onChange={(e) => {
-                      if (isSeekLocked) return;
-                      const val = parseFloat(e.target.value);
-                      setScrubPercent(val);
-                      const targetSec = Math.round((val / 100) * episodeDuration);
-                      if (isTargetAudioPlaying) {
-                        seekTo(targetSec);
-                      } else {
-                        play(audio, activeEp, targetSec);
-                      }
-                    }}
-                    onPointerUp={() => setScrubPercent(null)}
-                    onTouchEnd={() => setScrubPercent(null)}
-                    onMouseUp={() => setScrubPercent(null)}
-                    className={isSeekLocked ? 'cursor-not-allowed opacity-50' : ''}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={toggleSeekLock}
-                  className={`w-9 h-9 rounded-lg border-2 border-[var(--border-ink)] flex items-center justify-center shrink-0 transition-all shadow-comic-sm cursor-pointer ${
-                    isSeekLocked
-                      ? 'bg-[#E63946] text-white border-[#111113]'
-                      : 'bg-[var(--surface-elevated)] text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113]'
-                  }`}
-                  title={
-                    isSeekLocked
-                      ? 'Mở khóa thanh tua thời lượng'
-                      : 'Khóa thanh tua thời lượng chống chạm nhầm'
-                  }
-                >
-                  {isSeekLocked ? (
-                    <Lock className="w-4 h-4" strokeWidth={2.5} />
-                  ) : (
-                    <Unlock className="w-4 h-4" strokeWidth={2.5} />
-                  )}
-                </button>
+            <div className="flex flex-col gap-1.5">
+              <div
+                className="w-full"
+                onTouchStart={(e) => e.stopPropagation()}
+                onTouchMove={(e) => e.stopPropagation()}
+                onTouchEnd={(e) => e.stopPropagation()}
+              >
+                <Slider
+                  disabled={isSeekLocked}
+                  value={currentPercent}
+                  min={0}
+                  max={100}
+                  onChange={(e) => {
+                    if (isSeekLocked) return;
+                    const val = parseFloat(e.target.value);
+                    setScrubPercent(val);
+                    const targetSec = Math.round((val / 100) * episodeDuration);
+                    if (isTargetAudioPlaying) {
+                      seekTo(targetSec);
+                    } else {
+                      play(audio, activeEp, targetSec);
+                    }
+                  }}
+                  onPointerUp={() => setScrubPercent(null)}
+                  onTouchEnd={() => setScrubPercent(null)}
+                  onMouseUp={() => setScrubPercent(null)}
+                  className={isSeekLocked ? 'cursor-not-allowed opacity-50' : ''}
+                />
               </div>
               <div className="flex items-center justify-between font-mono text-xs font-bold text-[var(--ink-secondary)]">
                 <span>{formatTime(currentPosition)}</span>
                 <span
-                  className={`badge-comic ${
-                    isSeekLocked ? 'badge-comic-red' : 'badge-comic-yellow'
-                  } text-[9px] py-0 px-1.5 font-mono`}
+                  className={`text-[10px] font-mono font-extrabold ${
+                    isSeekLocked ? 'text-[#E63946]' : 'text-[var(--ink-muted)]'
+                  }`}
                 >
-                  {isSeekLocked ? 'ĐÃ KHÓA TUA' : `Đã nghe ${currentPercent}%`}
+                  {isSeekLocked ? 'ĐÃ KHÓA TUA' : `${currentPercent}%`}
                 </span>
                 <span>{formatTime(episodeDuration)}</span>
               </div>
             </div>
 
-            {/* Hàng 3 nút phía dưới thanh tiến trình: Chọn giờ ngủ, Play/Pause, Nút khóa */}
+            {/* Hàng 3 nút chính nổi bật: Hẹn giờ ngủ, PLAY CHÍNH, Khóa màn hình */}
             <div
               data-testid="player-lower-controls"
-              className="flex items-center justify-center gap-6 pt-2"
+              className="flex items-center justify-center gap-7 py-1"
             >
               <button
                 type="button"
                 onClick={() => setIsSleepModalOpen(true)}
-                className={`relative w-12 h-12 rounded-xl border-2 ${
-                  sleepTimerMinutes
+                className={`relative w-11 h-11 rounded-full border ${
+                  hasActiveSleepTimer
                     ? 'bg-[#FFE600] text-[#111113] border-[#111113]'
-                    : 'bg-[var(--surface-elevated)] text-[var(--ink-primary)] border-[var(--border-ink)]'
-                } flex items-center justify-center shadow-comic-sm hover:bg-[var(--surface-muted)] cursor-pointer`}
+                    : 'bg-[var(--surface-elevated)] text-[var(--ink-secondary)] border-[var(--border-ink)]/25 hover:text-[var(--ink-primary)]'
+                } flex items-center justify-center hover:bg-[var(--surface-muted)] cursor-pointer transition-colors`}
                 title={
-                  sleepRemainingSec > 0
-                    ? `Hẹn giờ tắt: còn ${formatTime(sleepRemainingSec, sleepRemainingSec >= 3600)}`
-                    : 'Hẹn giờ tắt'
+                  isEndOfEpisodeSleep
+                    ? `Hẹn giờ tắt: hết Tập ${activeEp.episodeNumber} (còn ${epRemainingAudioLabel} audio${
+                        activePlaybackRate !== 1
+                          ? `, ~${epRemainingWallLabel} ở ${activePlaybackRate}x`
+                          : ''
+                      })`
+                    : sleepRemainingSec > 0
+                      ? `Hẹn giờ tắt: còn ${formatTime(sleepRemainingSec, sleepRemainingSec >= 3600)}`
+                      : 'Hẹn giờ tắt'
                 }
                 aria-label="Chọn giờ ngủ"
               >
-                <Moon className="w-5 h-5" strokeWidth={2.5} />
-                {sleepRemainingSec > 0 && (
+                <Moon className="w-5 h-5" strokeWidth={2.25} />
+                {(isEndOfEpisodeSleep || sleepRemainingSec > 0) && (
                   <span
                     data-testid="sleep-timer-countdown-badge"
-                    className="absolute -top-2 -right-2 px-1.5 py-0.5 rounded-full border border-[#111113] bg-[#E63946] text-white font-mono text-[9px] font-black leading-none shadow-comic-sm"
+                    className="absolute -top-2 -right-2 px-1.5 py-0.5 rounded-full border border-[#111113] bg-[#E63946] text-white font-mono text-[9px] font-black leading-none shadow-comic-sm whitespace-nowrap"
                   >
-                    {formatTime(sleepRemainingSec, sleepRemainingSec >= 3600)}
+                    {isEndOfEpisodeSleep
+                      ? `Hết T${activeEp.episodeNumber}`
+                      : formatTime(sleepRemainingSec, sleepRemainingSec >= 3600)}
                   </span>
                 )}
               </button>
@@ -1226,15 +1117,36 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               <button
                 type="button"
                 onClick={handleMasterPlay}
+                aria-busy={isTargetAudioBuffering}
                 className={`w-16 h-16 rounded-full border-2 border-[#111113] ${
                   isTargetAudioPlaying && isPlaying
                     ? 'bg-[#FFE600] text-[#111113]'
                     : 'bg-[#3A86FF] text-white'
                 } flex items-center justify-center shadow-comic hover:scale-105 active:translate-y-0.5 transition-all cursor-pointer`}
-                title="Phát / Tạm dừng"
-                aria-label="Phát / Tạm dừng"
+                title={
+                  isTargetAudioBuffering
+                    ? 'Đang tải âm thanh (Chạm để thử lại)'
+                    : isTargetAudioPlaying && isPlaying
+                      ? 'Tạm dừng'
+                      : 'Phát'
+                }
+                aria-label={
+                  isTargetAudioBuffering
+                    ? 'Đang tải âm thanh'
+                    : isTargetAudioPlaying && isPlaying
+                      ? 'Tạm dừng'
+                      : 'Phát'
+                }
               >
-                {isTargetAudioPlaying && isPlaying ? (
+                {isTargetAudioBuffering ? (
+                  <PlaybackSpinner
+                    size={28}
+                    thickness={3.5}
+                    color="#111113"
+                    trackColor="rgba(17, 17, 19, 0.2)"
+                    label="Đang tải âm thanh"
+                  />
+                ) : isTargetAudioPlaying && isPlaying ? (
                   <Pause className="w-8 h-8 fill-current" strokeWidth={2.5} />
                 ) : (
                   <Play className="w-8 h-8 fill-current ml-0.5" strokeWidth={2.5} />
@@ -1244,13 +1156,206 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               <button
                 type="button"
                 onClick={() => setScreenLocked(true)}
-                className="w-12 h-12 rounded-xl border-2 border-[var(--border-ink)] bg-[var(--surface-elevated)] text-[var(--ink-primary)] flex items-center justify-center shadow-comic-sm hover:bg-[#FFE600] hover:text-[#111113] cursor-pointer"
+                className="w-11 h-11 rounded-full border border-[var(--border-ink)]/25 bg-[var(--surface-elevated)] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] flex items-center justify-center hover:bg-[#FFE600] cursor-pointer transition-colors"
                 title="Giữ màn hình / Khóa màn hình (Tránh chạm nhầm)"
                 aria-label="Khóa màn hình"
               >
-                <Lock className="w-5 h-5" strokeWidth={2.5} />
+                <Lock className="w-5 h-5" strokeWidth={2.25} />
               </button>
             </div>
+
+            {/* Hàng 4 nút điều chỉnh phụ nhẹ nhàng (không viền dày lấn át nút Play) */}
+            {(() => {
+              const activeEpIndex = episodesList.findIndex((e) => e.id === activeEp.id);
+              const upcomingEp =
+                activeEpIndex !== -1 && activeEpIndex + 1 < episodesList.length
+                  ? episodesList[activeEpIndex + 1]
+                  : null;
+              return (
+                <div
+                  data-testid="player-upper-controls"
+                  className="grid grid-cols-4 gap-1.5 pt-2 border-t border-[var(--border-ink)]/15"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setIsSpeedModalOpen(true)}
+                    className="h-9 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap bg-[var(--surface-elevated)] text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113] transition-colors cursor-pointer"
+                    title="Chọn tốc độ phát (x1, x1.5, x2...)"
+                  >
+                    <Gauge className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
+                    <span>{playbackRate}x</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isTargetAudioPlaying) skipSeconds(-10);
+                      else play(audio, activeEp, Math.max(0, currentPosition - 10));
+                    }}
+                    className="h-9 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap bg-[var(--surface-elevated)] text-[var(--ink-primary)] hover:bg-[var(--surface-muted)] transition-colors cursor-pointer"
+                    title="Tua lùi 10s"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
+                    <span>-10s</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isTargetAudioPlaying) skipSeconds(10);
+                      else play(audio, activeEp, currentPosition + 10);
+                    }}
+                    className="h-9 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap bg-[var(--surface-elevated)] text-[var(--ink-primary)] hover:bg-[var(--surface-muted)] transition-colors cursor-pointer"
+                    title="Tua tới 10s"
+                  >
+                    <RotateCw className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
+                    <span>+10s</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="player-next-episode-btn"
+                    disabled={!upcomingEp}
+                    onClick={() => {
+                      if (!upcomingEp) return;
+                      if (isEpLocked(upcomingEp)) {
+                        handleLockedEpisodeAction(
+                          'Tập tiếp theo chỉ dành riêng cho thành viên VIP. Vui lòng nâng cấp gói!'
+                        );
+                        return;
+                      }
+                      if (isTargetAudioPlaying) {
+                        nextEpisode();
+                      } else {
+                        play(audio, upcomingEp, 0);
+                      }
+                    }}
+                    className="h-9 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap bg-[var(--surface-elevated)] text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    title={upcomingEp ? `Chuyển sang Tập ${upcomingEp.episodeNumber}` : 'Đã ở tập cuối'}
+                    aria-label="Chuyển tập tiếp theo"
+                  >
+                    <SkipForward className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
+                    <span>Tập sau</span>
+                  </button>
+                </div>
+              );
+            })()}
+
+            {(isTargetAudioBuffering && showStuckRetry) || (isTargetAudioPlaying && playbackError) ? (
+              <div className="flex items-center justify-center gap-2 pt-1 fade-in-comic">
+                <span className="text-[11px] font-bold text-[var(--ink-secondary)]">
+                  {playbackError
+                    ? playbackError
+                    : isRetrying
+                      ? `Đang thử kết nối lại (lần ${retryAttempt || 1})...`
+                      : 'Đang tải luồng âm thanh...'}
+                </span>
+                <button
+                  type="button"
+                  data-testid="player-retry-btn"
+                  onClick={() => retryPlayback()}
+                  className="btn-comic btn-comic-yellow text-[11px] py-1 px-2.5 font-black shrink-0"
+                >
+                  <RefreshCw className="w-3 h-3" strokeWidth={2.5} />
+                  <span>Thử lại</span>
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          {/* 3. Thông tin bổ sung: Mốc nghe gần nhất, Mô tả & Thẻ (borderless, không làm xao nhãn nút Phát chính) */}
+          <div className="card-comic p-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-[var(--border-ink)]/15">
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <History className="w-4 h-4 text-[var(--ink-secondary)] shrink-0" strokeWidth={2.25} />
+                <div className="flex flex-col min-w-0">
+                  <span className="text-[10px] font-bold uppercase text-[var(--ink-muted)]">
+                    Mốc nghe gần nhất
+                  </span>
+                  <span className="text-xs font-bold text-[var(--ink-primary)] truncate">
+                    {syncedRecentInfo?.position ||
+                      (isTargetAudioPlaying && currentTime > 0
+                        ? formatTime(currentTime)
+                        : audio.formattedPosition || '00:00:00')}{' '}
+                    · Tập{' '}
+                    {syncedRecentInfo?.epNumber ||
+                      (isTargetAudioPlaying && currentEpisode
+                        ? currentEpisode.episodeNumber
+                        : audio.currentEpisodeNumber || 1)}{' '}
+                    <span className="text-[10px] font-mono text-[var(--ink-secondary)]">
+                      ({currentPercent}%{absoluteYouTubeSeconds > 0 ? ` · YT ${formattedAbsoluteYouTube}` : ''})
+                    </span>
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleResumeShortcut}
+                className="px-2.5 py-1 rounded-lg bg-[var(--surface-elevated)] hover:bg-[#FFE600] hover:text-[#111113] text-[11px] font-extrabold text-[#3A86FF] inline-flex items-center gap-1 shrink-0 whitespace-nowrap transition-colors cursor-pointer"
+              >
+                <Play className="w-3 h-3 fill-current shrink-0" strokeWidth={2.25} />
+                <span>Nghe tiếp</span>
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-extrabold text-[var(--ink-primary)] uppercase">
+                Mô tả video
+              </span>
+              <div
+                className={`whitespace-pre-line text-xs sm:text-sm text-[var(--ink-secondary)] leading-relaxed break-words ${
+                  shouldCollapseDescription && !isDescriptionExpanded ? 'line-clamp-3' : ''
+                }`}
+              >
+                {descriptionText ? (
+                  descriptionText
+                ) : (
+                  <span className="italic text-[var(--ink-muted)]">
+                    Không có mô tả cho audio này.
+                  </span>
+                )}
+              </div>
+              {shouldCollapseDescription && (
+                <button
+                  type="button"
+                  data-testid="toggle-description-btn"
+                  aria-expanded={isDescriptionExpanded}
+                  onClick={() => setIsDescriptionExpanded((prev) => !prev)}
+                  className="self-start inline-flex items-center gap-1 pt-0.5 text-[11px] font-extrabold text-[#3A86FF] hover:underline cursor-pointer"
+                >
+                  {isDescriptionExpanded ? (
+                    <>
+                      <ChevronUp className="w-3.5 h-3.5 shrink-0" strokeWidth={2.5} />
+                      <span>Thu gọn mô tả</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-3.5 h-3.5 shrink-0" strokeWidth={2.5} />
+                      <span>Xem thêm mô tả</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+
+            {normalizedTags.length > 0 && (
+              <div className="flex items-center gap-x-2.5 gap-y-1 flex-wrap pt-2 border-t border-[var(--border-ink)]/15 text-[11px]">
+                <span className="font-bold text-[var(--ink-muted)] inline-flex items-center gap-1">
+                  <Tag className="w-3 h-3 text-[#3A86FF]" strokeWidth={2.25} />
+                  <span>Thẻ gắn ({normalizedTags.length}):</span>
+                </span>
+                {normalizedTags.map((tagName) => (
+                  <button
+                    key={tagName}
+                    type="button"
+                    onClick={() => navigate(`/library?search=${encodeURIComponent(tagName)}`)}
+                    className="font-bold text-[var(--ink-secondary)] hover:text-[#3A86FF] hover:underline cursor-pointer"
+                  >
+                    #{tagName}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1318,21 +1423,36 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
             <div className="flex flex-col gap-2 lg:max-h-[55vh] lg:overflow-y-auto pr-0.5">
               {pagedEpisodes.map((ep) => {
                 const isThisEpActive = isTargetAudioPlaying && currentEpisode?.id === ep.id;
-                const isCompleted = ep.completed || (ep.progressPercent || 0) >= 95;
+                const epDuration =
+                  ep.duration || Math.max(1, ep.endSeconds - ep.startSeconds) || 14400;
+                const liveEpPercent = isThisEpActive
+                  ? Math.min(100, Math.round((currentTime / epDuration) * 100))
+                  : Math.min(100, Math.round(ep.progressPercent || 0));
+                const isCompleted = ep.completed || liveEpPercent >= 95;
                 const epLocked = isEpLocked(ep);
                 const epIsVip = isVipAudio || Boolean(ep.isVip);
+                const hasTimeInTitle = /\([^)]*[-–][^)]*\)/.test(ep.title || '');
+                const epDisplayTitle =
+                  hasTimeInTitle || ep.endSeconds <= ep.startSeconds
+                    ? ep.title
+                    : `${ep.title} (${formatTime(ep.startSeconds, ep.endSeconds >= 3600)} - ${formatTime(ep.endSeconds, ep.endSeconds >= 3600)})`;
 
                 return (
                   <div
                     key={ep.id}
+                    data-testid={`episode-card-${ep.episodeNumber}`}
                     onClick={() => {
                       if (epLocked) {
                         handleLockedEpisodeAction();
                         return;
                       }
+                      if (isThisEpActive && (isTargetAudioBuffering || Boolean(playbackError))) {
+                        retryPlayback();
+                        return;
+                      }
                       play(audio, ep, ep.positionSeconds || 0);
                     }}
-                    className={`card-comic-sm p-3 flex items-center justify-between gap-3 cursor-pointer transition-all ${
+                    className={`card-comic-sm relative overflow-hidden p-3 flex items-center justify-between gap-2.5 cursor-pointer transition-all ${
                       epLocked
                         ? 'bg-[#8338EC]/10 border-[#8338EC]/50 opacity-90 hover:bg-[#8338EC]/15'
                         : isThisEpActive
@@ -1340,7 +1460,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                           : 'bg-[var(--surface-elevated)] hover:bg-[var(--surface-muted)]'
                     }`}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
                       <div
                         className={`w-9 h-9 rounded-lg border-2 border-[#111113] flex items-center justify-center shrink-0 shadow-comic-sm ${
                           epLocked
@@ -1354,6 +1474,13 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                       >
                         {epLocked ? (
                           <Lock className="w-4 h-4 text-[#FFE600]" strokeWidth={2.5} />
+                        ) : isThisEpActive && isTargetAudioBuffering ? (
+                          <PlaybackSpinner
+                            size={16}
+                            thickness={2.5}
+                            color="#111113"
+                            trackColor="rgba(17, 17, 19, 0.2)"
+                          />
                         ) : isThisEpActive ? (
                           <Play className="w-4 h-4 fill-current" strokeWidth={2.5} />
                         ) : isCompleted ? (
@@ -1362,30 +1489,25 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                           `T${ep.episodeNumber}`
                         )}
                       </div>
-                      <div className="flex flex-col min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-extrabold text-xs text-[var(--ink-primary)] truncate leading-tight">
-                            {ep.title}
-                          </span>
-                          {epIsVip && ep.episodeNumber === 1 && (
-                            <span className="badge-comic badge-comic-teal text-[8px] py-0 px-1 font-black shrink-0">
-                              <Eye className="w-2.5 h-2.5" /> XEM TRƯỚC TẬP 1
-                            </span>
-                          )}
-                          {epIsVip && ep.episodeNumber > 1 && (
-                            <span className="badge-comic badge-comic-purple text-[8px] py-0 px-1 font-black shrink-0">
-                              <Crown className="w-2.5 h-2.5 text-[#FFE600]" /> VIP
-                            </span>
-                          )}
-                        </div>
-                        <span className="font-mono text-[11px] text-[var(--ink-secondary)] truncate mt-0.5">
-                          {formatTime(ep.startSeconds)} - {formatTime(ep.endSeconds)} ·{' '}
-                          {ep.progressPercent || 0}%
+                      <div className="flex items-center gap-1.5 flex-wrap min-w-0 flex-1">
+                        <span className="font-extrabold text-xs sm:text-[13px] text-[var(--ink-primary)] leading-snug break-words">
+                          {epDisplayTitle}
                         </span>
+                        {epIsVip && ep.episodeNumber === 1 && (
+                          <span className="badge-comic badge-comic-teal text-[8px] py-0 px-1 font-black shrink-0">
+                            <Eye className="w-2.5 h-2.5" /> XEM TRƯỚC TẬP 1
+                          </span>
+                        )}
+                        {epIsVip && ep.episodeNumber > 1 && (
+                          <span className="badge-comic badge-comic-purple text-[8px] py-0 px-1 font-black shrink-0">
+                            <Crown className="w-2.5 h-2.5 text-[#FFE600]" /> VIP
+                          </span>
+                        )}
                       </div>
                     </div>
 
                     <span
+                      data-testid={`episode-status-badge-${ep.episodeNumber}`}
                       className={`badge-comic shrink-0 ${
                         epLocked
                           ? 'badge-comic-purple'
@@ -1393,21 +1515,39 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                             ? 'badge-comic-yellow'
                             : isCompleted
                               ? 'badge-comic-teal'
-                              : 'badge-comic-white'
-                      } text-[9px]`}
+                              : liveEpPercent > 0
+                                ? 'badge-comic-blue'
+                                : 'badge-comic-white'
+                      } text-[9px] font-mono`}
                     >
                       {epLocked ? (
                         <span className="flex items-center gap-0.5">
                           <Lock className="w-2.5 h-2.5" /> KHÓA VIP
                         </span>
                       ) : isThisEpActive ? (
-                        'ĐANG PHÁT'
+                        `${liveEpPercent}%`
                       ) : isCompleted ? (
                         'ĐÃ XONG'
+                      ) : liveEpPercent > 0 ? (
+                        `ĐÃ NGHE ${liveEpPercent}%`
                       ) : (
                         'CHƯA NGHE'
                       )}
                     </span>
+
+                    {!epLocked && liveEpPercent > 0 && (
+                      <div
+                        aria-hidden="true"
+                        className="pointer-events-none absolute bottom-0 inset-x-0 h-[3px] bg-[var(--surface-muted)]"
+                      >
+                        <div
+                          className={`h-full transition-all duration-300 ${
+                            isCompleted ? 'bg-[#2A9D8F]' : 'bg-[#3A86FF]'
+                          }`}
+                          style={{ width: `${liveEpPercent}%` }}
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1504,15 +1644,28 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
         size="sm"
       >
         <div className="flex flex-col gap-3">
-          {sleepRemainingSec > 0 && (
+          {(isEndOfEpisodeSleep || sleepRemainingSec > 0) && (
             <div
               data-testid="sleep-modal-countdown"
-              className="card-comic-sm p-2.5 bg-[#FFFBEB] dark:bg-[#2F2614] border-2 border-[#111113] flex items-center justify-between text-xs font-bold text-[var(--ink-primary)]"
+              className="card-comic-sm p-2.5 bg-[#FFFBEB] dark:bg-[#2F2614] border-2 border-[#111113] flex items-center justify-between gap-2 text-xs font-bold text-[var(--ink-primary)]"
             >
-              <span>Đang đếm ngược tắt nhạc:</span>
-              <strong className="font-mono text-sm text-[#E63946]">
-                {formatTime(sleepRemainingSec, sleepRemainingSec >= 3600)}
-              </strong>
+              <span>
+                {isEndOfEpisodeSleep
+                  ? `Tắt khi hết Tập ${activeEp.episodeNumber}:`
+                  : 'Đang đếm ngược tắt nhạc:'}
+              </span>
+              <div className="text-right">
+                <strong className="font-mono text-sm text-[#E63946]">
+                  {isEndOfEpisodeSleep
+                    ? epRemainingAudioLabel
+                    : formatTime(sleepRemainingSec, sleepRemainingSec >= 3600)}
+                </strong>
+                {isEndOfEpisodeSleep && activePlaybackRate !== 1 && (
+                  <div className="text-[10px] font-semibold text-[var(--ink-secondary)] font-mono">
+                    ~{epRemainingWallLabel} ở {activePlaybackRate}x
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -1530,7 +1683,9 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                   toast.success(`Đã hẹn giờ tắt sau ${mins} phút`);
                 }}
                 className={`btn-comic text-xs py-2 ${
-                  sleepTimerMinutes === mins ? 'btn-comic-yellow' : ''
+                  sleepTimerMode === 'duration' && sleepTimerMinutes === mins
+                    ? 'btn-comic-yellow'
+                    : ''
                 }`}
               >
                 {mins} phút
@@ -1542,18 +1697,24 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
             type="button"
             data-testid="sleep-end-of-episode-btn"
             onClick={() => {
-              const remAudioSec = Math.max(30, episodeDuration - currentPosition);
-              const remWallSec = Math.max(15, Math.round(remAudioSec / Math.max(0.5, playbackRate || 1)));
-              const remMinutes = Math.max(1, Math.round(remWallSec / 60));
-              setSleepTimer(remMinutes);
+              setSleepTimerEndOfEpisode();
               setIsSleepModalOpen(false);
+              const speedSuffix =
+                activePlaybackRate !== 1
+                  ? ` · ~${epRemainingWallLabel} ở ${activePlaybackRate}x`
+                  : '';
               toast.success(
-                `Đã hẹn giờ tắt khi hết Tập ${activeEp.episodeNumber} (~${remMinutes} phút)`
+                `Đã hẹn giờ tắt khi hết Tập ${activeEp.episodeNumber} (còn ${epRemainingAudioLabel}${speedSuffix})`
               );
             }}
-            className="btn-comic text-xs py-2 bg-[var(--surface-accent-soft)] hover:bg-[#FFE600] hover:text-[#111113] font-bold justify-center"
+            className={`btn-comic text-xs py-2 font-bold justify-center ${
+              isEndOfEpisodeSleep
+                ? 'btn-comic-yellow'
+                : 'bg-[var(--surface-accent-soft)] hover:bg-[#FFE600] hover:text-[#111113]'
+            }`}
           >
-            Hết tập hiện tại (Tập {activeEp.episodeNumber})
+            Hết tập hiện tại (Tập {activeEp.episodeNumber} · {epRemainingAudioLabel}
+            {activePlaybackRate !== 1 ? ` · ~${epRemainingWallLabel} ở ${activePlaybackRate}x` : ''})
           </button>
 
           <div className="flex items-center gap-2 pt-1 border-t border-[var(--border-ink)]/15">
@@ -1587,7 +1748,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
             </button>
           </div>
 
-          {sleepTimerMinutes && (
+          {hasActiveSleepTimer && (
             <button
               type="button"
               onClick={() => {
@@ -1597,7 +1758,13 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               }}
               className="btn-comic btn-comic-red text-xs py-2 mt-0.5"
             >
-              Hủy hẹn giờ ({sleepRemainingSec > 0 ? formatTime(sleepRemainingSec) : `${sleepTimerMinutes}m`})
+              Hủy hẹn giờ (
+              {isEndOfEpisodeSleep
+                ? `Hết Tập ${activeEp.episodeNumber}`
+                : sleepRemainingSec > 0
+                  ? formatTime(sleepRemainingSec, sleepRemainingSec >= 3600)
+                  : `${sleepTimerMinutes}m`}
+              )
             </button>
           )}
         </div>

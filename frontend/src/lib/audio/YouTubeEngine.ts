@@ -22,6 +22,8 @@ export class YouTubeEngine implements AudioEngine {
     rate: new Set(),
     ended: new Set(),
     error: new Set(),
+    readyForSwap: new Set(),
+    retrying: new Set(),
   };
 
   attachPlayer(player: YouTubePlayerLike, instanceId: string = 'yt-player-host'): void {

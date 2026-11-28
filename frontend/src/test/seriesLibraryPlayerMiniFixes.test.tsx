@@ -120,7 +120,7 @@ describe('Library Return-Position Restoration & Player Resilience & MiniPlayer P
     fireEvent.click(cardTitle);
 
     await waitFor(() => {
-      expect(screen.getByTestId('loc-tracker').textContent).toBe('/player/15');
+      expect(screen.getByTestId('loc-tracker').textContent).toBe('/player/truyen-trang-hai-so-3-15');
     });
 
     const saved = peekLibraryReturnState();

@@ -7,11 +7,14 @@ import {
   Pause,
   Lock,
   XCircle,
+  RefreshCw,
 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '@/stores/authStore';
+import { PlaybackSpinner } from '@/components/ui/PlaybackSpinner';
 import { formatTime } from '@/lib/utils';
+import { buildPlayerPath } from '@/lib/slug';
 
 const RED_START_PX = 24;
 
@@ -22,10 +25,13 @@ export const MiniPlayer: React.FC = React.memo(() => {
     currentAudio,
     currentEpisode,
     isPlaying,
+    isBuffering,
+    isRetrying,
     currentTime,
     duration,
     playbackRate,
     togglePlay,
+    retryPlayback,
     seekTo,
     cycleSpeed,
     setScreenLocked,
@@ -35,10 +41,13 @@ export const MiniPlayer: React.FC = React.memo(() => {
       currentAudio: s.currentAudio,
       currentEpisode: s.currentEpisode,
       isPlaying: s.isPlaying,
+      isBuffering: s.isBuffering,
+      isRetrying: s.isRetrying,
       currentTime: s.currentTime,
       duration: s.duration,
       playbackRate: s.playbackRate,
       togglePlay: s.togglePlay,
+      retryPlayback: s.retryPlayback,
       seekTo: s.seekTo,
       cycleSpeed: s.cycleSpeed,
       setScreenLocked: s.setScreenLocked,
@@ -95,7 +104,7 @@ export const MiniPlayer: React.FC = React.memo(() => {
       didDragRef.current = false;
       return;
     }
-    navigate(`/player/${currentAudio.id}`);
+    navigate(buildPlayerPath(currentAudio));
   };
 
   const resetPointerTracking = () => {
@@ -268,10 +277,28 @@ export const MiniPlayer: React.FC = React.memo(() => {
 
           <div className="flex flex-col min-w-0 flex-1">
             <div className="flex items-center gap-1.5 mb-0.5">
-              <span className="badge-comic badge-comic-yellow text-[9px] py-0 px-1.5 font-black">
-                TẬP {String(currentEpisode?.episodeNumber || 1).padStart(2, '0')} · {percent}%
+              <span
+                data-testid="mini-player-episode-badge"
+                className="badge-comic badge-comic-yellow text-[9px] py-0 px-1.5 font-black"
+              >
+                Tập {currentEpisode?.episodeNumber || 1} - {percent}%
               </span>
-              {isPlaying ? (
+              {isPlaying && isBuffering ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    retryPlayback();
+                  }}
+                  className="text-[10px] font-black text-[#E63946] uppercase tracking-wider flex items-center gap-1 cursor-pointer"
+                  title="Chạm để tải lại luồng âm thanh"
+                >
+                  <RefreshCw className="w-2.5 h-2.5 animate-spin shrink-0" strokeWidth={2.5} />
+                  <span className="hidden sm:inline">
+                    {isRetrying ? 'Đang thử lại...' : 'Đang tải...'}
+                  </span>
+                </button>
+              ) : isPlaying ? (
                 <span className="text-[10px] font-black text-[#3A86FF] uppercase tracking-wider flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-[#3A86FF] animate-ping" />
                   <span className="hidden sm:inline">Đang phát</span>
@@ -284,9 +311,6 @@ export const MiniPlayer: React.FC = React.memo(() => {
             </div>
             <span className="font-extrabold text-xs md:text-sm text-[var(--ink-primary)] truncate leading-tight">
               {currentAudio.title}
-            </span>
-            <span className="text-[11px] font-semibold text-[var(--ink-secondary)] truncate">
-              {currentEpisode?.title || 'Tập 1'}
             </span>
           </div>
         </div>
@@ -330,15 +354,28 @@ export const MiniPlayer: React.FC = React.memo(() => {
             type="button"
             onClick={(e) => {
               e.stopPropagation();
+              if (isPlaying && isBuffering && isRetrying) {
+                retryPlayback();
+                return;
+              }
               togglePlay();
             }}
+            aria-busy={Boolean(isPlaying && isBuffering)}
             className={`w-9 h-9 rounded-lg border-2 border-[#111113] ${
               isPlaying ? 'bg-[#FFE600] text-[#111113]' : 'bg-[#3A86FF] text-white'
             } flex items-center justify-center shadow-comic-sm hover:scale-105 active:translate-y-0.5 transition-all cursor-pointer`}
-            title={isPlaying ? 'Tạm dừng' : 'Phát tiếp'}
-            aria-label={isPlaying ? 'Tạm dừng' : 'Phát tiếp'}
+            title={isPlaying && isBuffering ? 'Đang tải âm thanh' : isPlaying ? 'Tạm dừng' : 'Phát tiếp'}
+            aria-label={isPlaying && isBuffering ? 'Đang tải âm thanh' : isPlaying ? 'Tạm dừng' : 'Phát tiếp'}
           >
-            {isPlaying ? (
+            {isPlaying && isBuffering ? (
+              <PlaybackSpinner
+                size={18}
+                thickness={2.5}
+                color="#111113"
+                trackColor="rgba(17, 17, 19, 0.2)"
+                label="Đang tải âm thanh"
+              />
+            ) : isPlaying ? (
               <Pause className="w-4 h-4 fill-current" strokeWidth={2.5} />
             ) : (
               <Play className="w-4 h-4 fill-current ml-0.5" strokeWidth={2.5} />

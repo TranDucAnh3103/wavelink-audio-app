@@ -34,8 +34,10 @@ export const AdminEpisodesPage: React.FC = () => {
   const [selectedAudioId, setSelectedAudioId] = useState<number | null>(urlAudioId);
 
   useEffect(() => {
-    if (audios.length > 0 && !selectedAudioId) {
-      setSelectedAudioId(urlAudioId || audios[0].id);
+    if (urlAudioId) {
+      setSelectedAudioId(urlAudioId);
+    } else if (audios.length > 0 && !selectedAudioId) {
+      setSelectedAudioId(audios[0].id);
     }
   }, [audios, selectedAudioId, urlAudioId]);
 
@@ -43,6 +45,7 @@ export const AdminEpisodesPage: React.FC = () => {
   const selectedAudio = audios.find((a) => a.id === activeId) || audios[0];
 
   const [episodes, setEpisodes] = useState<AdminEpisodeRow[]>([]);
+  const [loadedAudioDuration, setLoadedAudioDuration] = useState(0);
   const [epLoading, setEpLoading] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
@@ -53,7 +56,11 @@ export const AdminEpisodesPage: React.FC = () => {
     setEpLoading(true);
     api.admin
       .audioEpisodes(activeId)
-      .then((res) => !cancelled && setEpisodes(res.items))
+      .then((res) => {
+        if (cancelled) return;
+        setEpisodes(res.items);
+        setLoadedAudioDuration(res.audio?.totalDurationSeconds || 0);
+      })
       .catch((err) => !cancelled && toast.error(errMessage(err, 'Không thể tải danh sách tập')))
       .finally(() => !cancelled && setEpLoading(false));
     return () => {
@@ -123,7 +130,7 @@ export const AdminEpisodesPage: React.FC = () => {
       await api.episode.generateEpisodes(
         selectedAudio.id,
         blockSize,
-        selectedAudio.totalDurationSeconds || 0
+        selectedAudio.totalDurationSeconds || loadedAudioDuration || 0
       );
       queryClient.invalidateQueries({ queryKey: ['episodes', selectedAudio.id] });
       queryClient.invalidateQueries({ queryKey: ['audios'] });
@@ -142,6 +149,7 @@ export const AdminEpisodesPage: React.FC = () => {
     try {
       await api.admin.batchChapters(selectedAudio.id, chaptersText);
       queryClient.invalidateQueries({ queryKey: ['episodes', selectedAudio.id] });
+      queryClient.invalidateQueries({ queryKey: ['audios'] });
       toast.success('Đã tạo tập theo mốc thời gian');
       setChaptersOpen(false);
       setChaptersText('');
@@ -166,6 +174,7 @@ export const AdminEpisodesPage: React.FC = () => {
         prefix,
       });
       queryClient.invalidateQueries({ queryKey: ['episodes', selectedAudio.id] });
+      queryClient.invalidateQueries({ queryKey: ['audios'] });
       toast.success('Đã cập nhật danh sách tập');
       setSelected(new Set());
       reload();
@@ -230,6 +239,7 @@ export const AdminEpisodesPage: React.FC = () => {
         toast.success('Đã cập nhật tập');
       }
       queryClient.invalidateQueries({ queryKey: ['episodes', selectedAudio.id] });
+      queryClient.invalidateQueries({ queryKey: ['audios'] });
       setSheet(null);
       reload();
     } catch (err) {
@@ -244,6 +254,7 @@ export const AdminEpisodesPage: React.FC = () => {
     try {
       await api.episode.deleteEpisode(deleting.id);
       queryClient.invalidateQueries({ queryKey: ['episodes', selectedAudio.id] });
+      queryClient.invalidateQueries({ queryKey: ['audios'] });
       toast.success('Đã xóa và đánh số lại tập');
       reload();
       return true;

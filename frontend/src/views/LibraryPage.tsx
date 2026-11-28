@@ -22,9 +22,11 @@ import { LibraryListSkeleton } from '@/components/common/Skeletons';
 import { EmptyState } from '@/components/common/EmptyState';
 import { toast } from '@/components/ui/Toast';
 import { Pagination } from '@/components/ui/Pagination';
+import { PlaybackSpinner } from '@/components/ui/PlaybackSpinner';
 import { DEFAULT_PAGE_SIZE } from '@/config/pagination';
-import { getAudioListMeta } from '@/services/audioService';
+import { AudioListPaginationMeta, getAudioListMeta } from '@/services/audioService';
 import { getOptimizedThumbnailUrl, handleImageFallback } from '@/lib/utils';
+import { buildPlayerPath } from '@/lib/slug';
 import {
   clearLibraryReturnState,
   peekLibraryReturnState,
@@ -35,14 +37,18 @@ export const LibraryPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuthStore();
-  const { currentAudio, isPlaying, play, togglePlay } = usePlayerStore(
-    useShallow((s) => ({
-      currentAudio: s.currentAudio,
-      isPlaying: s.isPlaying,
-      play: s.play,
-      togglePlay: s.togglePlay,
-    }))
-  );
+  const { currentAudio, isPlaying, isBuffering, isRetrying, play, togglePlay, retryPlayback } =
+    usePlayerStore(
+      useShallow((s) => ({
+        currentAudio: s.currentAudio,
+        isPlaying: s.isPlaying,
+        isBuffering: s.isBuffering,
+        isRetrying: s.isRetrying,
+        play: s.play,
+        togglePlay: s.togglePlay,
+        retryPlayback: s.retryPlayback,
+      }))
+    );
   const toggleFavoriteMutation = useToggleFavorite();
 
   const urlCategory = searchParams.get('categoryId')
@@ -63,6 +69,12 @@ export const LibraryPage: React.FC = () => {
   useEffect(() => {
     if (urlCategory !== activeCategory) setActiveCategory(urlCategory);
   }, [urlCategory, activeCategory]);
+
+  useEffect(() => {
+    if (urlStatus !== activeStatus) setActiveStatus(urlStatus);
+    // Sync only when URL status param changes externally
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlStatus]);
 
   useEffect(() => {
     if (urlSearch !== searchQuery) setSearchQuery(urlSearch);
@@ -107,20 +119,42 @@ export const LibraryPage: React.FC = () => {
       (activeStatus === 'listening' || activeStatus === 'completed')
   );
 
-  const { data: audios = [], isLoading } = useAudios({
-    search: searchQuery,
-    categoryId: activeCategory,
-    status: isViewingMyStories
-      ? 'my'
-      : activeStatus === 'all'
-        ? null
-        : activeStatus,
-    userId: urlUserId || undefined,
-    page: isGuestClientStatusFilter ? undefined : currentPage,
-    limit: isGuestClientStatusFilter ? undefined : pageSize,
-  });
+  const libraryFilter = React.useMemo(
+    () => ({
+      search: searchQuery,
+      categoryId: activeCategory,
+      status: isViewingMyStories
+        ? 'my'
+        : activeStatus === 'all'
+          ? null
+          : activeStatus,
+      userId: urlUserId || undefined,
+      page: isGuestClientStatusFilter ? undefined : currentPage,
+      limit: isGuestClientStatusFilter ? undefined : pageSize,
+    }),
+    [
+      searchQuery,
+      activeCategory,
+      isViewingMyStories,
+      activeStatus,
+      urlUserId,
+      isGuestClientStatusFilter,
+      currentPage,
+      pageSize,
+    ]
+  );
 
-  const serverMeta = getAudioListMeta(audios);
+  const { data: audios = [], isLoading } = useAudios(libraryFilter);
+
+  const filterScopeKey = `${searchQuery}|${activeCategory ?? ''}|${activeStatus}|${urlUserId}`;
+  const lastKnownMetaRef = useRef<{ scopeKey: string; meta: AudioListPaginationMeta } | null>(null);
+  const directServerMeta = getAudioListMeta(audios, libraryFilter, user?.id);
+  if (directServerMeta) {
+    lastKnownMetaRef.current = { scopeKey: filterScopeKey, meta: directServerMeta };
+  }
+  const serverMeta =
+    directServerMeta ||
+    (lastKnownMetaRef.current?.scopeKey === filterScopeKey ? lastKnownMetaRef.current.meta : undefined);
 
   const uniqueAudios = React.useMemo(() => {
     const seen = new Set<number | string>();
@@ -151,9 +185,14 @@ export const LibraryPage: React.FC = () => {
   };
 
   useEffect(() => {
-    const urlPage = Number(searchParams.get('page'));
-    if (urlPage >= 1 && Number.isFinite(urlPage) && Math.floor(urlPage) !== currentPage) {
-      setCurrentPage(Math.floor(urlPage));
+    const rawPage = searchParams.get('page');
+    if (rawPage) {
+      const urlPage = Number(rawPage);
+      if (urlPage >= 1 && Number.isFinite(urlPage) && Math.floor(urlPage) !== currentPage) {
+        setCurrentPage(Math.floor(urlPage));
+      }
+    } else if (currentPage > 1 && !peekLibraryReturnState()) {
+      setCurrentPage(1);
     }
     // Only react to external URL page changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -499,6 +538,7 @@ export const LibraryPage: React.FC = () => {
             const isCurrentlyPlaying = Boolean(
               isPlaying && currentAudio && String(currentAudio.id) === String(a.id)
             );
+            const isThisBuffering = Boolean(isCurrentlyPlaying && isBuffering);
             return (
               <div
                 key={a.id}
@@ -511,7 +551,7 @@ export const LibraryPage: React.FC = () => {
               >
                 <div className="flex items-start gap-3">
                   <Link
-                    to={`/player/${a.id}`}
+                    to={buildPlayerPath(a)}
                     className="relative w-20 h-24 rounded-xl border-2 border-[var(--border-ink)] overflow-hidden shrink-0 bg-[#111113] shadow-comic-sm cursor-pointer"
                     onClick={() => recordLibraryReturn(a.id)}
                     aria-label={`Nghe ${a.title}`}
@@ -579,7 +619,7 @@ export const LibraryPage: React.FC = () => {
                         </button>
                       </div>
                       <Link
-                        to={`/player/${a.id}`}
+                        to={buildPlayerPath(a)}
                         onClick={() => recordLibraryReturn(a.id)}
                         className="mt-1 block truncate"
                       >
@@ -623,7 +663,7 @@ export const LibraryPage: React.FC = () => {
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <Link
-                      to={`/player/${a.id}`}
+                      to={buildPlayerPath(a)}
                       onClick={() => recordLibraryReturn(a.id)}
                       className="btn-comic text-[11px] py-1 px-2.5"
                     >
@@ -632,9 +672,14 @@ export const LibraryPage: React.FC = () => {
                     </Link>
                     <button
                       type="button"
+                      aria-busy={isThisBuffering}
                       onClick={(e) => {
                         e.stopPropagation();
                         if (currentAudio && String(currentAudio.id) === String(a.id)) {
+                          if (isThisBuffering && isRetrying) {
+                            retryPlayback();
+                            return;
+                          }
                           togglePlay();
                         } else {
                           const isVipOrAdmin =
@@ -657,12 +702,19 @@ export const LibraryPage: React.FC = () => {
                         isCurrentlyPlaying ? 'btn-comic-yellow' : 'btn-comic-primary'
                       } text-[11px] py-1 px-3`}
                     >
-                      {isCurrentlyPlaying ? (
+                      {isThisBuffering ? (
+                        <PlaybackSpinner
+                          size={14}
+                          thickness={2}
+                          color="#111113"
+                          trackColor="rgba(17, 17, 19, 0.2)"
+                        />
+                      ) : isCurrentlyPlaying ? (
                         <Pause className="w-3.5 h-3.5 fill-current" strokeWidth={2.5} />
                       ) : (
                         <Play className="w-3.5 h-3.5 fill-current" strokeWidth={2.5} />
                       )}
-                      <span>{isCurrentlyPlaying ? 'Dừng' : 'Cày'}</span>
+                      <span>{isThisBuffering ? 'Đang tải' : isCurrentlyPlaying ? 'Dừng' : 'Cày'}</span>
                     </button>
                   </div>
                 </div>
@@ -672,8 +724,9 @@ export const LibraryPage: React.FC = () => {
         </div>
       )}
 
-      {!isLoading && uniqueAudios.length > 0 && (
+      {uniqueAudios.length > 0 && (
         <Pagination
+          alwaysShow={true}
           currentPage={safeCurrentPage}
           totalPages={totalPages}
           totalItems={totalItems}

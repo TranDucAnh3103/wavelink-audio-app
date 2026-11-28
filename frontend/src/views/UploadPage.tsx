@@ -23,6 +23,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { useCategories } from '@/hooks/useCategories';
+import { buildPlayerPath } from '@/lib/slug';
 import { useImportYouTube, useImportQuota } from '@/hooks/useAudio';
 import { triggerNotificationSync } from '@/hooks/useNotifications';
 import { useDelayedFallback } from '@/hooks/useDelayedFallback';
@@ -958,11 +959,14 @@ export const UploadPage: React.FC = () => {
         cancelText="Về Thư Viện"
         onConfirm={() => {
           if (duplicateModalAudio) {
-            const suffix =
-              detectedYoutubeTimestamp && detectedYoutubeTimestamp > 0
-                ? `?t=${detectedYoutubeTimestamp}`
-                : '';
-            navigate(`/player/${duplicateModalAudio.id}${suffix}`);
+            navigate(
+              buildPlayerPath(
+                duplicateModalAudio,
+                detectedYoutubeTimestamp && detectedYoutubeTimestamp > 0
+                  ? { t: detectedYoutubeTimestamp }
+                  : undefined
+              )
+            );
           }
         }}
       >
@@ -1001,11 +1005,14 @@ export const UploadPage: React.FC = () => {
         cancelText="Về Thư Viện"
         onConfirm={() => {
           if (successModalAudio) {
-            const suffix =
-              detectedYoutubeTimestamp && detectedYoutubeTimestamp > 0
-                ? `?t=${detectedYoutubeTimestamp}`
-                : '';
-            navigate(`/player/${successModalAudio.id}${suffix}`);
+            navigate(
+              buildPlayerPath(
+                successModalAudio,
+                detectedYoutubeTimestamp && detectedYoutubeTimestamp > 0
+                  ? { t: detectedYoutubeTimestamp }
+                  : undefined
+              )
+            );
           }
         }}
       >

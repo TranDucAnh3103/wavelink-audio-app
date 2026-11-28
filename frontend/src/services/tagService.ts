@@ -20,14 +20,11 @@ export const tagService = {
 
   async createTag(payload: CreateTagPayload, isLive = true): Promise<Tag> {
     if (isLive) {
-      try {
-        const res = await axiosClient.post<{ success: boolean; data: Tag }>('/tags', payload);
-        if (res.data.success && res.data.data) {
-          return res.data.data;
-        }
-      } catch (err) {
-        console.warn('createTag live API failed', err);
+      const res = await axiosClient.post<{ success: boolean; data: Tag }>('/tags', payload);
+      if (res.data.success && res.data.data) {
+        return res.data.data;
       }
+      throw new Error('Không thể tạo thẻ');
     }
 
     const db = localDb.get();
@@ -65,12 +62,9 @@ export const tagService = {
 
   async deleteTag(id: number | string, isLive = true): Promise<boolean> {
     if (isLive) {
-      try {
-        const res = await axiosClient.delete<{ success: boolean }>(`/tags/${id}`);
-        if (res.data.success) return true;
-      } catch (err) {
-        console.warn('deleteTag live API failed', err);
-      }
+      const res = await axiosClient.delete<{ success: boolean }>(`/tags/${id}`);
+      if (res.data.success) return true;
+      throw new Error('Không thể xóa thẻ');
     }
 
     const db = localDb.get();

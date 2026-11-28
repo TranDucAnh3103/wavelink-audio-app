@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"audio-app-backend/core/domain"
@@ -18,6 +19,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+var vnLoc = time.FixedZone("Asia/Ho_Chi_Minh", 7*3600)
+
+func startOfVNDayUTC(t time.Time) time.Time {
+	vn := t.In(vnLoc)
+	return time.Date(vn.Year(), vn.Month(), vn.Day(), 0, 0, 0, 0, vnLoc).UTC()
+}
 
 type audioRow struct {
 	domain.Audio
@@ -383,43 +391,93 @@ func (h *Handler) ImportBatch(c *gin.Context) {
 		AudioID uint   `json:"audioId,omitempty"`
 		Error   string `json:"error,omitempty"`
 	}
-	results := make([]batchItemResult, 0, len(req.URLs))
-	created, dup, failed := 0, 0, 0
+	type preparedImport struct {
+		rawURL string
+		vid    string
+		exist  *domain.Audio
+		meta   *external.YouTubeMetadata
+		errMsg string
+	}
 
+	cleanedURLs := make([]string, 0, len(req.URLs))
 	for _, rawURL := range req.URLs {
-		u := strings.TrimSpace(rawURL)
-		if u == "" {
-			continue
+		if u := strings.TrimSpace(rawURL); u != "" {
+			cleanedURLs = append(cleanedURLs, u)
 		}
+	}
+
+	prepped := make([]preparedImport, len(cleanedURLs))
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	for i, u := range cleanedURLs {
+		prepped[i].rawURL = u
 		vidRes := logic.ExtractYouTubeVideoID(u)
 		if vidRes.IsError() {
-			failed++
-			results = append(results, batchItemResult{URL: u, Status: "failed", Error: vidRes.Error().Error()})
+			prepped[i].errMsg = vidRes.Error().Error()
 			continue
 		}
 		vid := vidRes.MustGet()
+		prepped[i].vid = vid
 
 		var exist domain.Audio
 		if err := h.db.Where("youtube_video_id = ?", vid).First(&exist).Error; err == nil {
-			dup++
-			results = append(results, batchItemResult{URL: u, Status: "duplicate", Title: exist.Title, AudioID: exist.ID})
+			prepped[i].exist = &exist
 			continue
 		}
 
-		meta, err := external.FetchYouTubeMetadata(vid)
-		if err != nil {
+		wg.Add(1)
+		go func(idx int, videoID string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			meta, err := external.FetchYouTubeMetadata(videoID)
+			if err != nil {
+				prepped[idx].errMsg = err.Error()
+				return
+			}
+			prepped[idx].meta = meta
+		}(i, vid)
+	}
+	wg.Wait()
+
+	results := make([]batchItemResult, 0, len(prepped))
+	created, dup, failed := 0, 0, 0
+	seenVids := map[string]bool{}
+
+	for _, item := range prepped {
+		if item.errMsg != "" {
 			failed++
-			results = append(results, batchItemResult{URL: u, Status: "failed", Error: err.Error()})
+			results = append(results, batchItemResult{URL: item.rawURL, Status: "failed", Error: item.errMsg})
 			continue
 		}
+		if item.exist != nil {
+			dup++
+			results = append(results, batchItemResult{URL: item.rawURL, Status: "duplicate", Title: item.exist.Title, AudioID: item.exist.ID})
+			continue
+		}
+		if seenVids[item.vid] {
+			dup++
+			results = append(results, batchItemResult{URL: item.rawURL, Status: "duplicate", Title: item.meta.Title})
+			continue
+		}
+		seenVids[item.vid] = true
+
+		var existAgain domain.Audio
+		if err := h.db.Where("youtube_video_id = ?", item.vid).First(&existAgain).Error; err == nil {
+			dup++
+			results = append(results, batchItemResult{URL: item.rawURL, Status: "duplicate", Title: existAgain.Title, AudioID: existAgain.ID})
+			continue
+		}
+
+		meta := item.meta
 		dur := external.InferDurationFromMetadata(meta, 0)
 		if dur <= 0 {
 			dur = blockSize
 		}
 
 		audio := domain.Audio{
-			YoutubeVideoID:       vid,
-			YoutubeURL:           fmt.Sprintf("https://www.youtube.com/watch?v=%s", vid),
+			YoutubeVideoID:       item.vid,
+			YoutubeURL:           fmt.Sprintf("https://www.youtube.com/watch?v=%s", item.vid),
 			Title:                meta.Title,
 			Author:               meta.Author,
 			Description:          meta.Description,
@@ -456,11 +514,11 @@ func (h *Handler) ImportBatch(c *gin.Context) {
 		})
 		if txErr != nil {
 			failed++
-			results = append(results, batchItemResult{URL: u, Status: "failed", Error: txErr.Error()})
+			results = append(results, batchItemResult{URL: item.rawURL, Status: "failed", Error: txErr.Error()})
 			continue
 		}
 		created++
-		results = append(results, batchItemResult{URL: u, Status: "created", Title: audio.Title, AudioID: audio.ID})
+		results = append(results, batchItemResult{URL: item.rawURL, Status: "created", Title: audio.Title, AudioID: audio.ID})
 	}
 
 	if created > 0 {
@@ -495,13 +553,39 @@ func (h *Handler) CheckStreamsBatch(c *gin.Context) {
 	}
 	q.Find(&audios)
 
+	type streamCheckOutcome struct {
+		audio      domain.Audio
+		err        error
+		mime       string
+		durationMs int64
+	}
+	outcomes := make([]streamCheckOutcome, len(audios))
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	for i, a := range audios {
+		outcomes[i].audio = a
+		wg.Add(1)
+		go func(idx int, aud domain.Audio) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+			info, err := h.streamExtractor.Extract(ctx, aud.YoutubeVideoID)
+			cancel()
+			outcomes[idx].err = err
+			if err == nil {
+				outcomes[idx].mime = info.MIME
+				outcomes[idx].durationMs = info.ApproxDurationMs
+			}
+		}(i, a)
+	}
+	wg.Wait()
+
 	okCount, failCount := 0, 0
-	for _, a := range audios {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
-		info, err := h.streamExtractor.Extract(ctx, a.YoutubeVideoID)
-		cancel()
+	for _, res := range outcomes {
+		a := res.audio
 		now := time.Now().UTC()
-		if err != nil {
+		if res.err != nil {
 			failCount++
 			h.db.Model(&domain.Audio{}).Where("id = ?", a.ID).Updates(map[string]interface{}{
 				"stream_status":     domain.StreamStatusFailed,
@@ -513,10 +597,19 @@ func (h *Handler) CheckStreamsBatch(c *gin.Context) {
 		ups := map[string]interface{}{
 			"stream_status":     domain.StreamStatusOK,
 			"stream_checked_at": &now,
-			"audio_mime":        info.MIME,
+			"audio_mime":        res.mime,
 		}
-		if a.TotalDurationSeconds <= 0 && info.ApproxDurationMs > 0 {
-			ups["duration_seconds"] = int(info.ApproxDurationMs / 1000)
+		if a.TotalDurationSeconds <= 0 && res.durationMs > 0 {
+			durSec := int(res.durationMs / 1000)
+			ups["duration_seconds"] = durSec
+			var epCount int64
+			h.db.Model(&domain.Episode{}).Where("audio_id = ?", a.ID).Count(&epCount)
+			if epCount == 1 {
+				h.db.Model(&domain.Episode{}).Where("audio_id = ?", a.ID).Updates(map[string]interface{}{
+					"end_seconds":      durSec,
+					"duration_seconds": durSec,
+				})
+			}
 		}
 		h.db.Model(&domain.Audio{}).Where("id = ?", a.ID).Updates(ups)
 	}
@@ -526,9 +619,9 @@ func (h *Handler) CheckStreamsBatch(c *gin.Context) {
 }
 
 func (h *Handler) ImportStats(c *gin.Context) {
-	now := time.Now()
-	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	cfg := h.readSiteConfig()
+	now := time.Now().UTC()
+	startOfDay := startOfVNDayUTC(now)
+	cfg := middleware.GetSiteConfig(h.db)
 
 	type row struct {
 		UserID   uint   `json:"userId"`
@@ -625,20 +718,14 @@ func (h *Handler) Broadcast(c *gin.Context) {
 		response.Internal(c, "Không thể xác định người nhận")
 		return
 	}
-	delivered := 0
-	for _, id := range ids {
-		ok, _ := notification.CreateSafeNotification(h.db, domain.Notification{
-			UserID:    id,
-			Title:     truncate(req.Title, 200),
-			Message:   truncate(req.Message, 1000),
-			Type:      kind,
-			Link:      truncate(strings.TrimSpace(req.Link), 255),
-			CreatedAt: now,
-		})
-		if ok {
-			delivered++
-		}
-	}
+	delivered, _ := notification.CreateBatchNotifications(
+		h.db,
+		ids,
+		truncate(req.Title, 200),
+		truncate(req.Message, 1000),
+		kind,
+		truncate(strings.TrimSpace(req.Link), 255),
+	)
 	h.audit(c, "broadcast", "notification", req.Audience, req.Title, fmt.Sprintf("%d/%d", delivered, len(ids)))
 	response.OK(c, gin.H{"targeted": len(ids), "delivered": delivered}, nil)
 }
@@ -656,8 +743,8 @@ func (h *Handler) Dashboard(c *gin.Context) {
 		t.Count(&n)
 		return n
 	}
-	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	since := startOfDay.AddDate(0, 0, -13)
+	startOfDayVN := startOfVNDayUTC(now)
+	since := startOfDayVN.AddDate(0, 0, -13)
 	week := now.Add(-7 * 24 * time.Hour)
 
 	var listenSecs int64
@@ -667,7 +754,7 @@ func (h *Handler) Dashboard(c *gin.Context) {
 	h.db.Model(&domain.MembershipOrder{}).Where("status = ? AND paid_at >= ?", "PAID", now.Add(-30*24*time.Hour)).
 		Select("COALESCE(SUM(amount), 0)").Scan(&revenue30)
 
-	// 14-day series
+	// 14-day series (múi giờ Việt Nam UTC+7)
 	type point struct {
 		Date          string `json:"date"`
 		Users         int    `json:"users"`
@@ -676,15 +763,16 @@ func (h *Handler) Dashboard(c *gin.Context) {
 	}
 	series := make([]point, 14)
 	idx := map[string]int{}
+	vnStart := since.In(vnLoc)
 	for i := 0; i < 14; i++ {
-		d := since.AddDate(0, 0, i).Format("2006-01-02")
+		d := vnStart.AddDate(0, 0, i).Format("2006-01-02")
 		series[i] = point{Date: d}
 		idx[d] = i
 	}
 	var joined []time.Time
 	h.db.Model(&domain.User{}).Where("is_guest = ? AND created_at >= ?", false, since).Pluck("created_at", &joined)
 	for _, t := range joined {
-		if i, ok := idx[t.UTC().Format("2006-01-02")]; ok {
+		if i, ok := idx[t.In(vnLoc).Format("2006-01-02")]; ok {
 			series[i].Users++
 		}
 	}
@@ -694,14 +782,14 @@ func (h *Handler) Dashboard(c *gin.Context) {
 		if o.PaidAt == nil {
 			continue
 		}
-		if i, ok := idx[o.PaidAt.UTC().Format("2006-01-02")]; ok {
+		if i, ok := idx[o.PaidAt.In(vnLoc).Format("2006-01-02")]; ok {
 			series[i].Revenue += int64(o.Amount)
 		}
 	}
 	var hist []domain.ListeningHistory
 	h.db.Select("duration_listened, created_at").Where("created_at >= ?", since).Find(&hist)
 	for _, hi := range hist {
-		if i, ok := idx[hi.CreatedAt.UTC().Format("2006-01-02")]; ok {
+		if i, ok := idx[hi.CreatedAt.In(vnLoc).Format("2006-01-02")]; ok {
 			series[i].ListenSeconds += int64(hi.DurationListened)
 		}
 	}

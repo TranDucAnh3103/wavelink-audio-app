@@ -7,6 +7,7 @@ import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { SidebarNav } from '@/components/layout/SidebarNav';
 import { AudioEngineHost } from '@/components/layout/AudioEngineHost';
+import { MaintenanceOverlay } from '@/components/common/MaintenanceOverlay';
 import { ToastContainer } from '@/components/ui/Toast';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -88,6 +89,7 @@ function ShellBody({ children }: { children: React.ReactNode }) {
       )}
 
       <AudioEngineHost />
+      <MaintenanceOverlay />
       <ToastContainer />
     </div>
   );

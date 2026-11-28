@@ -380,6 +380,7 @@ func (h *Handler) DeleteMessage(c *gin.Context) {
 		Type: "delete_message",
 		Data: gin.H{"id": id},
 	})
+	middleware.RecordAudit(h.db, c, "community_delete_message", "community", id, msg.Username, "")
 
 	response.OK(c, gin.H{"deletedId": id}, "Đã xóa tin nhắn thành công")
 }
@@ -391,6 +392,7 @@ func (h *Handler) ClearAllMessages(c *gin.Context) {
 	h.hub.Broadcast(WSMessage{
 		Type: "clear_messages",
 	})
+	middleware.RecordAudit(h.db, c, "community_clear_messages", "community", "all", "Phòng chat cộng đồng", "Dọn sạch toàn bộ tin nhắn")
 
 	response.OK(c, gin.H{"cleared": true}, "Đã dọn dẹp sạch toàn bộ phòng chat")
 }
@@ -518,6 +520,17 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 		}
 
 		if incoming.Type == "chat" {
+			if cl.userID == 0 && !middleware.GetSiteConfig(h.db).AllowGuestChat {
+				h.hub.mu.RLock()
+				if h.hub.clients[cl] {
+					select {
+					case cl.send <- []byte(`{"type":"error","message":"Khách hiện không được phép gửi tin nhắn theo cấu hình hệ thống"}`):
+					default:
+					}
+				}
+				h.hub.mu.RUnlock()
+				return
+			}
 			text := strings.TrimSpace(incoming.Message)
 			if text == "" || len(text) > 1000 {
 				return

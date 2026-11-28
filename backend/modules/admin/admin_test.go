@@ -448,3 +448,119 @@ func TestEpisodesTaxonomyTicketsSystemAndAudit(t *testing.T) {
 		t.Fatalf("expected CSV export with Username header, got %d", w.Code)
 	}
 }
+
+func TestLiveRoleSyncMaintenanceAndOrderEdgeCases(t *testing.T) {
+	env := setupTestEnv(t)
+	middleware.SetAuthDB(env.db)
+	defer middleware.SetAuthDB(nil)
+	middleware.InvalidateSiteConfigCache()
+
+	// Wrap a router with MaintenanceGuard to test 503 enforcement cleanly
+	r := gin.New()
+	r.Use(middleware.SessionMiddleware(testSecret))
+	v1 := r.Group("/api/v1")
+	v1.Use(middleware.MaintenanceGuard(env.db))
+	admin.NewHandler(env.db).RegisterRoutes(v1)
+	v1.GET("/public-ping", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+	env.router = r
+
+	// 1. Live role promotion -> existing user JWT works on admin route immediately
+	if code, _ := env.do(t, "PATCH", fmt.Sprintf("/api/v1/admin/users/%d", env.normalUser.ID), env.adminToken, map[string]string{
+		"role":  "ADMIN",
+		"email": "",
+	}); code != http.StatusOK {
+		t.Fatalf("promote user expected 200, got %d", code)
+	}
+	var promoted domain.User
+	env.db.First(&promoted, env.normalUser.ID)
+	if !strings.HasSuffix(promoted.Email, "@user.local") {
+		t.Fatalf("expected cleared email to get synthetic suffix, got %q", promoted.Email)
+	}
+	if code, _ := env.do(t, "GET", "/api/v1/admin/dashboard", env.userToken, nil); code != http.StatusOK {
+		t.Fatalf("promoted user token expected immediate 200 on admin route, got %d", code)
+	}
+
+	// Switch user to VIP via UpdateUser, then verify old token loses admin immediately
+	if code, _ := env.do(t, "PATCH", fmt.Sprintf("/api/v1/admin/users/%d", env.normalUser.ID), env.adminToken, map[string]string{
+		"role": "VIP",
+	}); code != http.StatusOK {
+		t.Fatalf("set VIP role expected 200, got %d", code)
+	}
+	if code, _ := env.do(t, "GET", "/api/v1/admin/dashboard", env.userToken, nil); code != http.StatusForbidden {
+		t.Fatalf("demoted user token expected immediate 403 on admin route, got %d", code)
+	}
+
+	// 2. MaintenanceMode blocks normal users with 503 MAINTENANCE_MODE while admin bypasses
+	if code, _ := env.do(t, "PUT", "/api/v1/admin/settings", env.adminToken, map[string]interface{}{
+		"freeImportDailyLimit": 5,
+		"allowUserImport":      true,
+		"allowGuestChat":       true,
+		"maintenanceMode":      true,
+		"maintenanceMessage":   "Bảo trì định kỳ",
+	}); code != http.StatusOK {
+		t.Fatalf("enable maintenance expected 200, got %d", code)
+	}
+	if code, body := env.do(t, "GET", "/api/v1/public-ping", env.userToken, nil); code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 during maintenance for non-admin, got %d %v", code, body)
+	}
+	if code, _ := env.do(t, "GET", "/api/v1/public-ping", env.adminToken, nil); code != http.StatusOK {
+		t.Fatalf("expected 200 for admin during maintenance, got %d", code)
+	}
+
+	// 3. Expired PENDING order shows under EXPIRED & cannot be confirmed; refund without VipExpiresAt still downgrades
+	expiredAt := time.Now().UTC().Add(-2 * time.Hour)
+	expOrder := domain.MembershipOrder{
+		OrderCode:    "ORD-EXP-1",
+		UserID:       env.normalUser.ID,
+		PackageID:    "VIP_1M",
+		PackageName:  "1 Tháng",
+		Amount:       49000,
+		DurationDays: 30,
+		Status:       "PENDING",
+		Provider:     "VIETQR",
+		ExpiresAt:    expiredAt,
+	}
+	env.db.Create(&expOrder)
+	if code, res := env.do(t, "GET", "/api/v1/admin/orders?status=EXPIRED", env.adminToken, nil); code != http.StatusOK || int(res["data"].(map[string]interface{})["total"].(float64)) != 1 {
+		t.Fatalf("expected expired pending order in EXPIRED filter, got %d %v", code, res)
+	}
+
+	// Cancel then ensure Confirm rejects CANCELLED order
+	if code, _ := env.do(t, "POST", "/api/v1/admin/orders/ORD-EXP-1/cancel", env.adminToken, nil); code != http.StatusOK {
+		t.Fatalf("cancel pending order expected 200, got %d", code)
+	}
+	if code, _ := env.do(t, "POST", "/api/v1/admin/orders/ORD-EXP-1/confirm", env.adminToken, nil); code != http.StatusBadRequest {
+		t.Fatalf("expected 400 confirming cancelled order, got %d", code)
+	}
+
+	// Paid order refund when user has nil VipExpiresAt
+	env.db.Model(&domain.User{}).Where("id = ?", env.normalUser.ID).Updates(map[string]interface{}{
+		"role":           domain.RoleVIP,
+		"membership":     domain.MembershipVIP,
+		"vip_expires_at": nil,
+	})
+	now := time.Now().UTC()
+	paidOrder := domain.MembershipOrder{
+		OrderCode:    "ORD-NIL-EXP",
+		UserID:       env.normalUser.ID,
+		PackageID:    "VIP_1M",
+		PackageName:  "1 Tháng",
+		Amount:       49000,
+		DurationDays: 30,
+		Status:       "PAID",
+		Provider:     "VIETQR",
+		PaidAt:       &now,
+		ExpiresAt:    now.Add(time.Hour),
+	}
+	env.db.Create(&paidOrder)
+	if code, _ := env.do(t, "POST", "/api/v1/admin/orders/ORD-NIL-EXP/refund", env.adminToken, nil); code != http.StatusOK {
+		t.Fatalf("refund order expected 200, got %d", code)
+	}
+	var afterRefund domain.User
+	env.db.First(&afterRefund, env.normalUser.ID)
+	if afterRefund.Role != domain.RoleUser || afterRefund.Membership != domain.MembershipFree {
+		t.Fatalf("expected user downgraded on refund even with nil vip_expires_at, got role=%s membership=%s", afterRefund.Role, afterRefund.Membership)
+	}
+}

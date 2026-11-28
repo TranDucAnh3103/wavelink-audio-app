@@ -224,17 +224,14 @@ export const membershipService = {
 
   async updatePaymentInfo(info: PaymentInfo, isLive = true): Promise<PaymentInfo> {
     if (isLive) {
-      try {
-        const res = await axiosClient.put<{ success: boolean; data: PaymentInfo }>('/membership/admin/payment-info', info);
-        if (res.data.success && res.data.data) {
-          if (typeof localStorage !== 'undefined') {
-            localStorage.removeItem('vip_payment_info');
-          }
-          return res.data.data;
+      const res = await axiosClient.put<{ success: boolean; data: PaymentInfo }>('/membership/admin/payment-info', info);
+      if (res.data.success && res.data.data) {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem('vip_payment_info');
         }
-      } catch (err) {
-        console.warn('updatePaymentInfo live failed, saving locally', err);
+        return res.data.data;
       }
+      throw new Error('Không thể cập nhật thông tin ngân hàng');
     }
 
     if (typeof localStorage !== 'undefined') {
@@ -247,19 +244,16 @@ export const membershipService = {
 
   async updatePackages(packages: MembershipPackage[], isLive = true): Promise<MembershipPackage[]> {
     if (isLive) {
-      try {
-        const res = await axiosClient.put<{ success: boolean; data: MembershipPackage[] }>('/membership/admin/packages', {
-          packages,
-        });
-        if (res.data.success && Array.isArray(res.data.data)) {
-          if (typeof localStorage !== 'undefined') {
-            localStorage.removeItem('vip_packages');
-          }
-          return res.data.data;
+      const res = await axiosClient.put<{ success: boolean; data: MembershipPackage[] }>('/membership/admin/packages', {
+        packages,
+      });
+      if (res.data.success && Array.isArray(res.data.data)) {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem('vip_packages');
         }
-      } catch (err) {
-        console.warn('updatePackages live failed, saving locally', err);
+        return res.data.data;
       }
+      throw new Error('Không thể cập nhật gói VIP');
     }
 
     if (typeof localStorage !== 'undefined') {
@@ -272,17 +266,14 @@ export const membershipService = {
 
   async resetPackages(isLive = true): Promise<MembershipPackage[]> {
     if (isLive) {
-      try {
-        const res = await axiosClient.post<{ success: boolean; data: MembershipPackage[] }>('/membership/admin/packages/reset');
-        if (res.data.success && Array.isArray(res.data.data)) {
-          if (typeof localStorage !== 'undefined') {
-            localStorage.removeItem('vip_packages');
-          }
-          return res.data.data;
+      const res = await axiosClient.post<{ success: boolean; data: MembershipPackage[] }>('/membership/admin/packages/reset');
+      if (res.data.success && Array.isArray(res.data.data)) {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem('vip_packages');
         }
-      } catch (err) {
-        console.warn('resetPackages live failed, resetting locally', err);
+        return res.data.data;
       }
+      throw new Error('Không thể khôi phục gói VIP mặc định');
     }
 
     if (typeof localStorage !== 'undefined') {

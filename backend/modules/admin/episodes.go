@@ -186,6 +186,7 @@ func (h *Handler) BatchChapters(c *gin.Context) {
 
 		for j := len(chapters); j < len(existing); j++ {
 			_ = tx.Where("episode_id = ?", existing[j].ID).Delete(&domain.ListeningProgress{}).Error
+			_ = tx.Where("episode_id = ?", existing[j].ID).Delete(&domain.ListeningHistory{}).Error
 			_ = tx.Delete(&domain.Episode{}, existing[j].ID).Error
 		}
 		return nil
@@ -278,6 +279,7 @@ func (h *Handler) BulkEpisodes(c *gin.Context) {
 			response.Internal(c, "Không thể cập nhật tập")
 			return
 		}
+		h.audit(c, "bulk_episodes_"+req.Action, "episode", fmt.Sprintf("%d", res.RowsAffected), "", fmt.Sprintf("ids=%d", len(req.IDs)))
 		response.OK(c, gin.H{"updated": res.RowsAffected}, nil)
 
 	case "delete":
@@ -312,6 +314,7 @@ func (h *Handler) BulkEpisodes(c *gin.Context) {
 			response.Internal(c, "Không thể xóa tập")
 			return
 		}
+		h.audit(c, "bulk_episodes_delete", "episode", fmt.Sprintf("%d", len(req.IDs)), "", fmt.Sprintf("audio=%d", audioID))
 		response.OK(c, gin.H{"updated": len(req.IDs)}, nil)
 
 	case "renumber":
@@ -338,6 +341,7 @@ func (h *Handler) BulkEpisodes(c *gin.Context) {
 			response.Internal(c, "Không thể đánh số lại tập")
 			return
 		}
+		h.audit(c, "bulk_episodes_renumber", "audio", fmt.Sprintf("%d", req.AudioID), "", fmt.Sprintf("%d tập", len(eps)))
 		response.OK(c, gin.H{"updated": len(eps)}, nil)
 
 	case "rename_prefix":
@@ -352,6 +356,7 @@ func (h *Handler) BulkEpisodes(c *gin.Context) {
 			_ = h.db.Model(&domain.Episode{}).Where("id = ?", ep.ID).
 				Update("title", fmt.Sprintf("%s %d", prefix, ep.EpisodeNumber)).Error
 		}
+		h.audit(c, "bulk_episodes_rename_prefix", "episode", fmt.Sprintf("%d", len(eps)), prefix, "")
 		response.OK(c, gin.H{"updated": len(eps)}, nil)
 
 	default:

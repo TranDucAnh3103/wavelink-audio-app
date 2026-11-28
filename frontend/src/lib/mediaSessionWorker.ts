@@ -20,7 +20,7 @@ export function startMediaSessionKeeper(onTick: () => void): void {
       const code = `
         let timer = setInterval(function() {
           postMessage('MEDIA_SESSION_TICK');
-        }, 15000);
+        }, 5000);
       `;
       const blob = new Blob([code], { type: 'application/javascript' });
       const workerUrl = URL.createObjectURL(blob);
@@ -49,7 +49,7 @@ export function startMediaSessionKeeper(onTick: () => void): void {
 function startFallbackInterval(onTick: () => void): void {
   fallbackInterval = setInterval(() => {
     onTick();
-  }, 15000);
+  }, 5000);
 }
 
 export function stopMediaSessionKeeper(): void {

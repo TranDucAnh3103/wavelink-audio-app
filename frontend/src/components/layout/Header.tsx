@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useUnreadNotificationCount } from '@/hooks/useNotifications';
 import { extractYouTubeId } from '@/lib/utils';
+import { buildPlayerPath } from '@/lib/slug';
 import { extractYouTubeTimestamp } from '@/lib/youtubeSync';
 import { api } from '@/services/api';
 
@@ -36,7 +37,7 @@ export const Header: React.FC = React.memo(() => {
         setQuickQuery('');
         if (matched) {
           navigate(
-            ytTime && ytTime > 0 ? `/player/${matched.id}?t=${ytTime}` : `/player/${matched.id}`
+            buildPlayerPath(matched, ytTime && ytTime > 0 ? { t: ytTime } : undefined)
           );
           return;
         }
