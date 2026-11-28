@@ -72,6 +72,9 @@ export interface PlayerPageProps {
   initialAudio?: AudioItem | null;
 }
 
+const MUTED_CONTROL_BTN_CLASS =
+  'border border-black/15 dark:border-white/15 bg-[var(--surface-muted)]/75 text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] hover:bg-[var(--surface-muted)] hover:border-black/25 dark:hover:border-white/25 transition-colors cursor-pointer';
+
 export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
   const { id: rawRouteId } = useParams<{ id: string }>();
   const id = extractAudioIdFromSlug(rawRouteId);
@@ -868,10 +871,10 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
         <button
           type="button"
           onClick={() => setActiveTab('player')}
-          className={`h-10 px-3 rounded-xl border-2 font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 whitespace-nowrap transition-all cursor-pointer ${
+          className={`h-10 px-3 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 whitespace-nowrap transition-all cursor-pointer ${
             activeTab === 'player'
-              ? 'bg-[#FFE600] text-[#111113] border-[#111113] shadow-comic-sm'
-              : 'bg-[var(--surface-card)] border-[var(--border-ink)] text-[var(--ink-secondary)] hover:bg-[var(--surface-muted)]'
+              ? 'border-2 bg-[#FFE600] text-[#111113] border-[#111113] shadow-comic-sm'
+              : MUTED_CONTROL_BTN_CLASS
           }`}
         >
           <Headphones className="w-4 h-4 shrink-0" strokeWidth={2.25} />
@@ -880,10 +883,10 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
         <button
           type="button"
           onClick={() => setActiveTab('episodes')}
-          className={`h-10 px-3 rounded-xl border-2 font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 whitespace-nowrap transition-all cursor-pointer ${
+          className={`h-10 px-3 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 whitespace-nowrap transition-all cursor-pointer ${
             activeTab === 'episodes'
-              ? 'bg-[#FFE600] text-[#111113] border-[#111113] shadow-comic-sm'
-              : 'bg-[var(--surface-card)] border-[var(--border-ink)] text-[var(--ink-secondary)] hover:bg-[var(--surface-muted)]'
+              ? 'border-2 bg-[#FFE600] text-[#111113] border-[#111113] shadow-comic-sm'
+              : MUTED_CONTROL_BTN_CLASS
           }`}
         >
           <ListMusic className="w-4 h-4 shrink-0" strokeWidth={2.25} />
@@ -973,12 +976,12 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                 <span className="font-semibold text-[var(--ink-secondary)] truncate">
                   Tác giả: <strong className="text-[var(--ink-primary)]">{audio.author || 'Chưa rõ'}</strong>
                 </span>
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
                   <button
                     type="button"
                     data-testid="open-yt-sync-btn"
                     onClick={() => setIsYtSyncModalOpen(true)}
-                    className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--ink-secondary)] hover:text-[#3A86FF] transition-colors cursor-pointer whitespace-nowrap"
+                    className={`px-2 py-1 rounded-lg inline-flex items-center gap-1 text-[11px] font-bold hover:text-[#3A86FF] whitespace-nowrap ${MUTED_CONTROL_BTN_CLASS}`}
                     title="Đồng bộ mốc thời gian nghe hai chiều giữa YouTube và WaveLink"
                   >
                     <Link2 className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
@@ -991,14 +994,14 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={handleOpenYouTubeSynced}
-                      className="inline-flex items-center gap-1 text-[11px] font-bold text-[#E63946] hover:underline whitespace-nowrap"
+                      className={`px-2 py-1 rounded-lg inline-flex items-center gap-1 text-[11px] font-bold hover:text-[#E63946] whitespace-nowrap ${MUTED_CONTROL_BTN_CLASS}`}
                       title={
                         absoluteYouTubeSeconds > 0
                           ? `Mở trên YouTube tại ${formattedAbsoluteYouTube} (tự động đồng bộ mốc nghe)`
                           : 'Mở video gốc trên YouTube'
                       }
                     >
-                      <Youtube className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
+                      <Youtube className="w-3.5 h-3.5 shrink-0 text-[#E63946]" strokeWidth={2.25} />
                       <span>
                         YouTube{absoluteYouTubeSeconds > 0 ? ` · ${formattedAbsoluteYouTube}` : ''}
                       </span>
@@ -1011,7 +1014,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
 
           {/* 2. Main Playback Console (Centered Hero Play Control right above the fold) */}
           <div className="card-comic p-4 md:p-5 flex flex-col gap-3.5">
-            <div className="flex items-center justify-between gap-2 text-xs pb-2 border-b border-[var(--border-ink)]/15">
+            <div className="flex items-center justify-between gap-2 text-xs pb-2 border-b border-black/10 dark:border-white/10">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <Equalizer isPlaying={isTargetAudioPlaying && isPlaying} />
                 <span className="font-extrabold text-[var(--ink-primary)] truncate">
@@ -1076,10 +1079,10 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                       ? 'Mở khóa thanh tiến trình phát'
                       : 'Khóa thanh tiến trình phát chống chạm nhầm'
                   }
-                  className={`w-9 h-9 rounded-lg border-2 flex items-center justify-center shrink-0 transition-all shadow-comic-sm cursor-pointer ${
+                  className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 transition-all cursor-pointer ${
                     isSeekLocked
-                      ? 'bg-[#E63946] text-white border-[#111113]'
-                      : 'border-[var(--border-ink)] bg-[var(--surface-elevated)] text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113]'
+                      ? 'bg-[#E63946]/90 text-white border border-[#E63946]'
+                      : MUTED_CONTROL_BTN_CLASS
                   }`}
                 >
                   {isSeekLocked ? (
@@ -1110,11 +1113,11 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               <button
                 type="button"
                 onClick={() => setIsSleepModalOpen(true)}
-                className={`relative w-11 h-11 rounded-full border ${
+                className={`relative w-11 h-11 rounded-full flex items-center justify-center ${
                   hasActiveSleepTimer
-                    ? 'bg-[#FFE600] text-[#111113] border-[#111113]'
-                    : 'bg-[var(--surface-elevated)] text-[var(--ink-secondary)] border-[var(--border-ink)]/25 hover:text-[var(--ink-primary)]'
-                } flex items-center justify-center hover:bg-[var(--surface-muted)] cursor-pointer transition-colors`}
+                    ? 'bg-[#FFE600] text-[#111113] border border-[#111113]/50 cursor-pointer transition-colors'
+                    : MUTED_CONTROL_BTN_CLASS
+                }`}
                 title={
                   isEndOfEpisodeSleep
                     ? `Hẹn giờ tắt: hết Tập ${activeEp.episodeNumber} (còn ${epRemainingAudioLabel} audio${
@@ -1183,7 +1186,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               <button
                 type="button"
                 onClick={() => setScreenLocked(true)}
-                className="w-11 h-11 rounded-full border border-[var(--border-ink)]/25 bg-[var(--surface-elevated)] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] flex items-center justify-center hover:bg-[#FFE600] cursor-pointer transition-colors"
+                className={`w-11 h-11 rounded-full flex items-center justify-center ${MUTED_CONTROL_BTN_CLASS}`}
                 title="Giữ màn hình / Khóa màn hình (Tránh chạm nhầm)"
                 aria-label="Khóa màn hình"
               >
@@ -1191,7 +1194,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               </button>
             </div>
 
-            {/* Hàng 4 nút điều chỉnh phụ nhẹ nhàng (không viền dày lấn át nút Play) */}
+            {/* Hàng 4 nút điều chỉnh phụ nhẹ nhàng (nền & viền mờ để giữ điểm nhấn vào nút Play) */}
             {(() => {
               const activeEpIndex = episodesList.findIndex((e) => e.id === activeEp.id);
               const upcomingEp =
@@ -1201,12 +1204,12 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               return (
                 <div
                   data-testid="player-upper-controls"
-                  className="grid grid-cols-4 gap-1.5 pt-2 border-t border-[var(--border-ink)]/15"
+                  className="grid grid-cols-4 gap-1.5 pt-2.5 border-t border-black/10 dark:border-white/10"
                 >
                   <button
                     type="button"
                     onClick={() => setIsSpeedModalOpen(true)}
-                    className="h-9 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap bg-[var(--surface-elevated)] text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113] transition-colors cursor-pointer"
+                    className={`h-9 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap ${MUTED_CONTROL_BTN_CLASS}`}
                     title="Chọn tốc độ phát (x1, x1.5, x2...)"
                   >
                     <Gauge className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
@@ -1219,7 +1222,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                       if (isTargetAudioPlaying) skipSeconds(-10);
                       else play(audio, activeEp, Math.max(0, currentPosition - 10));
                     }}
-                    className="h-9 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap bg-[var(--surface-elevated)] text-[var(--ink-primary)] hover:bg-[var(--surface-muted)] transition-colors cursor-pointer"
+                    className={`h-9 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap ${MUTED_CONTROL_BTN_CLASS}`}
                     title="Tua lùi 10s"
                   >
                     <RotateCcw className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
@@ -1232,7 +1235,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                       if (isTargetAudioPlaying) skipSeconds(10);
                       else play(audio, activeEp, currentPosition + 10);
                     }}
-                    className="h-9 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap bg-[var(--surface-elevated)] text-[var(--ink-primary)] hover:bg-[var(--surface-muted)] transition-colors cursor-pointer"
+                    className={`h-9 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap ${MUTED_CONTROL_BTN_CLASS}`}
                     title="Tua tới 10s"
                   >
                     <RotateCw className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
@@ -1257,7 +1260,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                         play(audio, upcomingEp, 0);
                       }
                     }}
-                    className="h-9 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap bg-[var(--surface-elevated)] text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    className={`h-9 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${MUTED_CONTROL_BTN_CLASS}`}
                     title={upcomingEp ? `Chuyển sang Tập ${upcomingEp.episodeNumber}` : 'Đã ở tập cuối'}
                     aria-label="Chuyển tập tiếp theo"
                   >
@@ -1290,9 +1293,9 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
             ) : null}
           </div>
 
-          {/* 3. Thông tin bổ sung: Mốc nghe gần nhất, Mô tả & Thẻ (borderless, không làm xao nhãn nút Phát chính) */}
+          {/* 3. Thông tin bổ sung: Mốc nghe gần nhất, Mô tả & Thẻ */}
           <div className="card-comic p-4 flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-[var(--border-ink)]/15">
+            <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-black/10 dark:border-white/10">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <History className="w-4 h-4 text-[var(--ink-secondary)] shrink-0" strokeWidth={2.25} />
                 <div className="flex flex-col min-w-0">
@@ -1318,7 +1321,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
               <button
                 type="button"
                 onClick={handleResumeShortcut}
-                className="px-2.5 py-1 rounded-lg bg-[var(--surface-elevated)] hover:bg-[#FFE600] hover:text-[#111113] text-[11px] font-extrabold text-[#3A86FF] inline-flex items-center gap-1 shrink-0 whitespace-nowrap transition-colors cursor-pointer"
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold inline-flex items-center gap-1 shrink-0 whitespace-nowrap hover:text-[#3A86FF] ${MUTED_CONTROL_BTN_CLASS}`}
               >
                 <Play className="w-3 h-3 fill-current shrink-0" strokeWidth={2.25} />
                 <span>Nghe tiếp</span>
@@ -1366,8 +1369,8 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
             </div>
 
             {normalizedTags.length > 0 && (
-              <div className="flex items-center gap-x-2.5 gap-y-1 flex-wrap pt-2 border-t border-[var(--border-ink)]/15 text-[11px]">
-                <span className="font-bold text-[var(--ink-muted)] inline-flex items-center gap-1">
+              <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-black/10 dark:border-white/10 text-[11px]">
+                <span className="font-bold text-[var(--ink-muted)] inline-flex items-center gap-1 mr-0.5">
                   <Tag className="w-3 h-3 text-[#3A86FF]" strokeWidth={2.25} />
                   <span>Thẻ gắn ({normalizedTags.length}):</span>
                 </span>
@@ -1376,7 +1379,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                     key={tagName}
                     type="button"
                     onClick={() => navigate(`/library?search=${encodeURIComponent(tagName)}`)}
-                    className="font-bold text-[var(--ink-secondary)] hover:text-[#3A86FF] hover:underline cursor-pointer"
+                    className={`px-2 py-0.5 rounded-md text-[11px] font-bold inline-flex items-center hover:text-[#3A86FF] ${MUTED_CONTROL_BTN_CLASS}`}
                   >
                     #{tagName}
                   </button>
