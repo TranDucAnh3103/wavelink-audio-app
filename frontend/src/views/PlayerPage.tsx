@@ -1034,33 +1034,60 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
 
             {/* Scrub Bar */}
             <div className="flex flex-col gap-1.5">
-              <div
-                className="w-full"
-                onTouchStart={(e) => e.stopPropagation()}
-                onTouchMove={(e) => e.stopPropagation()}
-                onTouchEnd={(e) => e.stopPropagation()}
-              >
-                <Slider
-                  disabled={isSeekLocked}
-                  value={currentPercent}
-                  min={0}
-                  max={100}
-                  onChange={(e) => {
-                    if (isSeekLocked) return;
-                    const val = parseFloat(e.target.value);
-                    setScrubPercent(val);
-                    const targetSec = Math.round((val / 100) * episodeDuration);
-                    if (isTargetAudioPlaying) {
-                      seekTo(targetSec);
-                    } else {
-                      play(audio, activeEp, targetSec);
-                    }
-                  }}
-                  onPointerUp={() => setScrubPercent(null)}
-                  onTouchEnd={() => setScrubPercent(null)}
-                  onMouseUp={() => setScrubPercent(null)}
-                  className={isSeekLocked ? 'cursor-not-allowed opacity-50' : ''}
-                />
+              <div className="flex items-center gap-2.5">
+                <div
+                  className="flex-1 min-w-0"
+                  onTouchStart={(e) => e.stopPropagation()}
+                  onTouchMove={(e) => e.stopPropagation()}
+                  onTouchEnd={(e) => e.stopPropagation()}
+                >
+                  <Slider
+                    disabled={isSeekLocked}
+                    value={currentPercent}
+                    min={0}
+                    max={100}
+                    onChange={(e) => {
+                      if (isSeekLocked) return;
+                      const val = parseFloat(e.target.value);
+                      setScrubPercent(val);
+                      const targetSec = Math.round((val / 100) * episodeDuration);
+                      if (isTargetAudioPlaying) {
+                        seekTo(targetSec);
+                      } else {
+                        play(audio, activeEp, targetSec);
+                      }
+                    }}
+                    onPointerUp={() => setScrubPercent(null)}
+                    onTouchEnd={() => setScrubPercent(null)}
+                    onMouseUp={() => setScrubPercent(null)}
+                    className={isSeekLocked ? 'cursor-not-allowed opacity-50' : ''}
+                  />
+                </div>
+                <button
+                  type="button"
+                  data-testid="toggle-seek-lock-btn"
+                  onClick={toggleSeekLock}
+                  aria-pressed={isSeekLocked}
+                  aria-label={
+                    isSeekLocked ? 'Mở khóa thanh tiến trình phát' : 'Khóa thanh tiến trình phát'
+                  }
+                  title={
+                    isSeekLocked
+                      ? 'Mở khóa thanh tiến trình phát'
+                      : 'Khóa thanh tiến trình phát chống chạm nhầm'
+                  }
+                  className={`w-9 h-9 rounded-lg border-2 flex items-center justify-center shrink-0 transition-all shadow-comic-sm cursor-pointer ${
+                    isSeekLocked
+                      ? 'bg-[#E63946] text-white border-[#111113]'
+                      : 'border-[var(--border-ink)] bg-[var(--surface-elevated)] text-[var(--ink-primary)] hover:bg-[#FFE600] hover:text-[#111113]'
+                  }`}
+                >
+                  {isSeekLocked ? (
+                    <Lock className="w-4 h-4" strokeWidth={2.5} />
+                  ) : (
+                    <Unlock className="w-4 h-4" strokeWidth={2.5} />
+                  )}
+                </button>
               </div>
               <div className="flex items-center justify-between font-mono text-xs font-bold text-[var(--ink-secondary)]">
                 <span>{formatTime(currentPosition)}</span>
@@ -1420,7 +1447,10 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                 : 'Chưa có danh sách tập.'}
             </div>
           ) : (
-            <div className="flex flex-col gap-2 lg:max-h-[55vh] lg:overflow-y-auto pr-0.5">
+            <div
+              data-testid="episode-list-container"
+              className="flex flex-col gap-2.5 lg:max-h-[62vh] lg:overflow-y-auto pr-1.5 pb-1"
+            >
               {pagedEpisodes.map((ep) => {
                 const isThisEpActive = isTargetAudioPlaying && currentEpisode?.id === ep.id;
                 const epDuration =
@@ -1452,7 +1482,7 @@ export const PlayerPage: React.FC<PlayerPageProps> = ({ initialAudio }) => {
                       }
                       play(audio, ep, ep.positionSeconds || 0);
                     }}
-                    className={`card-comic-sm relative overflow-hidden p-3 flex items-center justify-between gap-2.5 cursor-pointer transition-all ${
+                    className={`card-comic-sm shrink-0 relative overflow-hidden px-3 py-2.5 min-h-[58px] flex items-center justify-between gap-3 cursor-pointer transition-all ${
                       epLocked
                         ? 'bg-[#8338EC]/10 border-[#8338EC]/50 opacity-90 hover:bg-[#8338EC]/15'
                         : isThisEpActive

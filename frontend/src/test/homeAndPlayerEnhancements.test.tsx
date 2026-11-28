@@ -302,4 +302,39 @@ describe('PlayerPage Always-Visible Details, Controls Split & Unlimited Swipe', 
     const lowerControls = screen.getByTestId('player-lower-controls');
     expect(lowerControls.querySelectorAll('button')).toHaveLength(3);
   });
+
+  it('toggles progress-bar seek lock/unlock button and keeps desktop episode list rows non-shrinking', () => {
+    localStorage.removeItem('wavelink_seek_locked');
+    const qc = createTestClient();
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/player/1']}>
+          <Routes>
+            <Route path="/player/:id" element={<PlayerPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    const lockBtn = screen.getByTestId('toggle-seek-lock-btn');
+    const slider = container.querySelector('input[type="range"]') as HTMLInputElement | null;
+    expect(slider).not.toBeNull();
+    expect(lockBtn).toHaveAttribute('aria-pressed', 'false');
+    expect(slider?.disabled).toBe(false);
+
+    fireEvent.click(lockBtn);
+    expect(lockBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(slider?.disabled).toBe(true);
+    expect(screen.getByText('ĐÃ KHÓA TUA')).toBeInTheDocument();
+    expect(localStorage.getItem('wavelink_seek_locked')).toBe('true');
+
+    fireEvent.click(lockBtn);
+    expect(lockBtn).toHaveAttribute('aria-pressed', 'false');
+    expect(slider?.disabled).toBe(false);
+    expect(localStorage.getItem('wavelink_seek_locked')).toBe('false');
+
+    expect(screen.getByTestId('episode-list-container')).toBeInTheDocument();
+    const epCard = screen.getByTestId('episode-card-1');
+    expect(epCard.className).toContain('shrink-0');
+  });
 });
