@@ -27,17 +27,14 @@ export const episodeService = {
     isLive = true
   ): Promise<Episode[]> {
     if (isLive) {
-      try {
-        const res = await axiosClient.post<{ success: boolean; data: Episode[] }>(
-          `/audios/${audioId}/episodes/generate`,
-          { blockSizeSeconds, durationSeconds }
-        );
-        if (res.data.success && Array.isArray(res.data.data)) {
-          return res.data.data;
-        }
-      } catch (err) {
-        console.warn('generateEpisodes live API failed', err);
+      const res = await axiosClient.post<{ success: boolean; data: Episode[] }>(
+        `/audios/${audioId}/episodes/generate`,
+        { blockSizeSeconds, durationSeconds }
+      );
+      if (res.data.success && Array.isArray(res.data.data)) {
+        return res.data.data;
       }
+      throw new Error('Không thể chia tập tự động');
     }
 
     const db = localDb.get();

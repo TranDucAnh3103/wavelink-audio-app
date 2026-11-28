@@ -226,7 +226,7 @@ func (h *Handler) ListUsers(c *gin.Context) {
 	case "active":
 		order = "last_login_at DESC, created_at DESC"
 	case "expiry":
-		order = "vip_expires_at ASC"
+		order = "CASE WHEN vip_expires_at IS NULL THEN 1 ELSE 0 END ASC, vip_expires_at ASC"
 	}
 
 	var users []domain.User
@@ -369,8 +369,16 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		return
 	}
 	role := domain.RoleUser
-	if strings.ToUpper(req.Role) == domain.RoleAdmin {
+	membership := domain.MembershipFree
+	var vipExpiry *time.Time
+	switch strings.ToUpper(strings.TrimSpace(req.Role)) {
+	case domain.RoleAdmin:
 		role = domain.RoleAdmin
+	case domain.RoleVIP:
+		role = domain.RoleVIP
+		membership = domain.MembershipVIP
+		exp := time.Now().UTC().Add(30 * 24 * time.Hour)
+		vipExpiry = &exp
 	}
 	if req.Email == "" {
 		req.Email = fmt.Sprintf("%s_%d@user.local", strings.ReplaceAll(req.Username, "@", "_"), time.Now().UnixNano()%1000000)
@@ -378,12 +386,12 @@ func (h *Handler) CreateUser(c *gin.Context) {
 	var n int64
 	h.db.Model(&domain.User{}).Where("username = ? OR email = ?", req.Username, req.Email).Count(&n)
 	if n > 0 {
-		response.BadRequest(c, "TÃªn tÃ i khoáº£n hoáº·c email Ä‘Ã£ tá»“n táº¡i")
+		response.BadRequest(c, "Tên tài khoản hoặc email đã tồn tại")
 		return
 	}
 	hash, err := hashPassword(req.Password)
 	if err != nil {
-		response.Internal(c, "Lá»—i mÃ£ hÃ³a máº­t kháº©u")
+		response.Internal(c, "Lỗi mã hóa mật khẩu")
 		return
 	}
 	u := domain.User{
@@ -391,12 +399,14 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		Email:        req.Email,
 		PasswordHash: hash,
 		Role:         role,
-		Membership:   domain.MembershipFree,
+		Membership:   membership,
+		VipExpiresAt: vipExpiry,
 	}
 	if err := h.db.Create(&u).Error; err != nil {
-		response.Internal(c, "KhÃ´ng thá»ƒ táº¡o tÃ i khoáº£n: "+err.Error())
+		response.Internal(c, "Không thể tạo tài khoản: "+err.Error())
 		return
 	}
+	h.audit(c, "create_user", "user", fmt.Sprint(u.ID), u.Username, u.Role)
 	response.Created(c, u)
 }
 
@@ -441,11 +451,14 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 	}
 	if req.Email != nil {
 		email := strings.TrimSpace(*req.Email)
-		if email != "" && email != u.Email {
+		if email == "" {
+			synthetic := fmt.Sprintf("%s_%d@user.local", strings.ReplaceAll(u.Username, "@", "_"), time.Now().UnixNano()%1000000)
+			updates["email"] = synthetic
+		} else if email != u.Email {
 			var n int64
 			h.db.Model(&domain.User{}).Where("email = ? AND id <> ?", email, id).Count(&n)
 			if n > 0 {
-				response.BadRequest(c, "Email Ä‘Ã£ Ä‘Æ°á»£c sá»­ dá»¥ng")
+				response.BadRequest(c, "Email đã được sử dụng")
 				return
 			}
 			updates["email"] = email
@@ -453,43 +466,50 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 	}
 	if req.Role != nil {
 		role := strings.ToUpper(strings.TrimSpace(*req.Role))
-		if role != domain.RoleAdmin && role != domain.RoleUser {
-			response.BadRequest(c, "Vai trÃ² chá»‰ gá»“m USER hoáº·c ADMIN. DÃ¹ng chá»©c nÄƒng cáº¥p VIP Ä‘á»ƒ nÃ¢ng háº¡ng há»™i viÃªn")
+		if role != domain.RoleAdmin && role != domain.RoleUser && role != domain.RoleVIP {
+			response.BadRequest(c, "Vai trò chỉ gồm USER, VIP hoặc ADMIN")
 			return
 		}
-		if role != u.Role && !(role == domain.RoleUser && u.Role == domain.RoleVIP) {
+		if role != u.Role {
 			if u.Role == domain.RoleAdmin {
 				if middleware.GetCurrentUserID(c) == id {
-					response.BadRequest(c, "KhÃ´ng thá»ƒ tá»± háº¡ quyá»n tÃ i khoáº£n Ä‘ang Ä‘Äƒng nháº­p")
+					response.BadRequest(c, "Không thể tự hạ quyền tài khoản đang đăng nhập")
 					return
 				}
 				if h.activeAdminCount() <= 1 {
-					response.BadRequest(c, "Há»‡ thá»‘ng pháº£i cÃ²n Ã­t nháº¥t má»™t quáº£n trá»‹ viÃªn")
+					response.BadRequest(c, "Hệ thống phải còn ít nhất một quản trị viên")
 					return
 				}
 			}
-			if role == domain.RoleAdmin {
-				updates["role"] = domain.RoleAdmin
+			switch role {
+			case domain.RoleAdmin:
 				if u.IsBanned {
-					response.BadRequest(c, "HÃ£y má»Ÿ khÃ³a tÃ i khoáº£n trÆ°á»›c khi cáº¥p quyá»n quáº£n trá»‹")
+					response.BadRequest(c, "Hãy mở khóa tài khoản trước khi cấp quyền quản trị")
 					return
 				}
-			} else {
-				if isVIPActive(u, time.Now().UTC()) {
-					updates["role"] = domain.RoleVIP
-				} else {
-					updates["role"] = domain.RoleUser
-					updates["membership"] = domain.MembershipFree
-					updates["vip_expires_at"] = nil
+				updates["role"] = domain.RoleAdmin
+			case domain.RoleVIP:
+				now := time.Now().UTC()
+				updates["role"] = domain.RoleVIP
+				updates["membership"] = domain.MembershipVIP
+				if u.VipExpiresAt == nil || !u.VipExpiresAt.After(now) {
+					exp := now.Add(30 * 24 * time.Hour)
+					updates["vip_expires_at"] = &exp
 				}
+			default:
+				updates["role"] = domain.RoleUser
+				updates["membership"] = domain.MembershipFree
+				updates["vip_expires_at"] = nil
 			}
 		}
 	}
 	if len(updates) > 0 {
 		if err := h.db.Model(&domain.User{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-			response.Internal(c, "KhÃ´ng thá»ƒ cáº­p nháº­t ngÆ°á»i dÃ¹ng")
+			response.Internal(c, "Không thể cập nhật người dùng")
 			return
 		}
+		middleware.InvalidateUserAuth(id)
+		h.audit(c, "update_user", "user", fmt.Sprint(id), u.Username, fmt.Sprintf("%d trường", len(updates)))
 	}
 	h.db.First(&u, id)
 	response.OK(c, u, nil)
@@ -524,6 +544,7 @@ func (h *Handler) grantVIP(id uint, days int) error {
 	}).Error; err != nil {
 		return err
 	}
+	middleware.InvalidateUserAuth(id)
 	h.notify(id, "Báº¡n Ä‘Ã£ Ä‘Æ°á»£c cáº¥p VIP",
 		fmt.Sprintf("Quáº£n trá»‹ viÃªn Ä‘Ã£ cáº¥p %d ngÃ y VIP cho báº¡n. Háº¡n dÃ¹ng Ä‘áº¿n %s.", days, expiry.Format("02/01/2006")),
 		"/profile", "VIP")
@@ -539,11 +560,15 @@ func (h *Handler) revokeVIP(id uint) error {
 	if u.Role == domain.RoleAdmin {
 		role = domain.RoleAdmin
 	}
-	return h.db.Model(&domain.User{}).Where("id = ?", id).Updates(map[string]interface{}{
+	err := h.db.Model(&domain.User{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"role":           role,
 		"membership":     domain.MembershipFree,
 		"vip_expires_at": nil,
 	}).Error
+	if err == nil {
+		middleware.InvalidateUserAuth(id)
+	}
+	return err
 }
 
 func (h *Handler) setBan(actor, id uint, banned bool, reason string) error {
@@ -607,6 +632,7 @@ func (h *Handler) removeUser(actor, id uint) error {
 	})
 	if err == nil {
 		middleware.SetBanned(id, false)
+		middleware.InvalidateUserAuth(id)
 	}
 	return err
 }
@@ -719,6 +745,7 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 		response.NotFound(c, "KhÃ´ng tÃ¬m tháº¥y ngÆ°á»i dÃ¹ng")
 		return
 	}
+	h.audit(c, "reset_password", "user", fmt.Sprint(id), "", "Đặt lại mật khẩu")
 	response.OK(c, gin.H{"id": id}, nil)
 }
 
@@ -747,7 +774,8 @@ func (h *Handler) NotifyUser(c *gin.Context) {
 		response.NotFound(c, "KhÃ´ng tÃ¬m tháº¥y ngÆ°á»i dÃ¹ng")
 		return
 	}
-	h.notify(id, truncate(req.Title, 200), truncate(req.Message, 1000), truncate(req.Link, 255), "SYSTEM")
+	_, _ = notification.CreateBatchNotifications(h.db, []uint{id}, truncate(req.Title, 200), truncate(req.Message, 1000), "SYSTEM", truncate(strings.TrimSpace(req.Link), 255))
+	h.audit(c, "notify_user", "user", fmt.Sprint(id), "", truncate(req.Title, 80))
 	response.OK(c, gin.H{"id": id}, nil)
 }
 

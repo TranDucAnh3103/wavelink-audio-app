@@ -581,21 +581,24 @@ const EditAudioSheet: React.FC<{
       return;
     }
     setBusy(true);
-    await onSave(audio.id, {
-      title: title.trim(),
-      author: author.trim(),
-      description: desc.trim(),
-      categoryId,
-      tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
-      youtubeUrl: youtubeUrl.trim() !== (audio.youtubeUrl || '') ? youtubeUrl.trim() : undefined,
-      thumbnailUrl: thumbnailUrl.trim(),
-      totalDurationSeconds: durationSec > 0 ? durationSec : undefined,
-      isVIPOnly: vip,
-      isVipOnly: vip,
-      freeEpisodesCount: vip ? Math.max(0, free) : 1,
-      status: hidden ? 'HIDDEN' : 'ACTIVE',
-    });
-    setBusy(false);
+    try {
+      await onSave(audio.id, {
+        title: title.trim(),
+        author: author.trim(),
+        description: desc.trim(),
+        categoryId,
+        tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+        youtubeUrl: youtubeUrl.trim() !== (audio.youtubeUrl || '') ? youtubeUrl.trim() : undefined,
+        thumbnailUrl: thumbnailUrl.trim(),
+        totalDurationSeconds: durationSec > 0 ? durationSec : undefined,
+        isVIPOnly: vip,
+        isVipOnly: vip,
+        freeEpisodesCount: vip ? Math.max(0, free) : 1,
+        status: hidden ? 'HIDDEN' : 'ACTIVE',
+      });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

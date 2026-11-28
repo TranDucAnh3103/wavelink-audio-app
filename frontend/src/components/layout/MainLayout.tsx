@@ -5,6 +5,7 @@ import { Footer } from './Footer';
 import { SidebarNav } from './SidebarNav';
 import { AudioEngineHost } from './AudioEngineHost';
 import { LoadingState } from '@/components/common/LoadingState';
+import { MaintenanceOverlay } from '@/components/common/MaintenanceOverlay';
 
 const MiniPlayer = lazy(() =>
   import('./MiniPlayer').then((m) => ({ default: m.MiniPlayer }))
@@ -77,6 +78,7 @@ export const MainLayout: React.FC = () => {
       )}
 
       <AudioEngineHost />
+      <MaintenanceOverlay />
       <ToastContainer />
     </div>
   );

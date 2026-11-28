@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"audio-app-backend/core/domain"
+	"audio-app-backend/server/middleware"
 	"audio-app-backend/server/response"
 
 	"github.com/gin-gonic/gin"
@@ -23,9 +24,16 @@ func (h *Handler) ListOrders(c *gin.Context) {
 	page, size := pageParams(c)
 	status := strings.ToUpper(strings.TrimSpace(c.DefaultQuery("status", "ALL")))
 	q := strings.TrimSpace(c.Query("q"))
+	now := time.Now().UTC()
 
 	tx := h.db.Model(&domain.MembershipOrder{})
-	if status != "ALL" && status != "" {
+	switch status {
+	case "", "ALL":
+	case "PENDING":
+		tx = tx.Where("status = ? AND expires_at > ?", "PENDING", now)
+	case "EXPIRED":
+		tx = tx.Where("status = ? OR (status = ? AND expires_at <= ?)", "EXPIRED", "PENDING", now)
+	default:
 		tx = tx.Where("status = ?", status)
 	}
 	if q != "" {
@@ -56,6 +64,9 @@ func (h *Handler) ListOrders(c *gin.Context) {
 	}
 	items := make([]orderRow, 0, len(orders))
 	for _, o := range orders {
+		if o.Status == "PENDING" && !o.ExpiresAt.After(now) {
+			o.Status = "EXPIRED"
+		}
 		u := names[o.UserID]
 		name := u.Username
 		if name == "" {
@@ -64,7 +75,6 @@ func (h *Handler) ListOrders(c *gin.Context) {
 		items = append(items, orderRow{MembershipOrder: o, Username: name, Email: u.Email})
 	}
 
-	now := time.Now().UTC()
 	sumPaid := func(since *time.Time) int64 {
 		var v int64
 		t := h.db.Model(&domain.MembershipOrder{}).Where("status = ?", "PAID")
@@ -74,7 +84,7 @@ func (h *Handler) ListOrders(c *gin.Context) {
 		t.Select("COALESCE(SUM(amount), 0)").Scan(&v)
 		return v
 	}
-	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	startOfDay := startOfVNDayUTC(now)
 	last30 := now.Add(-30 * 24 * time.Hour)
 	counts := map[string]int64{}
 	var grouped []struct {
@@ -86,6 +96,16 @@ func (h *Handler) ListOrders(c *gin.Context) {
 	for _, g := range grouped {
 		counts[g.Status] = g.N
 		all += g.N
+	}
+	var expiredPending int64
+	h.db.Model(&domain.MembershipOrder{}).Where("status = ? AND expires_at <= ?", "PENDING", now).Count(&expiredPending)
+	if expiredPending > 0 {
+		if counts["PENDING"] >= expiredPending {
+			counts["PENDING"] -= expiredPending
+		} else {
+			counts["PENDING"] = 0
+		}
+		counts["EXPIRED"] += expiredPending
 	}
 	counts["ALL"] = all
 
@@ -117,14 +137,14 @@ func (h *Handler) ConfirmOrder(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if o.Status == "PAID" || o.Status == "REFUNDED" {
-		response.BadRequest(c, "Đơn hàng đã được xử lý")
+	if o.Status != "PENDING" {
+		response.BadRequest(c, "Chỉ xác nhận được đơn hàng đang chờ thanh toán")
 		return
 	}
 	now := time.Now().UTC()
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&domain.MembershipOrder{}).
-			Where("id = ? AND status NOT IN ?", o.ID, []string{"PAID", "REFUNDED"}).
+			Where("id = ? AND status = ?", o.ID, "PENDING").
 			Updates(map[string]interface{}{"status": "PAID", "paid_at": &now})
 		if res.Error != nil {
 			return res.Error
@@ -155,6 +175,7 @@ func (h *Handler) ConfirmOrder(c *gin.Context) {
 		response.BadRequest(c, capitalize(err.Error()))
 		return
 	}
+	middleware.InvalidateUserAuth(o.UserID)
 	h.notify(o.UserID, "Thanh toán đã được xác nhận",
 		fmt.Sprintf("Đơn hàng #%s (%s) đã được xác nhận. Quyền lợi VIP đã được kích hoạt.", o.OrderCode, o.PackageName),
 		"/profile", "VIP")
@@ -197,12 +218,11 @@ func (h *Handler) RefundOrder(c *gin.Context) {
 		if err := tx.First(&u, o.UserID).Error; err != nil {
 			return nil
 		}
-		if u.VipExpiresAt == nil {
-			return nil
-		}
-		expiry := u.VipExpiresAt.Add(-time.Duration(o.DurationDays) * 24 * time.Hour)
-		if expiry.After(now) {
-			return tx.Model(&domain.User{}).Where("id = ?", u.ID).Update("vip_expires_at", &expiry).Error
+		if u.VipExpiresAt != nil {
+			expiry := u.VipExpiresAt.Add(-time.Duration(o.DurationDays) * 24 * time.Hour)
+			if expiry.After(now) {
+				return tx.Model(&domain.User{}).Where("id = ?", u.ID).Update("vip_expires_at", &expiry).Error
+			}
 		}
 		role := domain.RoleUser
 		if u.Role == domain.RoleAdmin {
@@ -218,6 +238,7 @@ func (h *Handler) RefundOrder(c *gin.Context) {
 		response.BadRequest(c, capitalize(err.Error()))
 		return
 	}
+	middleware.InvalidateUserAuth(o.UserID)
 	h.notify(o.UserID, "Đơn hàng đã được hoàn tiền",
 		fmt.Sprintf("Đơn hàng #%s (%s) đã được hoàn tiền. Thời hạn VIP tương ứng đã được điều chỉnh.", o.OrderCode, o.PackageName),
 		"/membership", "SYSTEM")

@@ -59,6 +59,136 @@ let lastServerSavedPos = -1;
 let lastStreamMediaSessionTs = 0;
 let lastHtmlTimeUiUpdateAt = 0;
 let ytTrackSwitchUntil = 0;
+let streamPreloadTimer: ReturnType<typeof setTimeout> | null = null;
+let slowStreamFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingStreamPreloadOpts: {
+  audioId: number | string;
+  videoId: string;
+  episodeId?: number;
+  episodeNumber?: number;
+  startSeconds: number;
+  playbackRate: number;
+} | null = null;
+let activeSwapSeq = 0;
+
+function clearHybridTimers() {
+  activeSwapSeq++;
+  if (streamPreloadTimer) {
+    clearTimeout(streamPreloadTimer);
+    streamPreloadTimer = null;
+  }
+  if (slowStreamFallbackTimer) {
+    clearTimeout(slowStreamFallbackTimer);
+    slowStreamFallbackTimer = null;
+  }
+  pendingStreamPreloadOpts = null;
+}
+
+function flushPendingStreamPreload() {
+  if (streamPreloadTimer) {
+    clearTimeout(streamPreloadTimer);
+    streamPreloadTimer = null;
+  }
+  const opts = pendingStreamPreloadOpts;
+  pendingStreamPreloadOpts = null;
+  if (!opts || !htmlAudioEngine.isReady()) return;
+  const store = usePlayerStore.getState();
+  if (
+    !store.currentAudio ||
+    store.currentAudio.youtubeVideoId !== opts.videoId ||
+    !store.isPlaying ||
+    store.isExplicitlyPaused
+  ) {
+    return;
+  }
+  void htmlAudioEngine.load({
+    ...opts,
+    autoplay: false,
+    silentPreload: true,
+  });
+}
+
+async function performStreamSwap(videoId: string): Promise<boolean> {
+  const store = usePlayerStore.getState();
+  if (
+    !store.currentAudio ||
+    store.currentAudio.youtubeVideoId !== videoId ||
+    store.activeEngine !== 'youtube' ||
+    !store.isSwappingToStream ||
+    !store.isPlaying ||
+    store.isExplicitlyPaused ||
+    !htmlAudioEngine.isReady()
+  ) {
+    return false;
+  }
+
+  const swapSeq = ++activeSwapSeq;
+  const epStart = store.currentEpisode?.startSeconds || 0;
+  let liveAbsSec = epStart + (store.currentTime || 0);
+  if (ytPlayerInstance && typeof ytPlayerInstance.getCurrentTime === 'function') {
+    try {
+      const loadedId = ytPlayerInstance.getVideoData?.()?.video_id;
+      if (!loadedId || loadedId === videoId) {
+        const ytTime = ytPlayerInstance.getCurrentTime();
+        if (typeof ytTime === 'number' && Number.isFinite(ytTime) && ytTime >= 0) {
+          liveAbsSec = ytTime;
+        }
+      }
+    } catch {}
+  }
+
+  const rate = store.playbackRate || 1.0;
+  const swapped = await htmlAudioEngine.commitSwapFromYouTube(liveAbsSec, rate, () => {
+    youtubeAudioEngine.pause();
+  });
+
+  if (swapSeq !== activeSwapSeq) {
+    return false;
+  }
+
+  const latest = usePlayerStore.getState();
+  if (!swapped) {
+    // Restore YouTube playback cleanly if <audio> play() was blocked
+    if (
+      latest.currentAudio?.youtubeVideoId === videoId &&
+      latest.isPlaying &&
+      !latest.isExplicitlyPaused
+    ) {
+      void youtubeAudioEngine.play();
+      usePlayerStore.setState({ isSwappingToStream: false });
+    }
+    return false;
+  }
+
+  if (
+    latest.currentAudio?.youtubeVideoId !== videoId ||
+    latest.isExplicitlyPaused ||
+    !latest.isPlaying
+  ) {
+    htmlAudioEngine.pause();
+    return false;
+  }
+
+  const epPos = Math.max(0, Math.round(liveAbsSec - epStart));
+  usePlayerStore.setState({
+    activeEngine: 'stream',
+    isSwappingToStream: false,
+    isBuffering: false,
+    isRetrying: false,
+    retryAttempt: 0,
+    playbackError: null,
+    bufferingStartedAt: null,
+    currentTime: epPos,
+    confirmedPlaybackRate: rate,
+    rateSyncStatus: 'synced',
+  });
+  if (typeof window !== 'undefined') {
+    window.__WAVELINK_ENGINE__ = 'stream';
+  }
+  startBackgroundAudio({ engine: 'stream' });
+  updateMediaSession(true, latest.currentAudio, latest.currentEpisode, epPos, latest.duration, rate);
+  return true;
+}
 
 export function setCurrentPlayerUserId(userId?: number | string | null) {
   currentPlayerUserId = userId !== undefined ? userId : null;
@@ -175,6 +305,11 @@ interface PlayerState {
   currentEpisode: Episode | null;
   isPlaying: boolean;
   isBuffering: boolean;
+  isSwappingToStream: boolean;
+  isRetrying: boolean;
+  retryAttempt: number;
+  playbackError: string | null;
+  bufferingStartedAt: number | null;
   isExplicitlyPaused: boolean;
   currentTime: number;
   duration: number;
@@ -183,6 +318,7 @@ interface PlayerState {
   rateSyncStatus: RateSyncStatus;
   activeEngine: AudioEngineType;
   isYtReady: boolean;
+  sleepTimerMode: 'duration' | 'end_of_episode' | null;
   sleepTimerMinutes: number | null;
   sleepTimerEndTimestamp: number | null;
   isSeeking: boolean;
@@ -197,6 +333,9 @@ interface PlayerState {
   togglePlay: () => void;
   pause: () => void;
   resume: () => void;
+  retryPlayback: () => void;
+  handleBackgroundTransition: () => void;
+  handleForegroundResume: () => void;
   seekTo: (seconds: number) => void;
   skipSeconds: (delta: number) => void;
   nextEpisode: () => void;
@@ -205,6 +344,7 @@ interface PlayerState {
   syncUserPlaybackRate: (userId?: number | string | null) => void;
   cycleSpeed: (userId?: number | string | null) => void;
   setSleepTimer: (minutes: number | null) => void;
+  setSleepTimerEndOfEpisode: () => void;
   hydrateLastPlaybackSession: () => void;
   close: () => void;
   reset: () => void;
@@ -231,22 +371,34 @@ function isEpisodeVipBlocked(audio: AudioItem, episode: Episode): boolean {
 const initialStoredRate = getStoredPlaybackRate();
 rateCoordinator.setDesiredRate(initialStoredRate, 'store_module_init');
 
-function getInitialSleepTimer(): { minutes: number | null; endTimestamp: number | null } {
-  if (typeof localStorage === 'undefined') return { minutes: null, endTimestamp: null };
+function getInitialSleepTimer(): {
+  mode: 'duration' | 'end_of_episode' | null;
+  minutes: number | null;
+  endTimestamp: number | null;
+} {
+  if (typeof localStorage === 'undefined') {
+    return { mode: null, minutes: null, endTimestamp: null };
+  }
   try {
+    const savedMode = localStorage.getItem('wavelink_sleep_timer_mode');
+    if (savedMode === 'end_of_episode') {
+      localStorage.removeItem('wavelink_sleep_timer_end');
+      return { mode: 'end_of_episode', minutes: null, endTimestamp: null };
+    }
     const savedEnd = localStorage.getItem('wavelink_sleep_timer_end');
     if (savedEnd) {
       const endTs = parseInt(savedEnd, 10);
       const remainingMs = endTs - Date.now();
       if (!isNaN(endTs) && remainingMs > 0) {
         const remainingMinutes = Math.max(1, Math.round(remainingMs / 60000));
-        return { minutes: remainingMinutes, endTimestamp: endTs };
+        return { mode: 'duration', minutes: remainingMinutes, endTimestamp: endTs };
       } else {
         localStorage.removeItem('wavelink_sleep_timer_end');
+        localStorage.removeItem('wavelink_sleep_timer_mode');
       }
     }
   } catch {}
-  return { minutes: null, endTimestamp: null };
+  return { mode: null, minutes: null, endTimestamp: null };
 }
 
 function expireSleepTimerNow() {
@@ -258,8 +410,13 @@ function expireSleepTimerNow() {
   stopBackgroundSleepTimer();
   if (typeof localStorage !== 'undefined') {
     localStorage.removeItem('wavelink_sleep_timer_end');
+    localStorage.removeItem('wavelink_sleep_timer_mode');
   }
-  usePlayerStore.setState({ sleepTimerMinutes: null, sleepTimerEndTimestamp: null });
+  usePlayerStore.setState({
+    sleepTimerMode: null,
+    sleepTimerMinutes: null,
+    sleepTimerEndTimestamp: null,
+  });
 
   const finishPause = () => {
     usePlayerStore.getState().pause();
@@ -304,6 +461,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   currentEpisode: null,
   isPlaying: false,
   isBuffering: false,
+  isSwappingToStream: false,
+  isRetrying: false,
+  retryAttempt: 0,
+  playbackError: null,
+  bufferingStartedAt: null,
   isExplicitlyPaused: true,
   currentTime: 0,
   duration: 14400,
@@ -312,6 +474,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   rateSyncStatus: 'synced',
   activeEngine: getAudioEngineMode(),
   isYtReady: false,
+  sleepTimerMode: initialSleepTimer.mode,
   sleepTimerMinutes: initialSleepTimer.minutes,
   sleepTimerEndTimestamp: initialSleepTimer.endTimestamp,
   isSeeking: false,
@@ -395,11 +558,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   fallbackToYouTube: (reason?: string) => {
     const state = get();
+    clearHybridTimers();
     htmlAudioEngine.stop();
     stopBackgroundAudio();
     stopMediaSessionKeeper();
 
-    set({ activeEngine: 'youtube', isBuffering: false });
+    set({
+      activeEngine: 'youtube',
+      isBuffering: false,
+      isSwappingToStream: false,
+      isRetrying: false,
+      retryAttempt: 0,
+      bufferingStartedAt: null,
+    });
     if (typeof window !== 'undefined') {
       window.__WAVELINK_ENGINE__ = 'youtube';
     }
@@ -549,19 +720,56 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     const activeRate = get().playbackRate || getStoredPlaybackRate() || 1.0;
 
-    // Auto-select fallback YouTube engine if this video previously failed stream extraction
+    // Nếu người dùng bấm lại đúng audio/tập đang bị kẹt tải -> ép tải lại ngay
+    const isSameSelectionStuck =
+      prevAudio &&
+      prevEp &&
+      String(prevAudio.id) === String(audio.id) &&
+      String(prevEp.id) === String(targetEpisode.id) &&
+      (seekSeconds === null || seekSeconds === undefined || Math.abs(seekSeconds - prevTime) <= 2) &&
+      get().isPlaying &&
+      !get().isExplicitlyPaused &&
+      (get().isBuffering ||
+        Boolean(get().playbackError) ||
+        (isStreamEngineActive(get()) && htmlAudioEngine.isPaused()));
+
+    if (isSameSelectionStuck) {
+      get().retryPlayback();
+      return;
+    }
+
+    clearHybridTimers();
+
     const configuredMode = getAudioEngineMode();
-    let targetEngine = get().activeEngine;
-    if (
+    const canUseStream =
       configuredMode === 'stream' &&
       htmlAudioEngine.isReady() &&
       audio.streamStatus !== 'FAILED' &&
-      !isVideoStreamFailed(audio.youtubeVideoId)
-    ) {
-      targetEngine = 'stream';
+      !isVideoStreamFailed(audio.youtubeVideoId);
+
+    const isForeground = typeof document === 'undefined' || !document.hidden;
+    const hasYouTubeReady = Boolean(
+      ytPlayerInstance && typeof ytPlayerInstance.loadVideoById === 'function'
+    );
+    const sameStreamAlreadyLoaded =
+      canUseStream && htmlAudioEngine.getLoadedVideoId() === audio.youtubeVideoId;
+
+    // Hybrid swap: phát tức thì bằng YouTube IFrame khi đổi sang video mới ở foreground,
+    // đồng thời preload ngầm thẻ <audio> sau debounce 450ms rồi swap mượt sang <audio>.
+    const useHybridInstantPlay =
+      canUseStream && !sameStreamAlreadyLoaded && hasYouTubeReady && isForeground;
+
+    const targetEngine: AudioEngineType = useHybridInstantPlay
+      ? 'youtube'
+      : canUseStream
+        ? 'stream'
+        : 'youtube';
+
+    if (targetEngine === 'stream') {
       youtubeAudioEngine.stop();
-    } else if (audio.streamStatus === 'FAILED' || isVideoStreamFailed(audio.youtubeVideoId)) {
-      targetEngine = 'youtube';
+    } else if (!useHybridInstantPlay) {
+      htmlAudioEngine.stop();
+    } else if (prevAudio?.youtubeVideoId !== audio.youtubeVideoId) {
       htmlAudioEngine.stop();
     }
 
@@ -576,7 +784,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentTime,
       duration,
       isPlaying: true,
-      isBuffering: false,
+      isBuffering: true,
+      isSwappingToStream: useHybridInstantPlay,
+      isRetrying: false,
+      retryAttempt: 0,
+      playbackError: null,
+      bufferingStartedAt: Date.now(),
       isSeeking: false,
       isExplicitlyPaused: false,
       playbackRate: activeRate,
@@ -585,6 +798,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         ? { confirmedPlaybackRate: activeRate, rateSyncStatus: 'synced' as RateSyncStatus }
         : {}),
     });
+
+    if (typeof window !== 'undefined') {
+      window.__WAVELINK_ENGINE__ = targetEngine;
+    }
 
     if (targetEngine === 'stream' && htmlAudioEngine.isReady()) {
       void htmlAudioEngine.load({
@@ -596,6 +813,48 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         autoplay: true,
         playbackRate: activeRate,
       });
+
+      // Nếu stream load lâu ở foreground và YouTube player đã sẵn sàng sau cold-start,
+      // tạm bật YouTube phát ngay trong lúc <audio> vẫn tiếp tục tải nền để swap lại.
+      if (!sameStreamAlreadyLoaded && isForeground) {
+        slowStreamFallbackTimer = setTimeout(() => {
+          slowStreamFallbackTimer = null;
+          const st = get();
+          if (
+            st.currentAudio?.youtubeVideoId !== audio.youtubeVideoId ||
+            st.activeEngine !== 'stream' ||
+            !st.isPlaying ||
+            st.isExplicitlyPaused ||
+            !htmlAudioEngine.isLoading()
+          ) {
+            return;
+          }
+          const fg = typeof document === 'undefined' || !document.hidden;
+          if (fg && ytPlayerInstance && typeof ytPlayerInstance.loadVideoById === 'function') {
+            htmlAudioEngine.convertToSilentPreload();
+            const livePos = (st.currentEpisode?.startSeconds || 0) + (st.currentTime || 0);
+            rateCoordinator.onVideoLoaded(audio.youtubeVideoId);
+            set({
+              activeEngine: 'youtube',
+              isSwappingToStream: true,
+              isBuffering: true,
+              bufferingStartedAt: st.bufferingStartedAt ?? Date.now(),
+            });
+            if (typeof window !== 'undefined') {
+              window.__WAVELINK_ENGINE__ = 'youtube';
+            }
+            try {
+              ytPlayerInstance.loadVideoById({
+                videoId: audio.youtubeVideoId,
+                startSeconds: livePos,
+              });
+              ytPlayerInstance.playVideo();
+            } catch {}
+            startBackgroundAudio({ engine: 'youtube' });
+          }
+        }, 2500);
+      }
+
       startPolling(); // Used for sleep timer check in stream mode
       startHeartbeat();
       startBackgroundAudio({ engine: 'stream' });
@@ -624,9 +883,23 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         }
       }
 
+      if (useHybridInstantPlay) {
+        pendingStreamPreloadOpts = {
+          audioId: audio.id,
+          videoId: audio.youtubeVideoId,
+          episodeId: targetEpisode.id,
+          episodeNumber: targetEpisode.episodeNumber,
+          startSeconds: absoluteStart,
+          playbackRate: activeRate,
+        };
+        streamPreloadTimer = setTimeout(() => {
+          flushPendingStreamPreload();
+        }, 450);
+      }
+
       startPolling();
       startHeartbeat();
-      startBackgroundAudio({ engine: get().activeEngine === 'stream' ? 'stream' : 'youtube' });
+      startBackgroundAudio({ engine: 'youtube' });
       startMediaSessionKeeper(onWorkerMediaTick);
     }
 
@@ -648,7 +921,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       } else {
         htmlAudioEngine.pause();
       }
-      set({ isPlaying: nextPlaying, isExplicitlyPaused: !nextPlaying });
+      set({
+        isPlaying: nextPlaying,
+        isExplicitlyPaused: !nextPlaying,
+        ...(!nextPlaying ? { isBuffering: false, bufferingStartedAt: null } : {}),
+      });
       if (nextPlaying) {
         startPolling();
         startHeartbeat();
@@ -665,6 +942,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return;
     }
 
+    if (!nextPlaying) {
+      clearHybridTimers();
+      if (state.isSwappingToStream) {
+        htmlAudioEngine.stop();
+      }
+    }
+
     if (ytPlayerInstance) {
       try {
         if (isPlaying) {
@@ -678,8 +962,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
     }
 
-    set({ isPlaying: nextPlaying, isExplicitlyPaused: !nextPlaying });
+    set({
+      isPlaying: nextPlaying,
+      isExplicitlyPaused: !nextPlaying,
+      ...(!nextPlaying ? { isBuffering: false, isSwappingToStream: false, bufferingStartedAt: null } : {}),
+    });
     if (nextPlaying) {
+      if (
+        getAudioEngineMode() === 'stream' &&
+        htmlAudioEngine.isReady() &&
+        currentAudio.streamStatus !== 'FAILED' &&
+        !isVideoStreamFailed(currentAudio.youtubeVideoId)
+      ) {
+        get().resume();
+        return;
+      }
       startPolling();
       startHeartbeat();
       startBackgroundAudio({ engine: get().activeEngine === 'stream' ? 'stream' : 'youtube' });
@@ -697,10 +994,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   pause: () => {
     const state = get();
     const livePos = getLivePlaybackPositionSeconds();
+    clearHybridTimers();
     saveCurrentProgress();
     if (isStreamEngineActive(state)) {
       htmlAudioEngine.pause();
-      set({ isPlaying: false, isBuffering: false, isExplicitlyPaused: true, currentTime: livePos });
+      set({
+        isPlaying: false,
+        isBuffering: false,
+        isSwappingToStream: false,
+        isRetrying: false,
+        bufferingStartedAt: null,
+        isExplicitlyPaused: true,
+        currentTime: livePos,
+      });
       stopPolling();
       stopHeartbeat();
       stopBackgroundAudio();
@@ -709,6 +1015,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return;
     }
 
+    if (state.isSwappingToStream) {
+      htmlAudioEngine.stop();
+    }
     if (ytPlayerInstance) {
       try {
         ytPlayerInstance.pauseVideo();
@@ -716,7 +1025,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         // Ignore
       }
     }
-    set({ isPlaying: false, isBuffering: false, isExplicitlyPaused: true, currentTime: livePos });
+    set({
+      isPlaying: false,
+      isBuffering: false,
+      isSwappingToStream: false,
+      isRetrying: false,
+      bufferingStartedAt: null,
+      isExplicitlyPaused: true,
+      currentTime: livePos,
+    });
     stopPolling();
     stopHeartbeat();
     stopBackgroundAudio();
@@ -727,8 +1044,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   resume: () => {
     const state = get();
     if (state.currentAudio) {
-      // If a transient background drop pushed playback to YouTube earlier and network is back,
-      // recover into stream mode (which survives screen lock) instead of staying stuck on YouTube.
       const configuredMode = getAudioEngineMode();
       const canRecoverStream =
         state.activeEngine === 'youtube' &&
@@ -749,7 +1064,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           return;
         }
         void htmlAudioEngine.play();
-        set({ isPlaying: true, isExplicitlyPaused: false });
+        set({
+          isPlaying: true,
+          isExplicitlyPaused: false,
+          playbackError: null,
+        });
         startPolling();
         startHeartbeat();
         startBackgroundAudio({ engine: 'stream' });
@@ -767,12 +1086,150 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         // Ignore
       }
     }
-    set({ isPlaying: true, isExplicitlyPaused: false });
+    set({ isPlaying: true, isExplicitlyPaused: false, playbackError: null });
     startPolling();
     startHeartbeat();
     startBackgroundAudio({ engine: get().activeEngine === 'stream' ? 'stream' : 'youtube' });
     startMediaSessionKeeper(onWorkerMediaTick);
     updateMediaSession(true, get().currentAudio, get().currentEpisode, get().currentTime, get().duration, get().playbackRate);
+  },
+
+  retryPlayback: () => {
+    const state = get();
+    const { currentAudio, currentEpisode } = state;
+    if (!currentAudio) return;
+
+    clearHybridTimers();
+    clearVideoStreamFailed(currentAudio.youtubeVideoId);
+
+    const ep = currentEpisode || currentAudio.episodes?.[0] || null;
+    const livePos = getLivePlaybackPositionSeconds();
+    const absStart = (ep?.startSeconds || 0) + Math.max(0, livePos);
+    const rate = state.playbackRate || getStoredPlaybackRate() || 1.0;
+
+    set({
+      isPlaying: true,
+      isBuffering: true,
+      isRetrying: true,
+      retryAttempt: 1,
+      playbackError: null,
+      bufferingStartedAt: Date.now(),
+      isExplicitlyPaused: false,
+    });
+
+    const configuredMode = getAudioEngineMode();
+    if (
+      configuredMode === 'stream' &&
+      htmlAudioEngine.isReady() &&
+      currentAudio.streamStatus !== 'FAILED'
+    ) {
+      youtubeAudioEngine.stop();
+      set({ activeEngine: 'stream', isSwappingToStream: false });
+      if (typeof window !== 'undefined') {
+        window.__WAVELINK_ENGINE__ = 'stream';
+      }
+      void htmlAudioEngine.load({
+        audioId: currentAudio.id,
+        videoId: currentAudio.youtubeVideoId,
+        episodeId: ep?.id,
+        episodeNumber: ep?.episodeNumber,
+        startSeconds: absStart,
+        autoplay: true,
+        playbackRate: rate,
+        forceReload: true,
+      });
+      startPolling();
+      startHeartbeat();
+      startBackgroundAudio({ engine: 'stream' });
+      startMediaSessionKeeper(onWorkerMediaTick);
+    } else if (ytPlayerInstance && typeof ytPlayerInstance.loadVideoById === 'function') {
+      htmlAudioEngine.stop();
+      set({ activeEngine: 'youtube', isSwappingToStream: false });
+      if (typeof window !== 'undefined') {
+        window.__WAVELINK_ENGINE__ = 'youtube';
+      }
+      rateCoordinator.onVideoLoaded(currentAudio.youtubeVideoId);
+      try {
+        ytPlayerInstance.loadVideoById({
+          videoId: currentAudio.youtubeVideoId,
+          startSeconds: absStart,
+        });
+        ytPlayerInstance.playVideo();
+      } catch {}
+      startPolling();
+      startHeartbeat();
+      startBackgroundAudio({ engine: 'youtube' });
+      startMediaSessionKeeper(onWorkerMediaTick);
+    }
+    updateMediaSession(true, currentAudio, ep, livePos, state.duration, rate);
+  },
+
+  handleBackgroundTransition: () => {
+    const store = get();
+    if (store.currentAudio && store.currentEpisode) {
+      saveCurrentProgress();
+      flushProgressWithKeepalive();
+    }
+    if (!store.isPlaying || store.isExplicitlyPaused || !store.currentAudio) return;
+
+    // If we are in hybrid swap mode when screen turns off, flush preload immediately and swap if ready!
+    if (store.activeEngine === 'youtube' && store.isSwappingToStream) {
+      flushPendingStreamPreload();
+      if (htmlAudioEngine.isPreloadedFor(store.currentAudio.youtubeVideoId)) {
+        void performStreamSwap(store.currentAudio.youtubeVideoId);
+      }
+    } else if (isStreamEngineActive(store)) {
+      htmlAudioEngine.checkHealth();
+    }
+  },
+
+  handleForegroundResume: () => {
+    const store = get();
+    if (!store.currentAudio) return;
+
+    if (store.activeEngine === 'youtube' && store.isSwappingToStream) {
+      if (htmlAudioEngine.isPreloadedFor(store.currentAudio.youtubeVideoId)) {
+        void performStreamSwap(store.currentAudio.youtubeVideoId);
+        return;
+      }
+    }
+
+    if (isStreamEngineActive(store)) {
+      const livePos = getLivePlaybackPositionSeconds();
+      if (livePos !== store.currentTime) {
+        set({ currentTime: livePos });
+      }
+      if (store.isPlaying && !store.isExplicitlyPaused) {
+        htmlAudioEngine.checkHealth();
+        if (htmlAudioEngine.isPaused() && !htmlAudioEngine.isLoading()) {
+          void htmlAudioEngine.play();
+        }
+      }
+      updateMediaSession(
+        store.isPlaying,
+        store.currentAudio,
+        store.currentEpisode,
+        livePos,
+        store.duration,
+        store.playbackRate
+      );
+      return;
+    }
+
+    if (store.isPlaying && !store.isExplicitlyPaused) {
+      setTimeout(() => {
+        if (usePlayerStore.getState().activeEngine !== 'youtube') return;
+        if (ytPlayerInstance && typeof ytPlayerInstance.getPlayerState === 'function') {
+          try {
+            const state = ytPlayerInstance.getPlayerState();
+            if (state === 2 || state === -1) {
+              ytPlayerInstance.playVideo();
+              rateCoordinator.applyRate('visibility_resume');
+            }
+          } catch {}
+        }
+      }, 300);
+    }
   },
 
   seekTo: (seconds: number) => {
@@ -802,12 +1259,20 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (isStreamEngineActive(state)) {
       htmlAudioEngine.seek(absoluteTarget);
       updateMediaSession(state.isPlaying, currentAudio, currentEpisode, clamped, duration, state.playbackRate);
-    } else if (ytPlayerInstance && typeof ytPlayerInstance.seekTo === 'function') {
-      try {
-        ytPlayerInstance.seekTo(absoluteTarget, true);
-        rateCoordinator.applyRate('seekTo_complete');
-      } catch (err) {
-        console.warn('YouTube seekTo error:', err);
+    } else {
+      if (state.isSwappingToStream) {
+        if (pendingStreamPreloadOpts) {
+          pendingStreamPreloadOpts.startSeconds = absoluteTarget;
+        }
+        htmlAudioEngine.updatePendingStartSeconds(absoluteTarget);
+      }
+      if (ytPlayerInstance && typeof ytPlayerInstance.seekTo === 'function') {
+        try {
+          ytPlayerInstance.seekTo(absoluteTarget, true);
+          rateCoordinator.applyRate('seekTo_complete');
+        } catch (err) {
+          console.warn('YouTube seekTo error:', err);
+        }
       }
     }
 
@@ -936,16 +1401,22 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     stopBackgroundSleepTimer();
 
     if (!minutes || minutes <= 0) {
-      set({ sleepTimerMinutes: null, sleepTimerEndTimestamp: null });
+      set({ sleepTimerMode: null, sleepTimerMinutes: null, sleepTimerEndTimestamp: null });
       if (typeof localStorage !== 'undefined') {
         localStorage.removeItem('wavelink_sleep_timer_end');
+        localStorage.removeItem('wavelink_sleep_timer_mode');
       }
       return;
     }
 
     const endTimestamp = Date.now() + minutes * 60 * 1000;
-    set({ sleepTimerMinutes: minutes, sleepTimerEndTimestamp: endTimestamp });
+    set({
+      sleepTimerMode: 'duration',
+      sleepTimerMinutes: minutes,
+      sleepTimerEndTimestamp: endTimestamp,
+    });
     if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('wavelink_sleep_timer_mode', 'duration');
       localStorage.setItem('wavelink_sleep_timer_end', String(endTimestamp));
     }
 
@@ -953,9 +1424,33 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     startBackgroundSleepTimer(endTimestamp, expireSleepTimerNow);
   },
 
+  setSleepTimerEndOfEpisode: () => {
+    if (sleepTimeout) {
+      clearTimeout(sleepTimeout);
+      sleepTimeout = null;
+    }
+    if (sleepFadeTimer) {
+      clearInterval(sleepFadeTimer);
+      sleepFadeTimer = null;
+    }
+    stopBackgroundSleepTimer();
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('wavelink_sleep_timer_end');
+      localStorage.setItem('wavelink_sleep_timer_mode', 'end_of_episode');
+    }
+
+    set({
+      sleepTimerMode: 'end_of_episode',
+      sleepTimerMinutes: null,
+      sleepTimerEndTimestamp: null,
+    });
+  },
+
   close: () => {
     const state = get();
     const { currentAudio, currentEpisode, duration } = state;
+    clearHybridTimers();
     let currentPos = state.currentTime;
 
     if (isStreamEngineActive(state)) {
@@ -1007,6 +1502,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('wavelink_sleep_timer_end');
+      localStorage.removeItem('wavelink_sleep_timer_mode');
     }
     clearLastPlaybackSession();
     set({
@@ -1014,9 +1510,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentEpisode: null,
       isPlaying: false,
       isBuffering: false,
+      isSwappingToStream: false,
+      isRetrying: false,
+      retryAttempt: 0,
+      playbackError: null,
+      bufferingStartedAt: null,
       isSeeking: false,
       isExplicitlyPaused: true,
       currentTime: currentPos,
+      sleepTimerMode: null,
       sleepTimerMinutes: null,
       sleepTimerEndTimestamp: null,
       isScreenLocked: false,
@@ -1025,6 +1527,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   reset: () => {
+    clearHybridTimers();
     htmlAudioEngine.stop();
     if (ytPlayerInstance) {
       try {
@@ -1053,6 +1556,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('wavelink_sleep_timer_end');
+      localStorage.removeItem('wavelink_sleep_timer_mode');
     }
     clearLastPlaybackSession();
     const storedRate = getStoredPlaybackRate();
@@ -1062,12 +1566,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentEpisode: null,
       isPlaying: false,
       isBuffering: false,
+      isSwappingToStream: false,
+      isRetrying: false,
+      retryAttempt: 0,
+      playbackError: null,
+      bufferingStartedAt: null,
       isSeeking: false,
       isExplicitlyPaused: true,
       currentTime: 0,
       playbackRate: storedRate,
       confirmedPlaybackRate: storedRate,
       rateSyncStatus: 'synced',
+      sleepTimerMode: null,
       sleepTimerMinutes: null,
       sleepTimerEndTimestamp: null,
       isScreenLocked: false,
@@ -1081,6 +1591,32 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (!currentAudio || !currentEpisode) return;
 
     saveProgressFor(currentAudio, currentEpisode, duration, duration);
+
+    if (state.sleepTimerMode === 'end_of_episode') {
+      if (sleepTimeout) {
+        clearTimeout(sleepTimeout);
+        sleepTimeout = null;
+      }
+      if (sleepFadeTimer) {
+        clearInterval(sleepFadeTimer);
+        sleepFadeTimer = null;
+      }
+      stopBackgroundSleepTimer();
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('wavelink_sleep_timer_end');
+        localStorage.removeItem('wavelink_sleep_timer_mode');
+      }
+      set({
+        sleepTimerMode: null,
+        sleepTimerMinutes: null,
+        sleepTimerEndTimestamp: null,
+      });
+      get().pause();
+      stopBackgroundAudio();
+      stopMediaSessionKeeper();
+      toast.info(`Đã tự động tắt audio vì đã hết Tập ${currentEpisode.episodeNumber}.`);
+      return;
+    }
 
     const currentUser = useAuthStore.getState().user;
     const eps = currentAudio.episodes || [];
@@ -1211,18 +1747,48 @@ htmlAudioEngine.on('state', (engineState) => {
   if (!isStreamEngineActive(store)) return;
 
   if (engineState === 'playing') {
-    usePlayerStore.setState({ isPlaying: true, isBuffering: false, isSeeking: false });
+    usePlayerStore.setState({
+      isPlaying: true,
+      isBuffering: false,
+      isRetrying: false,
+      retryAttempt: 0,
+      playbackError: null,
+      bufferingStartedAt: null,
+      isSeeking: false,
+    });
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       navigator.mediaSession.playbackState = 'playing';
     }
   } else if (engineState === 'buffering' || engineState === 'loading') {
-    usePlayerStore.setState({ isBuffering: true });
+    usePlayerStore.setState({
+      isBuffering: true,
+      bufferingStartedAt: store.bufferingStartedAt ?? Date.now(),
+    });
   } else if (engineState === 'paused') {
-    usePlayerStore.setState({ isPlaying: false, isBuffering: false });
+    usePlayerStore.setState({
+      isPlaying: false,
+      isBuffering: false,
+      bufferingStartedAt: null,
+    });
     if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
       navigator.mediaSession.playbackState = 'paused';
     }
   }
+});
+
+htmlAudioEngine.on('readyForSwap', (videoId) => {
+  void performStreamSwap(videoId);
+});
+
+htmlAudioEngine.on('retrying', (attempt) => {
+  const store = usePlayerStore.getState();
+  if (!isStreamEngineActive(store)) return;
+  usePlayerStore.setState({
+    isBuffering: true,
+    isRetrying: true,
+    retryAttempt: attempt,
+    bufferingStartedAt: store.bufferingStartedAt ?? Date.now(),
+  });
 });
 
 htmlAudioEngine.on('rate', (rate) => {
@@ -1247,6 +1813,10 @@ htmlAudioEngine.on('ended', () => {
 
 htmlAudioEngine.on('error', (err) => {
   const store = usePlayerStore.getState();
+  if (err.code === 'PRELOAD_FAILED') {
+    usePlayerStore.setState({ isSwappingToStream: false });
+    return;
+  }
   if (err.code === 'VIP_FORBIDDEN') {
     store.pause();
     toast.error(err.message);
@@ -1256,6 +1826,12 @@ htmlAudioEngine.on('error', (err) => {
     store.fallbackToYouTube(err.message);
   } else if (!err.fatal) {
     toast.info(err.message);
+  } else {
+    usePlayerStore.setState({
+      isBuffering: false,
+      isRetrying: false,
+      playbackError: err.message,
+    });
   }
 });
 
@@ -1310,8 +1886,17 @@ function onWorkerMediaTick() {
   const store = usePlayerStore.getState();
   if (!store.isPlaying || store.isExplicitlyPaused || !store.currentAudio) return;
 
+  if (
+    store.activeEngine === 'youtube' &&
+    store.isSwappingToStream &&
+    htmlAudioEngine.isPreloadedFor(store.currentAudio.youtubeVideoId)
+  ) {
+    void performStreamSwap(store.currentAudio.youtubeVideoId);
+  }
+
   const now = Date.now();
   if (isStreamEngineActive(store)) {
+    htmlAudioEngine.checkHealth();
     const livePos = getLivePlaybackPositionSeconds();
     saveLocalSnapshot(store.currentAudio, store.currentEpisode!, livePos, store.duration);
     if (now - lastServerSaveAt >= 15000 && Math.abs(livePos - lastServerSavedPos) >= 3) {
@@ -1382,7 +1967,11 @@ function pollIntervalHandler() {
   }
 
   // Kiểm tra sleep timer theo mốc thời gian tuyệt đối
-  if (store.sleepTimerEndTimestamp && Date.now() >= store.sleepTimerEndTimestamp) {
+  if (
+    store.sleepTimerMode !== 'end_of_episode' &&
+    store.sleepTimerEndTimestamp &&
+    Date.now() >= store.sleepTimerEndTimestamp
+  ) {
     expireSleepTimerNow();
     return;
   }
@@ -1657,50 +2246,12 @@ if (typeof window !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     const store = usePlayerStore.getState();
     if (document.visibilityState === 'hidden') {
-      if (store.currentAudio && store.currentEpisode) {
-        saveCurrentProgress();
-        flushProgressWithKeepalive();
-      }
+      store.handleBackgroundTransition();
       return;
     }
 
     if (document.visibilityState === 'visible') {
-      if (isStreamEngineActive(store)) {
-        const livePos = getLivePlaybackPositionSeconds();
-        if (store.currentAudio && livePos !== store.currentTime) {
-          usePlayerStore.setState({ currentTime: livePos });
-        }
-        // Recover unexpected OS background pause if user never pressed Pause
-        if (store.isPlaying && !store.isExplicitlyPaused && htmlAudioEngine.isPaused()) {
-          void htmlAudioEngine.play();
-        }
-        // Refresh mediaSession position when user returns to foreground
-        if (store.currentAudio) {
-          updateMediaSession(
-            store.isPlaying,
-            store.currentAudio,
-            store.currentEpisode,
-            livePos,
-            store.duration,
-            store.playbackRate
-          );
-        }
-        return;
-      }
-
-      if (store.isPlaying && !store.isExplicitlyPaused) {
-        setTimeout(() => {
-          if (ytPlayerInstance && typeof ytPlayerInstance.getPlayerState === 'function') {
-            try {
-              const state = ytPlayerInstance.getPlayerState();
-              if (state === 2 || state === -1) {
-                ytPlayerInstance.playVideo();
-                rateCoordinator.applyRate('visibility_resume');
-              }
-            } catch {}
-          }
-        }, 300);
-      }
+      store.handleForegroundResume();
     }
   });
 

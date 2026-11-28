@@ -280,6 +280,9 @@ func (h *Handler) UpdateUserRole(c *gin.Context) {
 		response.Internal(c, "Không thể cập nhật quyền người dùng")
 		return
 	}
+	if parsedID, err := strconv.ParseUint(id, 10, 64); err == nil {
+		middleware.InvalidateUserAuth(uint(parsedID))
+	}
 
 	response.OK(c, gin.H{"message": "Cập nhật vai trò và đồng bộ hội viên thành công"}, nil)
 }
@@ -287,13 +290,17 @@ func (h *Handler) UpdateUserRole(c *gin.Context) {
 func (h *Handler) DeleteUser(c *gin.Context) {
 	id := c.Param("id")
 	currentUserID := middleware.GetCurrentUserID(c)
-	if parsedID, err := strconv.ParseUint(id, 10, 64); err == nil && uint(parsedID) == currentUserID {
+	parsedID, parsedErr := strconv.ParseUint(id, 10, 64)
+	if parsedErr == nil && uint(parsedID) == currentUserID {
 		response.BadRequest(c, "Không thể tự xóa tài khoản quản trị đang đăng nhập")
 		return
 	}
 	if err := h.db.Delete(&domain.User{}, id).Error; err != nil {
 		response.Internal(c, "Không thể xóa người dùng")
 		return
+	}
+	if parsedErr == nil {
+		middleware.InvalidateUserAuth(uint(parsedID))
 	}
 	response.OK(c, gin.H{"message": "Xóa thành công"}, nil)
 }

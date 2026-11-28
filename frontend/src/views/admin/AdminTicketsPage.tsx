@@ -51,6 +51,12 @@ export const AdminTicketsPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
+  useEffect(() => {
+    const s = searchParams.get('status')?.toUpperCase();
+    if (s && STATUSES.includes(s)) setStatus(s);
+    const sq = searchParams.get('q');
+    if (sq !== null) setQuery(sq);
+  }, [searchParams]);
   useEffect(() => setPage(1), [status, kind, q]);
 
   useEffect(() => {

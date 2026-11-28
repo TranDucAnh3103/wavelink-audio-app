@@ -27,8 +27,12 @@ import {
   CheckCircle2,
   Eye,
   X,
+  Clock,
+  UploadCloud,
+  Flame,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
+import { buildPlayerPath } from '@/lib/slug';
 import { useRecentHistory } from '@/hooks/useHistory';
 import { useAudios, useImportQuota } from '@/hooks/useAudio';
 import { useMembershipOrders, useCancelMembershipOrder } from '@/hooks/useMembership';
@@ -317,7 +321,7 @@ export const ProfilePage: React.FC = () => {
         ) ||
         targetAudio.episodes?.[0];
       play(targetAudio, targetEp, pos);
-      navigate(`/player/${audioId}`);
+      navigate(buildPlayerPath(targetAudio));
     }
   };
 
@@ -381,92 +385,98 @@ export const ProfilePage: React.FC = () => {
         </button>
 
         {/* Public Profile Card */}
-        <div className="card-comic p-4 md:p-5 flex flex-col gap-3.5 relative overflow-hidden">
-          {publicUser.coverUrl && (
-            <div
-              className="absolute inset-x-0 top-0 h-24 bg-cover bg-center border-b-2 border-[var(--border-ink)]"
-              style={{ backgroundImage: `url(${publicUser.coverUrl})` }}
-            >
-              <div className="absolute inset-0 bg-[var(--surface-card)]/60" />
-              <div className="absolute inset-0 bg-gradient-to-b from-[var(--surface-card)]/85 via-[var(--surface-card)]/40 to-transparent" />
-            </div>
-          )}
-
+        <div className="card-comic p-0 overflow-hidden flex flex-col">
+          {/* Cover Header */}
           <div
-            className={`flex items-center gap-3.5 relative z-10 ${
-              publicUser.coverUrl ? 'pt-12' : ''
-            }`}
+            className="h-24 sm:h-32 w-full relative border-b-2 border-[var(--border-ink)] bg-gradient-to-r from-[#3A86FF]/25 via-[#FFE600]/45 to-[#8338EC]/25 bg-cover bg-center"
+            style={
+              publicUser.coverUrl ? { backgroundImage: `url(${publicUser.coverUrl})` } : undefined
+            }
           >
-            <div
-              className={`relative w-16 h-16 md:w-20 md:h-20 rounded-2xl border-2 border-[#111113] ${
-                isTargetAdmin
-                  ? 'bg-[#E63946] text-white'
-                  : isTargetVip
-                    ? 'bg-[#8338EC] text-white'
-                    : 'bg-[#FFE600] text-[#111113]'
-              } flex items-center justify-center font-black text-2xl shadow-comic-sm shrink-0 overflow-hidden`}
-            >
-              {publicUser.avatarUrl ? (
-                <img
-                  src={publicUser.avatarUrl}
-                  alt={publicUser.username}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                (publicUser.username || 'U').substring(0, 2).toUpperCase()
-              )}
-              {(isTargetVip || isTargetAdmin) && (
-                <span className="absolute -top-1 -right-1 text-[#FFE600] drop-shadow">
-                  <Crown className="w-4 h-4 fill-[#FFE600]" />
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-col min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="font-extrabold text-base md:text-lg text-[var(--ink-primary)] truncate leading-tight">
-                  {publicUser.username}
-                </h2>
-                <span
-                  className={`badge-comic ${
-                    isTargetAdmin
-                      ? 'badge-comic-red'
-                      : isTargetVip
-                        ? 'badge-comic-purple'
-                        : 'badge-comic-yellow'
-                  } text-[9px] font-black`}
-                >
-                  {publicUser.vipBadge}
-                </span>
-              </div>
-              <span className="text-xs font-semibold text-[var(--ink-muted)] truncate mt-0.5">
-                Mã độc giả: #{publicUser.id}
-              </span>
-            </div>
+            {publicUser.coverUrl && (
+              <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/15 to-transparent" />
+            )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3 pt-3 border-t-2 border-[var(--border-ink)]/30 mt-1">
-            <div className="card-comic-sm p-3 bg-[var(--surface-accent-soft)] flex items-center gap-2.5">
-              <Headphones className="w-5 h-5 text-[#3A86FF] shrink-0" strokeWidth={2.5} />
-              <div className="flex flex-col">
-                <span className="text-[10px] font-bold text-[var(--ink-secondary)]">
-                  Đã cày truyện
-                </span>
-                <span className="font-black text-xs sm:text-sm text-[var(--ink-primary)]">
-                  {publicUser.totalHours} giờ
-                </span>
+          <div className="px-4 sm:px-6 pb-5 flex flex-col gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+              <div className="flex items-end gap-3.5 min-w-0">
+                <div
+                  className={`relative -mt-10 sm:-mt-12 w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-[3px] border-[#111113] ring-4 ring-[var(--surface-card)] ${
+                    isTargetAdmin
+                      ? 'bg-[#E63946] text-white'
+                      : isTargetVip
+                        ? 'bg-[#8338EC] text-white'
+                        : 'bg-[#FFE600] text-[#111113]'
+                  } flex items-center justify-center font-black text-2xl sm:text-3xl shadow-comic shrink-0 overflow-hidden`}
+                >
+                  {publicUser.avatarUrl ? (
+                    <img
+                      src={publicUser.avatarUrl}
+                      alt={publicUser.username}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    (publicUser.username || 'U').substring(0, 2).toUpperCase()
+                  )}
+                  {(isTargetVip || isTargetAdmin) && (
+                    <span className="absolute bottom-1 right-1 w-6 h-6 rounded-lg bg-[#111113] border border-white/40 flex items-center justify-center text-[#FFE600] shadow">
+                      <Crown className="w-3.5 h-3.5 fill-[#FFE600]" />
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex flex-col min-w-0 pt-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="font-comic font-black text-lg sm:text-xl text-[var(--ink-primary)] truncate leading-tight">
+                      {publicUser.username}
+                    </h2>
+                    <span
+                      className={`badge-comic ${
+                        isTargetAdmin
+                          ? 'badge-comic-red'
+                          : isTargetVip
+                            ? 'badge-comic-purple'
+                            : 'badge-comic-yellow'
+                      } text-[9px] font-black`}
+                    >
+                      {publicUser.vipBadge}
+                    </span>
+                  </div>
+                  <span className="text-xs font-semibold text-[var(--ink-muted)] truncate mt-0.5 font-mono">
+                    Mã độc giả: #{publicUser.id}
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div className="card-comic-sm p-3 bg-[#E0F2FE] dark:bg-[#17253B] flex items-center gap-2.5">
-              <BookOpen className="w-5 h-5 text-[#0284C7] shrink-0" strokeWidth={2.5} />
-              <div className="flex flex-col">
-                <span className="text-[10px] font-bold text-[var(--ink-secondary)]">
-                  Kho truyện chia sẻ
-                </span>
-                <span className="font-black text-xs sm:text-sm text-[var(--ink-primary)]">
-                  {publicUser.uploadCount} bộ
-                </span>
+            <div className="grid grid-cols-2 gap-3 pt-3 border-t-2 border-[var(--border-ink)]/15">
+              <div className="card-comic-sm p-3 bg-[var(--surface-accent-soft)] flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl border-2 border-[#111113] bg-[#3A86FF] text-white flex items-center justify-center shrink-0">
+                  <Headphones className="w-4 h-4" strokeWidth={2.5} />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-[10px] font-bold uppercase text-[var(--ink-secondary)]">
+                    Đã cày truyện
+                  </span>
+                  <span className="font-black text-sm text-[var(--ink-primary)] tabular-nums">
+                    {publicUser.totalHours} giờ
+                  </span>
+                </div>
+              </div>
+
+              <div className="card-comic-sm p-3 bg-[#E0F2FE] dark:bg-[#17253B] flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl border-2 border-[#111113] bg-[#2A9D8F] text-white flex items-center justify-center shrink-0">
+                  <BookOpen className="w-4 h-4" strokeWidth={2.5} />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-[10px] font-bold uppercase text-[var(--ink-secondary)]">
+                    Kho truyện chia sẻ
+                  </span>
+                  <span className="font-black text-sm text-[var(--ink-primary)] tabular-nums">
+                    {publicUser.uploadCount} bộ
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -526,7 +536,7 @@ export const ProfilePage: React.FC = () => {
                     </div>
                     <button
                       type="button"
-                      onClick={() => navigate(`/player/${audio.id}`)}
+                      onClick={() => navigate(buildPlayerPath(audio))}
                       className="btn-comic btn-comic-primary text-[11px] py-1.5 px-3 shrink-0"
                     >
                       <Play className="w-3 h-3 fill-current" />
@@ -726,143 +736,213 @@ export const ProfilePage: React.FC = () => {
   // ========================================================
   // 3. AUTHENTICATED USER PROFILE VIEW
   // ========================================================
+  const totalListenedSec = history.reduce(
+    (sum, item) => sum + Math.max(0, Number(item.totalDurationListened || item.durationListened || 0)),
+    0
+  );
+  const totalHoursText =
+    totalListenedSec >= 3600
+      ? `${Math.round((totalListenedSec / 3600) * 10) / 10} giờ`
+      : totalListenedSec >= 60
+        ? `${Math.round(totalListenedSec / 60)} phút`
+        : '0 phút';
+  const quotaUsed = importQuota?.todayImportCount ?? 0;
+  const quotaMax = importQuota?.maxImportsPerDay ?? 5;
+  const quotaPct = isVipOrAdmin ? 100 : Math.min(100, Math.round((quotaUsed / Math.max(1, quotaMax)) * 100));
+
   return (
     <div className="w-full max-w-5xl mx-auto px-4 md:px-6 flex flex-col pb-36 md:pb-28 gap-4 pt-2 fade-in-comic">
-      {/* 1. Profile Hero Card */}
-      <div className="card-comic p-4 md:p-5 flex flex-col gap-3.5 relative overflow-hidden">
-        {user?.coverUrl && (
-          <div
-            className="absolute inset-x-0 top-0 h-24 bg-cover bg-center border-b-2 border-[var(--border-ink)]"
-            style={{ backgroundImage: `url(${user.coverUrl})` }}
-          >
-            <div className="absolute inset-0 bg-[var(--surface-card)]/60" />
-            <div className="absolute inset-0 bg-gradient-to-b from-[var(--surface-card)]/85 via-[var(--surface-card)]/40 to-transparent" />
+      {/* 1. Profile Hero Card with Clean Cover + Overlapping Avatar */}
+      <div className="card-comic p-0 overflow-hidden flex flex-col">
+        {/* Top Cover Banner */}
+        <div
+          className={`h-24 sm:h-32 w-full relative border-b-2 border-[var(--border-ink)] bg-cover bg-center ${
+            user?.coverUrl
+              ? ''
+              : 'bg-gradient-to-r from-[#FFE600]/80 via-[#F4A261]/50 to-[#3A86FF]/40 dark:from-[#2F2614] dark:via-[#261F38] dark:to-[#17253B]'
+          }`}
+          style={user?.coverUrl ? { backgroundImage: `url(${user.coverUrl})` } : undefined}
+        >
+          {user?.coverUrl && (
+            <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
+          )}
+          <div className="absolute top-3 right-3 flex items-center gap-1.5">
+            <span
+              className={`badge-comic ${
+                user?.role === 'ADMIN'
+                  ? 'badge-comic-red'
+                  : user?.role === 'VIP'
+                    ? 'badge-comic-purple'
+                    : 'badge-comic-yellow'
+              } text-[10px] font-black shadow-comic-sm`}
+            >
+              {user?.role === 'VIP' && <Crown className="w-3 h-3 text-[#FFE600] mr-1" />}
+              {user?.role || 'USER'}
+            </span>
           </div>
-        )}
+        </div>
 
-        <div className={`flex items-center gap-3.5 relative z-10 ${user?.coverUrl ? 'pt-12' : ''}`}>
-          <div
-            className={`relative w-16 h-16 md:w-20 md:h-20 rounded-2xl border-2 border-[#111113] ${
-              user?.role === 'ADMIN'
-                ? 'bg-[#E63946] text-white'
-                : user?.role === 'VIP'
-                  ? 'bg-[#8338EC] text-white'
-                  : 'bg-[#FFE600] text-[#111113]'
-            } flex items-center justify-center font-black text-2xl shadow-comic-sm shrink-0 overflow-hidden`}
-          >
-            {user?.avatarUrl ? (
-              <img
-                src={user.avatarUrl}
-                alt={user.username}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              (user?.username || 'K').substring(0, 2).toUpperCase()
-            )}
-            {isVipOrAdmin && (
-              <span className="absolute -top-1 -right-1 text-[#FFE600] drop-shadow">
-                <Crown className="w-4 h-4 fill-[#FFE600]" />
-              </span>
-            )}
-          </div>
-
-          <div className="flex flex-col min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="font-extrabold text-base md:text-lg text-[var(--ink-primary)] truncate leading-tight">
-                {user?.username || 'Khách'}
-              </h2>
-              <span
-                className={`badge-comic ${
+        <div className="px-4 sm:px-6 pb-5 flex flex-col gap-4">
+          {/* Identity + Desktop Quick Actions Row */}
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-3.5">
+            <div className="flex items-end gap-3.5 min-w-0">
+              <div
+                className={`relative -mt-10 sm:-mt-12 w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-[3px] border-[#111113] ring-4 ring-[var(--surface-card)] ${
                   user?.role === 'ADMIN'
-                    ? 'badge-comic-red'
+                    ? 'bg-[#E63946] text-white'
                     : user?.role === 'VIP'
-                      ? 'badge-comic-purple'
-                      : 'badge-comic-yellow'
-                } text-[9px] font-black`}
+                      ? 'bg-[#8338EC] text-white'
+                      : 'bg-[#FFE600] text-[#111113]'
+                } flex items-center justify-center font-black text-2xl sm:text-3xl shadow-comic shrink-0 overflow-hidden`}
               >
-                {user?.role || 'GUEST'}
-              </span>
-            </div>
-            <span className="text-xs font-semibold text-[var(--ink-muted)] truncate mt-0.5">
-              {user?.email || (user?.isGuest ? 'Khách vãng lai' : 'Chưa có email')}
-            </span>
-            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-              <span
-                className={`badge-comic ${
-                  user?.role === 'VIP' ? 'badge-comic-purple' : 'badge-comic-white'
-                } text-[9px] py-0.5 px-2 font-bold flex items-center gap-1`}
-              >
-                {user?.role === 'VIP' && <Crown className="w-3 h-3 text-[#FFE600]" />}
-                <span>
-                  Hội viên:{' '}
-                  <strong>
-                    {user?.role === 'VIP' ? 'VIP' : user?.role === 'ADMIN' ? 'ADMIN' : 'FREE'}
-                  </strong>{' '}
-                  {vipCountdown}
+                {user?.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt={user.username}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  (user?.username || 'K').substring(0, 2).toUpperCase()
+                )}
+                {isVipOrAdmin && (
+                  <span className="absolute bottom-1 right-1 w-6 h-6 rounded-lg bg-[#111113] border border-white/40 flex items-center justify-center text-[#FFE600] shadow">
+                    <Crown className="w-3.5 h-3.5 fill-[#FFE600]" />
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-col min-w-0 pt-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="font-comic font-black text-lg sm:text-2xl text-[var(--ink-primary)] truncate leading-tight">
+                    {user?.username || 'Khách'}
+                  </h2>
+                  <span
+                    className={`badge-comic ${
+                      user?.role === 'VIP' ? 'badge-comic-purple' : 'badge-comic-white'
+                    } text-[9px] py-0.5 px-2 font-bold inline-flex items-center gap-1`}
+                  >
+                    {user?.role === 'VIP' && <Crown className="w-3 h-3 text-[#FFE600]" />}
+                    <span>
+                      Hội viên:{' '}
+                      <strong>
+                        {user?.role === 'VIP' ? 'VIP' : user?.role === 'ADMIN' ? 'ADMIN' : 'FREE'}
+                      </strong>{' '}
+                      {vipCountdown}
+                    </span>
+                  </span>
+                </div>
+                <span className="text-xs font-semibold text-[var(--ink-muted)] truncate mt-0.5">
+                  {user?.email || (user?.isGuest ? 'Khách vãng lai' : 'Chưa có email')}
                 </span>
-              </span>
+              </div>
+            </div>
+
+            {/* Quick Account Actions */}
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setNewUsername(user?.username || '');
+                  setIsEditNameOpen(true);
+                }}
+                className="btn-comic text-[11px] sm:text-xs py-1.5 px-3 justify-center whitespace-nowrap"
+              >
+                <Pencil className="w-3.5 h-3.5 shrink-0" />
+                <span>Sửa Tên</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOldPassword('');
+                  setNewPassword('');
+                  setIsChangePasswordOpen(true);
+                }}
+                className="btn-comic text-[11px] sm:text-xs py-1.5 px-3 justify-center whitespace-nowrap"
+              >
+                <KeyRound className="w-3.5 h-3.5 shrink-0" />
+                <span>Đổi Mật Khẩu</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsLogoutModalOpen(true)}
+                className="btn-comic btn-comic-red text-[11px] sm:text-xs py-1.5 px-3 justify-center whitespace-nowrap col-span-2 sm:col-span-1"
+              >
+                <LogOut className="w-3.5 h-3.5 shrink-0" />
+                <span>Đăng Xuất Tài Khoản</span>
+              </button>
             </div>
           </div>
-        </div>
 
-        {/* Quota Progress Bar */}
-        <div className="card-comic-sm p-3 bg-[var(--surface-accent-soft)] flex flex-col gap-1.5 mt-1">
-          <div className="flex items-center justify-between text-[11px] font-bold text-[var(--ink-primary)]">
-            <span>Hạn mức Import YouTube hôm nay:</span>
-            <span>
-              {isVipOrAdmin
-                ? 'Không giới hạn'
-                : `Đã dùng ${importQuota?.todayImportCount ?? 0}/${importQuota?.maxImportsPerDay ?? 5}`}
-            </span>
-          </div>
-          <div className="w-full bg-[var(--surface-card)] h-2 rounded-full border border-[var(--border-ink)] overflow-hidden">
-            <div
-              className="h-full bg-[#3A86FF] transition-all duration-300"
-              style={{
-                width: isVipOrAdmin
-                  ? '100%'
-                  : `${Math.min(
-                      100,
-                      ((importQuota?.todayImportCount ?? 0) / (importQuota?.maxImportsPerDay ?? 5)) * 100
-                    )}%`,
-              }}
-            />
-          </div>
-        </div>
+          {/* 4-Card Bento KPI Row */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 pt-3 border-t-2 border-[var(--border-ink)]/15">
+            <div className="card-comic-sm p-3 bg-[var(--surface-elevated)] flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl border-2 border-[#111113] bg-[#3A86FF] text-white flex items-center justify-center shrink-0 shadow-comic-sm">
+                <Clock className="w-4 h-4" strokeWidth={2.5} />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-[10px] font-bold uppercase text-[var(--ink-muted)] truncate">
+                  Thời lượng đã cày
+                </span>
+                <span className="font-black text-sm text-[var(--ink-primary)] tabular-nums">
+                  {totalHoursText}
+                </span>
+              </div>
+            </div>
 
-        {/* Quick Actions */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2 border-t-2 border-[var(--border-ink)]/30">
-          <button
-            type="button"
-            onClick={() => {
-              setNewUsername(user?.username || '');
-              setIsEditNameOpen(true);
-            }}
-            className="btn-comic text-xs py-2"
-          >
-            <Pencil className="w-3.5 h-3.5" />
-            <span>Sửa Tên</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setOldPassword('');
-              setNewPassword('');
-              setIsChangePasswordOpen(true);
-            }}
-            className="btn-comic text-xs py-2"
-          >
-            <KeyRound className="w-3.5 h-3.5" />
-            <span>Đổi Mật Khẩu</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setIsLogoutModalOpen(true)}
-            className="btn-comic btn-comic-red text-xs py-2 col-span-2 sm:col-span-1"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Đăng Xuất Tài Khoản</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => navigate('/library?status=listening')}
+              className="card-comic-sm p-3 bg-[var(--surface-elevated)] hover:bg-[var(--surface-muted)] flex items-center gap-2.5 text-left transition-colors cursor-pointer"
+            >
+              <div className="w-9 h-9 rounded-xl border-2 border-[#111113] bg-[#FFE600] text-[#111113] flex items-center justify-center shrink-0 shadow-comic-sm">
+                <Flame className="w-4 h-4" strokeWidth={2.5} />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-[10px] font-bold uppercase text-[var(--ink-muted)] truncate">
+                  Đang theo dõi
+                </span>
+                <span className="font-black text-sm text-[var(--ink-primary)] tabular-nums">
+                  {history.length} bộ
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate(user?.id ? `/library?userId=${user.id}` : '/library?status=my')}
+              className="card-comic-sm p-3 bg-[var(--surface-elevated)] hover:bg-[var(--surface-muted)] flex items-center gap-2.5 text-left transition-colors cursor-pointer"
+            >
+              <div className="w-9 h-9 rounded-xl border-2 border-[#111113] bg-[#2A9D8F] text-white flex items-center justify-center shrink-0 shadow-comic-sm">
+                <BookOpen className="w-4 h-4" strokeWidth={2.5} />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-[10px] font-bold uppercase text-[var(--ink-muted)] truncate">
+                  Truyện đã nhập
+                </span>
+                <span className="font-black text-sm text-[var(--ink-primary)] tabular-nums">
+                  {myAudios.length} bộ
+                </span>
+              </div>
+            </button>
+
+            <div className="card-comic-sm p-3 bg-[var(--surface-accent-soft)] flex flex-col justify-center gap-1.5">
+              <div className="flex items-center justify-between gap-1 text-[10px] font-bold text-[var(--ink-primary)]">
+                <span className="inline-flex items-center gap-1 uppercase text-[var(--ink-secondary)] truncate">
+                  <UploadCloud className="w-3.5 h-3.5 text-[#3A86FF] shrink-0" />
+                  Hạn mức Import
+                </span>
+                <span className="font-black tabular-nums shrink-0">
+                  {isVipOrAdmin ? 'Không giới hạn' : `${quotaUsed}/${quotaMax}`}
+                </span>
+              </div>
+              <div className="w-full bg-[var(--surface-card)] h-2 rounded-full border border-[var(--border-ink)] overflow-hidden">
+                <div
+                  className="h-full bg-[#3A86FF] transition-all duration-300"
+                  style={{ width: `${quotaPct}%` }}
+                />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -870,16 +950,18 @@ export const ProfilePage: React.FC = () => {
       {!isVipOrAdmin && (
         <div
           onClick={() => navigate('/membership')}
-          className="card-comic p-4 bg-[#8338EC] text-white flex items-center justify-between cursor-pointer border-2 border-[#111113] card-comic-interactive"
+          className="card-comic p-4 bg-gradient-to-r from-[#8338EC] to-[#5E23B8] text-white flex items-center justify-between cursor-pointer border-2 border-[#111113] card-comic-interactive"
         >
           <div className="flex items-center gap-3">
-            <Crown className="w-6 h-6 text-[#FFE600] shrink-0" strokeWidth={2.5} />
+            <div className="w-10 h-10 rounded-xl border-2 border-[#111113] bg-[#FFE600] text-[#111113] flex items-center justify-center shrink-0 shadow-comic-sm">
+              <Crown className="w-5 h-5 fill-current" strokeWidth={2.5} />
+            </div>
             <div className="flex flex-col">
               <span className="font-extrabold text-xs sm:text-sm uppercase text-white">
                 Nâng Cấp Gói VIP
               </span>
               <span className="text-[11px] font-semibold text-white/90">
-                Mở khóa truyện độc quyền & Không giới hạn import
+                Mở khóa truyện độc quyền &amp; Không giới hạn import YouTube mỗi ngày
               </span>
             </div>
           </div>
@@ -889,25 +971,25 @@ export const ProfilePage: React.FC = () => {
 
       {/* VIP Orders & Payment History Section */}
       <div className="card-comic p-4 flex flex-col gap-3" data-testid="profile-vip-orders-section">
-        <div className="flex items-center justify-between pb-2 border-b-2 border-[var(--border-ink)] gap-2 flex-wrap">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
-            <ReceiptText className="w-4 h-4 text-[#8338EC]" strokeWidth={2.5} />
+            <div className="w-7 h-7 rounded-lg border-2 border-[#111113] bg-[#8338EC]/15 text-[#8338EC] flex items-center justify-center shrink-0">
+              <ReceiptText className="w-4 h-4" strokeWidth={2.5} />
+            </div>
             <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
               Đơn Hàng &amp; Lịch Sử VIP
             </span>
-          </div>
-          <div className="flex items-center gap-2">
             <span className="badge-comic badge-comic-teal text-[9px] font-black">
               {paidOrders.length} ĐÃ THANH TOÁN
             </span>
-            <button
-              type="button"
-              onClick={() => navigate('/membership')}
-              className="text-[11px] font-extrabold text-[#3A86FF] hover:underline cursor-pointer"
-            >
-              Xem các gói VIP →
-            </button>
           </div>
+          <button
+            type="button"
+            onClick={() => navigate('/membership')}
+            className="text-[11px] font-extrabold text-[#3A86FF] hover:underline cursor-pointer"
+          >
+            Xem các gói VIP →
+          </button>
         </div>
 
         {/* Active Unexpired Pending Order Card */}
@@ -990,18 +1072,22 @@ export const ProfilePage: React.FC = () => {
         {/* Paid VIP Order History */}
         {paidOrders.length === 0 ? (
           !activePendingOrder && (
-            <div className="flex flex-col items-center justify-center py-4 gap-2 text-center">
+            <div className="card-comic-sm p-3 bg-[var(--surface-elevated)] flex items-center justify-between gap-3 flex-wrap">
               <span className="text-xs font-semibold text-[var(--ink-muted)]">
-                Bạn chưa có giao dịch nâng cấp VIP nào.
+                {isVipOrAdmin
+                  ? `Tài khoản ${user?.role} đang được mở toàn bộ đặc quyền VIP.`
+                  : 'Bạn chưa có giao dịch nâng cấp VIP nào.'}
               </span>
-              <button
-                type="button"
-                onClick={() => navigate('/membership')}
-                className="btn-comic btn-comic-yellow text-xs py-1.5 px-3.5 font-black"
-              >
-                <Crown className="w-3.5 h-3.5" />
-                <span>Đăng Ký VIP Ngay</span>
-              </button>
+              {!isVipOrAdmin && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/membership')}
+                  className="btn-comic btn-comic-yellow text-xs py-1.5 px-3.5 font-black shrink-0"
+                >
+                  <Crown className="w-3.5 h-3.5" />
+                  <span>Đăng Ký VIP Ngay</span>
+                </button>
+              )}
             </div>
           )
         ) : (
@@ -1055,10 +1141,15 @@ export const ProfilePage: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         {/* Listening History */}
         <div className="card-comic p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between pb-2 border-b-2 border-[var(--border-ink)] gap-2 flex-wrap">
-            <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
-              Nhật Ký Cày Truyện Của Bạn
-            </span>
+          <div className="flex items-center justify-between pb-2.5 border-b-2 border-[var(--border-ink)]/15 gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg border-2 border-[#111113] bg-[#FFE600] text-[#111113] flex items-center justify-center shrink-0">
+                <Headphones className="w-3.5 h-3.5" strokeWidth={2.5} />
+              </div>
+              <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+                Nhật Ký Cày Truyện Của Bạn
+              </span>
+            </div>
             <div className="flex items-center gap-2 shrink-0">
               <span className="badge-comic badge-comic-yellow text-[9px] font-black">
                 {history.length} BỘ TRUYỆN
@@ -1078,13 +1169,22 @@ export const ProfilePage: React.FC = () => {
 
           <div className="flex flex-col gap-2.5">
             {history.length === 0 ? (
-              <span className="text-xs font-semibold text-[var(--ink-muted)] py-4 text-center">
-                Chưa có nhật ký nghe nào
-              </span>
+              <div className="py-6 flex flex-col items-center gap-2 text-center">
+                <span className="text-xs font-semibold text-[var(--ink-muted)]">
+                  Chưa có nhật ký nghe nào
+                </span>
+                <button
+                  type="button"
+                  onClick={() => navigate('/library')}
+                  className="btn-comic btn-comic-yellow text-[11px] py-1.5 px-3"
+                >
+                  Khám phá thư viện
+                </button>
+              </div>
             ) : (
               <>
                 {displayedHistory.map((item) => {
-                  const progress = item.progressPercent || 0;
+                  const progress = Math.min(100, Math.round((item.progressPercent || 0) * 100) / 100);
                   const title = item.title || 'Truyện Audio';
                   const epTitle = item.currentEpisodeTitle || 'Tập 1';
                   const pos = item.formattedPosition || '00:00:00';
@@ -1092,16 +1192,16 @@ export const ProfilePage: React.FC = () => {
                   return (
                     <div
                       key={`${item.audioId}-${item.episodeId}`}
-                      className="card-comic-sm p-3 bg-[var(--surface-elevated)] flex flex-col gap-2 hover:bg-[var(--surface-muted)] transition-all"
+                      className="card-comic-sm p-3 bg-[var(--surface-elevated)] flex flex-col gap-2 hover:bg-[var(--surface-muted)] transition-colors"
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex items-center gap-3 min-w-0">
                           <img
                             src={item.thumbnailUrl || '/wavelink-icon.png'}
                             alt={title}
                             loading="lazy"
                             decoding="async"
-                            className="w-11 h-12 rounded-lg border border-[var(--border-ink)] object-cover shrink-0 bg-[#FFE600]"
+                            className="w-12 h-14 rounded-lg border-2 border-[var(--border-ink)] object-cover shrink-0 bg-[#FFE600]"
                             onError={(e) => {
                               (e.currentTarget as HTMLImageElement).src = '/wavelink-icon.png';
                             }}
@@ -1110,19 +1210,26 @@ export const ProfilePage: React.FC = () => {
                             <span className="font-extrabold text-xs text-[var(--ink-primary)] truncate leading-tight">
                               {title}
                             </span>
-                            <span className="text-[11px] font-semibold text-[var(--ink-secondary)] truncate mt-0.5">
-                              {epTitle} · Mốc: <strong>{pos}</strong>
-                            </span>
-                            <span className="text-[10px] font-mono text-[var(--ink-muted)]">
-                              Đã nghe:{' '}
-                              {Math.max(
-                                1,
-                                Math.round(
-                                  (item.totalDurationListened || item.durationListened || 60) / 60
-                                )
-                              )}{' '}
-                              phút
-                            </span>
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              <span className="text-[11px] font-semibold text-[var(--ink-secondary)] truncate">
+                                {epTitle} · Mốc: <strong>{pos}</strong>
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="badge-comic badge-comic-yellow text-[8px] py-0 px-1.5 font-mono font-black">
+                                {progress}%
+                              </span>
+                              <span className="text-[10px] font-mono text-[var(--ink-muted)]">
+                                Đã nghe:{' '}
+                                {Math.max(
+                                  1,
+                                  Math.round(
+                                    (item.totalDurationListened || item.durationListened || 60) / 60
+                                  )
+                                )}{' '}
+                                phút
+                              </span>
+                            </div>
                           </div>
                         </div>
                         <button
@@ -1164,10 +1271,15 @@ export const ProfilePage: React.FC = () => {
 
         {/* My Uploaded Stories */}
         <div className="card-comic p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between pb-2 border-b-2 border-[var(--border-ink)] gap-2 flex-wrap">
-            <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
-              Truyện Do Bạn Nhập
-            </span>
+          <div className="flex items-center justify-between pb-2.5 border-b-2 border-[var(--border-ink)]/15 gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg border-2 border-[#111113] bg-[#2A9D8F] text-white flex items-center justify-center shrink-0">
+                <Disc3 className="w-3.5 h-3.5" strokeWidth={2.5} />
+              </div>
+              <span className="font-extrabold text-xs sm:text-sm uppercase text-[var(--ink-primary)]">
+                Truyện Do Bạn Nhập
+              </span>
+            </div>
             <div className="flex items-center gap-2">
               <span className="badge-comic badge-comic-teal text-[9px] font-black">
                 {myAudios.length} BỘ
@@ -1186,15 +1298,24 @@ export const ProfilePage: React.FC = () => {
 
           <div className="flex flex-col gap-2.5">
             {myAudios.length === 0 ? (
-              <span className="text-xs font-semibold text-[var(--ink-muted)] py-4 text-center">
-                Bạn chưa nhập video YouTube nào
-              </span>
+              <div className="py-6 flex flex-col items-center gap-2 text-center">
+                <span className="text-xs font-semibold text-[var(--ink-muted)]">
+                  Bạn chưa nhập video YouTube nào
+                </span>
+                <button
+                  type="button"
+                  onClick={() => navigate('/upload')}
+                  className="btn-comic btn-comic-yellow text-[11px] py-1.5 px-3"
+                >
+                  + Nhập Link YouTube
+                </button>
+              </div>
             ) : (
               <>
                 {paginatedMyAudios.map((audio) => (
                   <div
                     key={audio.id}
-                    className="card-comic-sm p-2.5 bg-[var(--surface-elevated)] flex items-center justify-between gap-2.5 hover:bg-[var(--surface-muted)] transition-all"
+                    className="card-comic-sm p-2.5 bg-[var(--surface-elevated)] flex items-center justify-between gap-2.5 hover:bg-[var(--surface-muted)] transition-colors"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <img
@@ -1202,13 +1323,13 @@ export const ProfilePage: React.FC = () => {
                         alt={audio.title}
                         loading="lazy"
                         decoding="async"
-                        className="w-10 h-12 rounded-lg border border-[var(--border-ink)] object-cover shrink-0 bg-[#111113]"
+                        className="w-11 h-14 rounded-lg border-2 border-[var(--border-ink)] object-cover shrink-0 bg-[#111113]"
                       />
                       <div className="flex flex-col min-w-0">
                         <span className="font-extrabold text-xs text-[var(--ink-primary)] truncate leading-tight">
                           {audio.title}
                         </span>
-                        <span className="text-[10px] font-semibold text-[var(--ink-muted)] mt-0.5">
+                        <span className="text-[10px] font-semibold text-[var(--ink-muted)] mt-0.5 font-mono">
                           {audio.totalEpisodes || audio.episodes?.length || 1} Tập ·{' '}
                           {audio.formattedDuration || '24h 00m'}
                         </span>
@@ -1216,7 +1337,7 @@ export const ProfilePage: React.FC = () => {
                     </div>
                     <button
                       type="button"
-                      onClick={() => navigate(`/player/${audio.id}`)}
+                      onClick={() => navigate(buildPlayerPath(audio))}
                       className="btn-comic text-[10px] py-1.5 px-3 shrink-0"
                     >
                       <Play className="w-3 h-3 fill-current" />

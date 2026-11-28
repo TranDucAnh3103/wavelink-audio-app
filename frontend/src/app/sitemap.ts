@@ -1,6 +1,7 @@
 import { MetadataRoute } from 'next';
 import { fetchServerAllAudios } from '@/lib/serverAudio';
 import { getSiteUrl } from '@/lib/siteConfig';
+import { buildPlayerPath } from '@/lib/slug';
 
 const siteUrl = getSiteUrl();
 
@@ -10,7 +11,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const audios = await fetchServerAllAudios();
 
   const audioEntries: MetadataRoute.Sitemap = audios.map((audio) => ({
-    url: `${siteUrl}/player/${audio.id}`,
+    url: `${siteUrl}${buildPlayerPath(audio)}`,
     lastModified: audio.updatedAt ? new Date(audio.updatedAt) : audio.createdAt ? new Date(audio.createdAt) : new Date(),
     changeFrequency: 'weekly',
     priority: 0.9,

@@ -104,7 +104,7 @@ export const viewport: Viewport = {
   ],
 };
 
-const THEME_INIT_SCRIPT = `(function(){try{var t=localStorage.getItem('setting_theme');var d=t==='dark'||(t==='system'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);var r=document.documentElement;if(d){r.classList.add('dark','dark-comic');}else{r.classList.remove('dark','dark-comic');}var m=document.querySelector('meta[name="theme-color"]');if(m){m.setAttribute('content',d?'#141418':'#F6F5F0');}}catch(e){}})();`;
+const THEME_INIT_SCRIPT = `(function(){try{var t=localStorage.getItem('setting_theme');var d=t==='dark'||(t==='system'&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);var r=document.documentElement;if(d){r.classList.add('dark','dark-comic');}else{r.classList.remove('dark','dark-comic');}var m=document.querySelector('meta[name="theme-color"]');if(m){m.setAttribute('content',d?'#141418':'#F6F5F0');}var isWv=Boolean(window.ReactNativeWebView)||/\\bwv\\b|; wv\\)|FBAN|FBAV|Zalo|Line\\/|Instagram/i.test(navigator.userAgent||'');if(isWv){r.classList.add('wavelink-mobile-webview');var vp=document.querySelector('meta[name="viewport"]');if(vp){vp.setAttribute('content','width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');}}}catch(e){}})();`;
 
 export default function RootLayout({
   children,

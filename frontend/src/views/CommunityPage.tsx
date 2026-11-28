@@ -21,6 +21,7 @@ import { useDelayedFallback } from '@/hooks/useDelayedFallback';
 import { toast } from '@/components/ui/Toast';
 import { api } from '@/services/api';
 import { CommunityListSkeleton } from '@/components/common/Skeletons';
+import { buildPlayerPath } from '@/lib/slug';
 import { CommunityMessage, TopListener, VipRankingMember, WSCommunityMessage } from '@/types';
 
 type TabKey = 'chat' | 'top10' | 'vip';
@@ -444,7 +445,9 @@ export const CommunityPage: React.FC = () => {
                             <div
                               onClick={() => {
                                 const targetId = m.sharedAudio?.id || m.sharedAudioId;
-                                if (targetId) navigate(`/player/${targetId}`);
+                                if (targetId) {
+                                  navigate(buildPlayerPath({ id: targetId, title: m.sharedAudio?.title }));
+                                }
                               }}
                               className="mt-2 p-2.5 bg-[var(--surface-card)] rounded-xl border-2 border-[var(--border-ink)] flex items-center gap-2.5 shadow-comic-sm cursor-pointer hover:bg-[var(--surface-muted)] transition-all group"
                             >

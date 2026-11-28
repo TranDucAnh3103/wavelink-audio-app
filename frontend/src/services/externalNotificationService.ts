@@ -1,6 +1,7 @@
 import { notificationService } from './notificationService';
 import { audioService } from './audioService';
 import { playNotificationSound } from '@/lib/soundEffects';
+import { buildPlayerPath } from '@/lib/slug';
 import type { NotificationItem } from '@/types';
 
 export function normalizeNotificationPath(rawUrl?: string): string {
@@ -163,7 +164,7 @@ class ExternalNotificationService {
         if (lastNotifiedAudioId !== currentAudioId) {
           await this.showSystemNotification(`WaveLink • Audio Mới 🎧`, {
             body: `"${latestAudio.title}" vừa được thêm vào thư viện. Bấm để nghe ngay!`,
-            url: `/player/${latestAudio.id}`,
+            url: buildPlayerPath(latestAudio),
             tag: `wavelink-new-audio-${latestAudio.id}`,
             type: 'audio',
           });

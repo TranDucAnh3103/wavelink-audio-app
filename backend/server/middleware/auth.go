@@ -72,10 +72,24 @@ func SessionMiddleware(secret string) gin.HandlerFunc {
 				c.Next()
 				return
 			}
+			role := claims.Role
+			membership := claims.Membership
+			c.Set("jwtRole", claims.Role)
+			c.Set("jwtMembership", claims.Membership)
+			if !claims.IsGuest && claims.UserID > 0 {
+				if liveRole, liveMembership, isBanned, deleted, ok := ResolveLiveUserAuth(claims.UserID); ok {
+					if deleted || isBanned {
+						c.Next()
+						return
+					}
+					role = liveRole
+					membership = liveMembership
+				}
+			}
 			c.Set("userID", claims.UserID)
 			c.Set("username", claims.Username)
-			c.Set("userRole", claims.Role)
-			c.Set("userMembership", claims.Membership)
+			c.Set("userRole", role)
+			c.Set("userMembership", membership)
 			c.Set("isGuest", claims.IsGuest)
 		}
 

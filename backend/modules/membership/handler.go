@@ -308,6 +308,7 @@ func (h *Handler) AdminUpdatePaymentInfo(c *gin.Context) {
 		}
 	}
 
+	middleware.RecordAudit(h.db, c, "vip_payment_info_update", "system", "payment_info", req.BankName, req.AccountNumber)
 	response.OK(c, h.GetPaymentSettings(), nil)
 }
 
@@ -319,15 +320,39 @@ func (h *Handler) AdminUpdatePackages(c *gin.Context) {
 		response.BadRequest(c, "Dữ liệu gói không hợp lệ: "+err.Error())
 		return
 	}
+	if len(req.Packages) == 0 {
+		response.BadRequest(c, "Danh sách gói VIP không được để trống")
+		return
+	}
 
-	// Sanitize runtime user-specific flags before saving into system_settings
+	// Sanitize and validate packages before saving into system_settings
 	cleaned := make([]VIPPackage, len(req.Packages))
+	seenIDs := make(map[string]bool, len(req.Packages))
 	for i, p := range req.Packages {
+		p.ID = strings.TrimSpace(p.ID)
+		p.Name = strings.TrimSpace(p.Name)
+		if p.ID == "" || p.Name == "" {
+			response.BadRequest(c, fmt.Sprintf("Gói thứ %d thiếu mã hoặc tên gói", i+1))
+			return
+		}
+		if seenIDs[p.ID] {
+			response.BadRequest(c, fmt.Sprintf("Mã gói '%s' bị trùng", p.ID))
+			return
+		}
+		seenIDs[p.ID] = true
 		if p.Amount <= 0 && p.PriceVND > 0 {
 			p.Amount = p.PriceVND
 		}
 		if p.PriceVND <= 0 && p.Amount > 0 {
 			p.PriceVND = p.Amount
+		}
+		if p.DurationDays < 1 {
+			response.BadRequest(c, fmt.Sprintf("Gói '%s' phải có số ngày hiệu lực tối thiểu 1 ngày", p.Name))
+			return
+		}
+		if p.Amount < 2000 {
+			response.BadRequest(c, fmt.Sprintf("Gói '%s' phải có giá tối thiểu 2.000đ", p.Name))
+			return
 		}
 		p.IsLocked = false
 		p.IsCurrent = false
@@ -349,11 +374,13 @@ func (h *Handler) AdminUpdatePackages(c *gin.Context) {
 		h.db.Create(&domain.SystemSetting{Key: "vip_packages", Value: string(bytes), UpdatedAt: now})
 	}
 
+	middleware.RecordAudit(h.db, c, "vip_packages_update", "system", "vip_packages", "Gói VIP", fmt.Sprintf("%d gói", len(cleaned)))
 	response.OK(c, cleaned, nil)
 }
 
 func (h *Handler) AdminResetPackages(c *gin.Context) {
 	h.db.Where("`key` = ?", "vip_packages").Delete(&domain.SystemSetting{})
+	middleware.RecordAudit(h.db, c, "vip_packages_reset", "system", "vip_packages", "Gói VIP", "Khôi phục mặc định")
 	response.OK(c, AvailablePackages, nil)
 }
 
@@ -930,6 +957,9 @@ func (h *Handler) completeOrderAndUpgradeVIP(order *domain.MembershipOrder) (*do
 	if err != nil {
 		return nil, false, err
 	}
+	if upgraded {
+		middleware.InvalidateUserAuth(order.UserID)
+	}
 	if pendingNotif != nil {
 		_, _ = notification.CreateSafeNotification(h.db, *pendingNotif)
 	}
@@ -1243,6 +1273,7 @@ func (h *Handler) CancelVIP(c *gin.Context) {
 		response.Internal(c, "Lỗi hủy gói VIP")
 		return
 	}
+	middleware.InvalidateUserAuth(userID)
 
 	notif := domain.Notification{
 		UserID:    userID,

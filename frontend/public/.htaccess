@@ -22,8 +22,8 @@ Options -Indexes -MultiViews
   # Bỏ qua index.html để tránh lặp
   RewriteRule ^index\.html$ - [L]
 
-  # Phục vụ trực tiếp các file SEO / Agentic Discovery
-  RewriteRule ^(robots\.txt|sitemap\.xml|llms\.txt|ai-catalog\.json|\.well-known/.*)$ - [L]
+  # Phục vụ trực tiếp các file SEO / Agentic Discovery & Google Search Console verification
+  RewriteRule ^(robots\.txt|sitemap\.xml|llms\.txt|ai-catalog\.json|google[a-z0-9]+\.html|\.well-known/.*)$ - [L]
 
   # Bỏ qua nếu người dùng truy cập trực tiếp vào file hoặc thư mục vật lý có thật
   RewriteCond %{REQUEST_FILENAME} -f [OR]

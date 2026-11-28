@@ -4,6 +4,7 @@ import { Headphones, MessageSquareHeart, Send, ExternalLink, Copy, Share2 } from
 import { Modal } from '@/components/ui/Modal';
 import { toast } from '@/components/ui/Toast';
 import { api } from '@/services/api';
+import { buildPlayerPath } from '@/lib/slug';
 
 export interface ShareStoryModalProps {
   isOpen: boolean;
@@ -30,7 +31,8 @@ export const ShareStoryModal: React.FC<ShareStoryModalProps> = ({ isOpen, onClos
 
   if (!isOpen) return null;
 
-  const currentUrl = typeof window !== 'undefined' ? window.location.href : '';
+  const currentUrl =
+    typeof window !== 'undefined' ? `${window.location.origin}${buildPlayerPath(audio)}` : '';
 
   const handleShareToCommunityChat = async () => {
     const text = commentText.trim();

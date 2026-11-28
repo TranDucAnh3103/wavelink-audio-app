@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import { AudioFilter, AudioItem, Episode, ImportYouTubePayload } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
+import { attachAudioListMeta, getAudioListMeta } from '@/services/audioService';
 
 export function useAudios(
   filter: AudioFilter = {},
@@ -15,6 +16,7 @@ export function useAudios(
     queryKey: ['audios', filter, user?.id || 0],
     enabled: options?.enabled ?? true,
     initialData,
+    structuralSharing: false,
     staleTime: options?.staleTime ?? (filter.fields === 'catalog' ? 5 * 60 * 1000 : undefined),
     queryFn: async () => {
       const { isLive, user: latestUser } = useAuthStore.getState();
@@ -111,7 +113,11 @@ export function useToggleFavorite() {
       queryClient.setQueriesData({ queryKey: ['audios'] }, (old: any) => {
         if (!old) return old;
         if (Array.isArray(old)) {
-          return old.map((a) => (String(a.id) === String(audioId) ? { ...a, isFavorite: !a.isFavorite } : a));
+          const existingMeta = getAudioListMeta(old);
+          const mapped = old.map((a) =>
+            String(a.id) === String(audioId) ? { ...a, isFavorite: !a.isFavorite } : a
+          );
+          return attachAudioListMeta(mapped, existingMeta);
         }
         if (old.data && Array.isArray(old.data)) {
           return {

@@ -10,6 +10,7 @@ import {
   RelatedFilterMode,
 } from '@/lib/relatedAudios';
 import { getOptimizedThumbnailUrl, handleImageFallback } from '@/lib/utils';
+import { buildPlayerPath } from '@/lib/slug';
 import { AudioItem } from '@/types';
 
 export const RELATED_BATCH_SIZE = 10;
@@ -258,7 +259,7 @@ export const RelatedAudiosSection: React.FC<RelatedAudiosSectionProps> = ({ curr
           return (
             <Link
               key={item.id}
-              to={`/player/${item.id}`}
+              to={buildPlayerPath(item)}
               data-testid="related-audio-card"
               onClick={handleSelectRelated}
               className="w-44 sm:w-48 shrink-0 card-comic p-2.5 flex flex-col gap-2 card-comic-interactive cursor-pointer group bg-[var(--surface-card)]"

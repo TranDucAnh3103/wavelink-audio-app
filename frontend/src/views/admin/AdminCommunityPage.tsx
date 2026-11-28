@@ -59,7 +59,7 @@ export const AdminCommunityPage: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [list, s] = await Promise.all([api.community.getMessages(), api.community.getStats()]);
+      const [list, s] = await Promise.all([api.community.getMessages({ all: true, limit: 200 }), api.community.getStats()]);
       setMessages([...list].reverse());
       setStats(s);
     } catch {
@@ -110,6 +110,7 @@ export const AdminCommunityPage: React.FC = () => {
     try {
       await api.community.deleteMessage(deletingId);
       setMessages((p) => p.filter((m) => String(m.id) !== String(deletingId)));
+      setStats((p) => ({ ...p, totalMessages: Math.max(0, p.totalMessages - 1) }));
       toast.success('Đã xóa tin nhắn');
       return true;
     } catch (err) {
@@ -149,7 +150,9 @@ export const AdminCommunityPage: React.FC = () => {
     if (!text) return;
     setSending(true);
     try {
-      await api.community.sendMessage(`[THÔNG BÁO QUẢN TRỊ VIÊN] ${text}`);
+      await api.community.sendMessage(`[THÔNG BÁO QUẢN TRỊ VIÊN] ${text}`, undefined, undefined, {
+        throwOnError: true,
+      });
       toast.success('Đã phát thông báo');
       triggerNotificationSync(true);
       setAnnouncement('');

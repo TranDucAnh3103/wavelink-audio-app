@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -31,6 +31,12 @@ export const Modal: React.FC<ModalProps> = ({
   size = 'md',
   className,
 }) => {
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) setSubmitting(false);
+  }, [isOpen]);
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -53,9 +59,15 @@ export const Modal: React.FC<ModalProps> = ({
   if (typeof document === 'undefined') return null;
 
   const handleConfirm = async () => {
+    if (submitting) return;
     if (onConfirm) {
-      const res = await onConfirm();
-      if (res !== false) onClose();
+      setSubmitting(true);
+      try {
+        const res = await onConfirm();
+        if (res !== false) onClose();
+      } finally {
+        setSubmitting(false);
+      }
     } else {
       onClose();
     }
@@ -115,6 +127,7 @@ export const Modal: React.FC<ModalProps> = ({
             <Button
               variant="default"
               size="sm"
+              disabled={submitting}
               onClick={onClose}
               className="text-xs py-1.5 px-3 min-h-[36px]"
             >
@@ -123,10 +136,11 @@ export const Modal: React.FC<ModalProps> = ({
             <Button
               variant={isDanger ? 'red' : 'primary'}
               size="sm"
+              disabled={submitting}
               onClick={handleConfirm}
               className="text-xs py-1.5 px-3.5 min-h-[36px]"
             >
-              {confirmText}
+              {submitting ? 'Đang xử lý...' : confirmText}
             </Button>
           </div>
         )}

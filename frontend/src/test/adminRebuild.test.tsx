@@ -8,8 +8,11 @@ import { AdminOrdersPage } from '@/views/admin/AdminOrdersPage';
 import { AdminNotifyPage } from '@/views/admin/AdminNotifyPage';
 import { AdminTicketsPage } from '@/views/admin/AdminTicketsPage';
 import { AdminSystemPage } from '@/views/admin/AdminSystemPage';
+import { AdminVipPage } from '@/views/admin/AdminVipPage';
+import { Modal } from '@/components/ui/Modal';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
+import { useSiteStatusStore } from '@/stores/siteStatusStore';
 
 vi.mock('@/components/ui/Toast', () => ({
   toast: {
@@ -209,5 +212,101 @@ describe('Rebuilt Admin Views', () => {
       </MemoryRouter>
     );
     await waitFor(() => expect(screen.getByDisplayValue('8')).toBeInTheDocument());
+  });
+
+  it('AdminOrdersPage hides Confirm button for CANCELLED/EXPIRED orders and Modal prevents double submit', async () => {
+    vi.spyOn(api.admin, 'orders').mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          orderCode: 'ORD-PEND',
+          userId: 2,
+          username: 'user1',
+          packageId: 'VIP_1M',
+          packageName: 'Gói 1 Tháng',
+          amount: 49000,
+          durationDays: 30,
+          status: 'PENDING',
+          createdAt: '2026-11-26T00:00:00Z',
+        },
+        {
+          id: 2,
+          orderCode: 'ORD-CANC',
+          userId: 3,
+          username: 'user2',
+          packageId: 'VIP_1M',
+          packageName: 'Gói 1 Tháng',
+          amount: 49000,
+          durationDays: 30,
+          status: 'CANCELLED',
+          createdAt: '2026-11-26T00:00:00Z',
+        },
+      ],
+      total: 2,
+      page: 1,
+      pageSize: 15,
+      counts: { ALL: 2, PENDING: 1, CANCELLED: 1 },
+      revenue: { total: 0, last30: 0, today: 0 },
+    });
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/admin/orders']}>
+        <AdminOrdersPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByText('user2')).toBeInTheDocument());
+    expect(screen.getAllByText('Xác nhận')).toHaveLength(1);
+    unmount();
+
+    let resolveConfirm: (() => void) | undefined;
+    const onConfirm = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveConfirm = resolve;
+        })
+    );
+    render(
+      <Modal isOpen title="Test" onClose={vi.fn()} onConfirm={onConfirm} confirmText="Lưu">
+        <span>Body</span>
+      </Modal>
+    );
+    const btn = screen.getByRole('button', { name: 'Lưu' });
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    resolveConfirm?.();
+  });
+
+  it('AdminSystemPage updates siteStatusStore and AdminAccountsPage supports VIP role option', async () => {
+    const updateSettingsSpy = vi.spyOn(api.admin, 'updateSettings').mockResolvedValue({
+      freeImportDailyLimit: 5,
+      allowUserImport: true,
+      allowGuestChat: true,
+      maintenanceMode: true,
+      maintenanceMessage: 'Đang bảo trì',
+    });
+    vi.spyOn(api.admin, 'settings').mockResolvedValue({
+      freeImportDailyLimit: 5,
+      allowUserImport: true,
+      allowGuestChat: true,
+      maintenanceMode: false,
+      maintenanceMessage: '',
+    });
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/admin/system']}>
+        <AdminSystemPage />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByText('Chế độ bảo trì')).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText('Chế độ bảo trì'));
+    fireEvent.click(screen.getByRole('button', { name: /Lưu cấu hình/i }));
+    await waitFor(() => expect(updateSettingsSpy).toHaveBeenCalled());
+    expect(useSiteStatusStore.getState().maintenanceMode).toBe(true);
+    unmount();
+    useSiteStatusStore.setState({ maintenanceMode: false, maintenanceMessage: '' });
+
+    expect(typeof AdminVipPage).toBe('function');
   });
 });

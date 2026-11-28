@@ -29,6 +29,39 @@ const CHROME_MOBILE_USER_AGENT =
  */
 const INJECTED_MEDIA_BRIDGE_SCRIPT = `
 (function() {
+  // 0. Khóa zoom trên Mobile WebView (chặn pinch-zoom & double-tap zoom)
+  if (!window.__WAVELINK_ZOOM_LOCKED__) {
+    window.__WAVELINK_ZOOM_LOCKED__ = true;
+    function applyViewportLock() {
+      try {
+        if (document.documentElement) {
+          document.documentElement.classList.add('wavelink-mobile-webview');
+        }
+        var head = document.head || document.getElementsByTagName('head')[0];
+        if (!head) return;
+        var vp = document.querySelector('meta[name="viewport"]');
+        if (!vp) {
+          vp = document.createElement('meta');
+          vp.setAttribute('name', 'viewport');
+          head.appendChild(vp);
+        }
+        vp.setAttribute('content', 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
+      } catch (e) {}
+    }
+    applyViewportLock();
+    document.addEventListener('DOMContentLoaded', applyViewportLock);
+    var preventMultiTouch = function(e) {
+      if (e.touches && e.touches.length > 1) {
+        e.preventDefault();
+      }
+    };
+    document.addEventListener('touchstart', preventMultiTouch, { passive: false });
+    document.addEventListener('touchmove', preventMultiTouch, { passive: false });
+    document.addEventListener('gesturestart', function(e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener('gesturechange', function(e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener('gestureend', function(e) { e.preventDefault(); }, { passive: false });
+  }
+
   if (window.__WAVELINK_MEDIA_BRIDGE__) return;
   window.__WAVELINK_MEDIA_BRIDGE__ = true;
   window.__WAVELINK_APP_STREAM_READY__ = true;
@@ -37,7 +70,10 @@ const INJECTED_MEDIA_BRIDGE_SCRIPT = `
   window.__wavelinkYTPlayer = null;
 
   function isStreamMode() {
-    return window.__WAVELINK_ENGINE__ === 'stream' || Boolean(document.getElementById('wavelink-html-audio'));
+    if (window.__WAVELINK_ENGINE__) {
+      return window.__WAVELINK_ENGINE__ === 'stream';
+    }
+    return Boolean(document.getElementById('wavelink-html-audio'));
   }
 
   // 1. Ghi đè Page Visibility API CHỈ cho chế độ YouTube IFrame cũ (bỏ qua khi dùng Direct Audio Stream)
@@ -221,6 +257,7 @@ const INJECTED_MEDIA_BRIDGE_SCRIPT = `
 
   // 8. Lắng nghe iframe YouTube message
   window.addEventListener('message', function(event) {
+    if (isStreamMode()) return;
     try {
       if (typeof event.data === 'string') {
         var data = JSON.parse(event.data);
@@ -335,18 +372,28 @@ export default function App() {
       if (nextState === 'background' || nextState === 'inactive') {
         if (webViewRef.current) {
           webViewRef.current.injectJavaScript(
-            'if (window.__wavelinkMobileDispatch) { window.__wavelinkMobileDispatch("flushProgress"); } true;'
+            'if (window.__wavelinkMobileDispatch) { window.__wavelinkMobileDispatch("backgroundTransition"); window.__wavelinkMobileDispatch("flushProgress"); } true;'
           );
         }
         const track = currentTrackRef.current;
-        if (track.isPlaying && hasStartedServiceRef.current) {
-          MediaPlayback.updateState(
-            true,
-            track.currentTime || 0,
-            track.duration || 0
-          );
+        if (track.isPlaying) {
+          if (!hasStartedServiceRef.current) {
+            MediaPlayback.startService(track);
+            hasStartedServiceRef.current = true;
+          } else {
+            MediaPlayback.updateState(
+              true,
+              track.currentTime || 0,
+              track.duration || 0
+            );
+          }
         }
       } else if (nextState === 'active') {
+        if (webViewRef.current) {
+          webViewRef.current.injectJavaScript(
+            'if (window.__wavelinkMobileDispatch) { window.__wavelinkMobileDispatch("foregroundResume"); } true;'
+          );
+        }
         MediaPlayback.isBatteryOptimizationIgnored().then((ignored) => {
           if (ignored) {
             setShowBatteryBanner(false);
@@ -561,6 +608,10 @@ export default function App() {
         allowFileAccess={true}
         mixedContentMode="always"
         setSupportMultipleWindows={false}
+        setBuiltInZoomControls={false}
+        setDisplayZoomControls={false}
+        scalesPageToFit={false}
+        bounces={false}
         androidLayerType="hardware"
         androidHardwareAccelerationDisabled={false}
         renderToHardwareTextureAndroid={true}

@@ -297,7 +297,7 @@ describe('PlayerPage Always-Visible Details, Controls Split & Unlimited Swipe', 
     expect(screen.getByRole('button', { name: '#Chế Tạo' })).toBeInTheDocument();
 
     const upperControls = screen.getByTestId('player-upper-controls');
-    expect(upperControls.querySelectorAll('button')).toHaveLength(3);
+    expect(upperControls.querySelectorAll('button')).toHaveLength(4);
 
     const lowerControls = screen.getByTestId('player-lower-controls');
     expect(lowerControls.querySelectorAll('button')).toHaveLength(3);

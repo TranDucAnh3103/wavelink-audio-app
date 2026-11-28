@@ -68,6 +68,8 @@ func SetupRouterWithStream(cfg *config.Config, db *gorm.DB, deps *StreamDeps) *g
 	r.Use(gin.Recovery())
 	r.Use(gin.Logger())
 	r.Use(middleware.CORS(cfg.AllowedOrigins))
+	middleware.SetAuthDB(db)
+	middleware.InvalidateSiteConfigCache()
 	r.Use(middleware.SessionMiddleware(cfg.JWTSecret))
 	r.Use(middleware.Gzip())
 	r.Use(middleware.ETag())
@@ -89,9 +91,19 @@ func SetupRouterWithStream(cfg *config.Config, db *gorm.DB, deps *StreamDeps) *g
 
 	// API v1 Router Group
 	v1 := r.Group("/api/v1")
+	v1.Use(middleware.MaintenanceGuard(db))
 	{
 		v1.GET("/health", func(c *gin.Context) {
 			response.OK(c, gin.H{"status": "ok", "env": cfg.AppEnv}, nil)
+		})
+		v1.GET("/site-status", func(c *gin.Context) {
+			siteCfg := middleware.GetSiteConfig(db)
+			response.OK(c, gin.H{
+				"maintenanceMode":    siteCfg.MaintenanceMode,
+				"maintenanceMessage": siteCfg.MaintenanceMessage,
+				"allowUserImport":    siteCfg.AllowUserImport,
+				"allowGuestChat":     siteCfg.AllowGuestChat,
+			}, nil)
 		})
 
 		// 1. Auth Module (Kèm Rate Limiter cho Guest Login)

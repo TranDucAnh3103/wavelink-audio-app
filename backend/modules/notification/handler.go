@@ -105,6 +105,90 @@ func CreateSafeNotification(db *gorm.DB, notif domain.Notification) (bool, error
 	return err == nil, err
 }
 
+// CreateBatchNotifications gửi thông báo hàng loạt cho nhiều người dùng bằng 1 truy vấn preferences và CreateInBatches.
+// Bỏ qua chống trùng lặp 10 phút cho broadcast/thông báo chủ động từ admin.
+func CreateBatchNotifications(db *gorm.DB, userIDs []uint, title, message, notifType, linkURL string) (int, error) {
+	if db == nil || len(userIDs) == 0 {
+		return 0, nil
+	}
+
+	uniqueIDs := make([]uint, 0, len(userIDs))
+	seen := make(map[uint]struct{}, len(userIDs))
+	for _, uid := range userIDs {
+		if uid == 0 {
+			continue
+		}
+		if _, ok := seen[uid]; ok {
+			continue
+		}
+		seen[uid] = struct{}{}
+		uniqueIDs = append(uniqueIDs, uid)
+	}
+	if len(uniqueIDs) == 0 {
+		return 0, nil
+	}
+
+	var prefs []domain.NotificationPreference
+	_ = db.Where("user_id IN ?", uniqueIDs).Find(&prefs).Error
+	prefMap := make(map[uint]domain.NotificationPreference, len(prefs))
+	for _, p := range prefs {
+		prefMap[p.UserID] = p
+	}
+
+	upperType := strings.ToUpper(strings.TrimSpace(notifType))
+	if upperType == "" {
+		upperType = "SYSTEM"
+	}
+	now := time.Now().UTC()
+	records := make([]domain.Notification, 0, len(uniqueIDs))
+	for _, uid := range uniqueIDs {
+		if pref, hasPref := prefMap[uid]; hasPref {
+			if pref.BlockAll {
+				continue
+			}
+			switch upperType {
+			case "SYSTEM":
+				if !pref.SystemAlerts {
+					continue
+				}
+			case "NEW_EPISODE", "NOVEL_UPDATE", "AUDIO":
+				if !pref.NovelUpdates {
+					continue
+				}
+			case "VIP", "VIP_EXPIRED", "MEMBERSHIP", "PROMOTION":
+				if !pref.PromotionAlerts {
+					continue
+				}
+			}
+		}
+
+		records = append(records, domain.Notification{
+			UserID:    uid,
+			Title:     title,
+			Message:   message,
+			Type:      upperType,
+			Link:      linkURL,
+			CreatedAt: now,
+		})
+	}
+
+	if len(records) == 0 {
+		return 0, nil
+	}
+
+	if err := db.CreateInBatches(&records, 100).Error; err != nil {
+		return 0, err
+	}
+
+	if hub := getDefaultHub(); hub != nil {
+		for _, rec := range records {
+			hub.PushToUser(rec.UserID, rec)
+		}
+	}
+
+	return len(records), nil
+}
+
 func (h *Handler) GetNotifications(c *gin.Context) {
 	userID := middleware.GetCurrentUserID(c)
 	filter := strings.ToLower(strings.TrimSpace(c.Query("filter")))

@@ -18,6 +18,33 @@ import { errMessage } from '@/lib/adminFormat';
 import { AdminVipSkeleton } from '@/components/common/Skeletons';
 import { AdminPage, Field, PageTitle } from '@/components/admin/AdminUI';
 
+const BANK_BIN_MAP: Array<[RegExp, string]> = [
+  [/vietcombank|\bvcb\b/i, '970436'],
+  [/techcombank|\btcb\b/i, '970407'],
+  [/bidv/i, '970418'],
+  [/vietinbank|\bctg\b/i, '970415'],
+  [/\bacb\b/i, '970416'],
+  [/tpbank|\btpb\b/i, '970423'],
+  [/vpbank|\bvpb\b/i, '970432'],
+  [/sacombank|\bstb\b/i, '970403'],
+  [/hdbank|\bhdb\b/i, '970437'],
+  [/\bvib\b/i, '970441'],
+  [/\bocb\b/i, '970448'],
+  [/\bmsb\b/i, '970426'],
+  [/\bshb\b/i, '970443'],
+  [/eximbank|\beib\b/i, '970431'],
+  [/seabank|\bseab\b/i, '970440'],
+  [/mb\s*bank|\bmbb\b|\bmb\b/i, '970422'],
+];
+
+function resolveBankBin(bankName: string): string {
+  const trimmed = bankName.trim();
+  for (const [pattern, bin] of BANK_BIN_MAP) {
+    if (pattern.test(trimmed)) return bin;
+  }
+  return '970422';
+}
+
 type VipTab = 'packages' | 'bank';
 
 export const AdminVipPage: React.FC = () => {
@@ -110,9 +137,26 @@ export const AdminVipPage: React.FC = () => {
     );
 
   const savePackages = async () => {
+    for (let i = 0; i < packages.length; i++) {
+      const p = packages[i];
+      const price = p.priceVND || p.amount || 0;
+      if (!p.name?.trim()) {
+        toast.error(`Gói thứ ${i + 1} chưa có tên`);
+        return;
+      }
+      if (!p.durationDays || p.durationDays < 1) {
+        toast.error(`Gói "${p.name}" phải có thời hạn tối thiểu 1 ngày`);
+        return;
+      }
+      if (price < 2000) {
+        toast.error(`Gói "${p.name}" phải có giá tối thiểu 2.000đ`);
+        return;
+      }
+    }
     try {
       const sanitized = packages.map(({ isLocked: _l, isCurrent: _c, canUpgrade: _u, ...rest }) => ({
         ...rest,
+        name: rest.name.trim(),
         perks: (rest.perks || []).map((p) => p.trim()).filter(Boolean),
       }));
       await updatePackages.mutateAsync(sanitized);
@@ -141,8 +185,9 @@ export const AdminVipPage: React.FC = () => {
     );
   }
 
+  const bankBin = resolveBankBin(bankName);
   const qrUrl = accountNumber.trim()
-    ? `https://img.vietqr.io/image/970422-${encodeURIComponent(accountNumber.trim())}-compact2.png?amount=49000&addInfo=${encodeURIComponent(
+    ? `https://img.vietqr.io/image/${bankBin}-${encodeURIComponent(accountNumber.trim())}-compact2.png?amount=49000&addInfo=${encodeURIComponent(
         `${notePrefix.trim() || 'VIP'}-12345`
       )}&accountName=${encodeURIComponent(accountName.trim())}`
     : '';

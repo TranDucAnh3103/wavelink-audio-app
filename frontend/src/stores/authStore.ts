@@ -7,6 +7,7 @@ import { queryClient } from '@/lib/queryClient';
 import { toast } from '@/components/ui/Toast';
 import { stopBackgroundAudio } from '@/lib/backgroundAudioKeeper';
 import { stopBackgroundSleepTimer } from '@/lib/sleepTimerWorker';
+import { registerLiveRecoveryHandler } from '@/lib/axiosClient';
 
 interface AuthState {
   user: User | null;
@@ -301,7 +302,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (get().isLive) {
       const user = await api.auth.getMe();
       if (user) {
-        set({ user });
+        const freshToken =
+          typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : get().token;
+        set({ user, ...(freshToken ? { token: freshToken } : {}) });
         if (typeof localStorage !== 'undefined') {
           localStorage.setItem('auth_user', JSON.stringify(user));
         }
@@ -334,3 +337,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   setLiveStatus: (isLive: boolean) => set({ isLive }),
 }));
+
+registerLiveRecoveryHandler(() => {
+  if (!useAuthStore.getState().isLive) {
+    useAuthStore.getState().setLiveStatus(true);
+  }
+});

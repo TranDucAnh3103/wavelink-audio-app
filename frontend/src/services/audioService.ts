@@ -16,10 +16,141 @@ export interface AudioListPaginationMeta {
 }
 
 const audioListMetaMap = new WeakMap<AudioItem[], AudioListPaginationMeta>();
+const audioListMetaByFilterKey = new Map<string, AudioListPaginationMeta>();
+const MAX_AUDIO_META_CACHE = 200;
 
-export function getAudioListMeta(list: AudioItem[] | undefined | null): AudioListPaginationMeta | undefined {
-  if (!list) return undefined;
-  return audioListMetaMap.get(list);
+export function buildAudioListMetaKey(
+  filter: AudioFilter = {},
+  currentUserId?: number | string | null
+): string {
+  const normalizedSearch = filter.search
+    ? extractYouTubeId(filter.search) || filter.search
+    : '';
+  return JSON.stringify({
+    search: normalizedSearch,
+    categoryId: filter.categoryId ?? null,
+    status: filter.status ?? null,
+    my: Boolean(filter.my || filter.status === 'my'),
+    userId: filter.userId ? String(filter.userId) : filter.createdBy ? String(filter.createdBy) : '',
+    tag: filter.tag || '',
+    sort: filter.sort || '',
+    page: filter.page && !filter.all ? Number(filter.page) : null,
+    limit: filter.all ? 0 : (filter.limit || filter.pageSize || null),
+    all: Boolean(filter.all),
+    fields: filter.fields || 'lite',
+    uid: currentUserId || 0,
+  });
+}
+
+function storeAudioListMetaByKey(key: string, meta: AudioListPaginationMeta): void {
+  if (audioListMetaByFilterKey.has(key)) {
+    audioListMetaByFilterKey.delete(key);
+  } else if (audioListMetaByFilterKey.size >= MAX_AUDIO_META_CACHE) {
+    const oldestKey = audioListMetaByFilterKey.keys().next().value;
+    if (oldestKey !== undefined) {
+      audioListMetaByFilterKey.delete(oldestKey);
+    }
+  }
+  audioListMetaByFilterKey.set(key, meta);
+}
+
+export function attachAudioListMeta(
+  list: AudioItem[],
+  meta: AudioListPaginationMeta | undefined
+): AudioItem[] {
+  if (meta) {
+    audioListMetaMap.set(list, meta);
+  }
+  return list;
+}
+
+export function getAudioListMeta(
+  list: AudioItem[] | undefined | null,
+  filter?: AudioFilter,
+  currentUserId?: number | string | null
+): AudioListPaginationMeta | undefined {
+  if (list) {
+    const direct = audioListMetaMap.get(list);
+    if (direct) return direct;
+  }
+  if (filter) {
+    return audioListMetaByFilterKey.get(buildAudioListMetaKey(filter, currentUserId));
+  }
+  return undefined;
+}
+
+/**
+ * Ranks in-progress ("listening") audios by cumulative listened duration combined with
+ * recency decay (7-day half-life) so long-listened + recent stories appear first.
+ */
+export function sortListeningAudiosByDurationAndRecency(list: AudioItem[]): AudioItem[] {
+  if (!Array.isArray(list) || list.length <= 1) return list;
+
+  const guestProgs = guestSessionService.getAllGuestProgress();
+  const guestHist = guestSessionService.getGuestHistory();
+  const localHist = localDb.get().recentHistory || [];
+
+  const maxUpdatedByAudio = new Map<number, number>();
+  for (const p of guestProgs) {
+    const id = Number(p.audioId);
+    const prev = maxUpdatedByAudio.get(id) || 0;
+    if ((p.updatedAt || 0) > prev) {
+      maxUpdatedByAudio.set(id, p.updatedAt || 0);
+    }
+  }
+
+  const histSecByAudio = new Map<number, number>();
+  const addHistoryItems = (items: Array<{ audioId?: number; durationListened?: number; totalDurationListened?: number; createdAt?: string }>) => {
+    for (const h of items) {
+      const id = Number(h.audioId || 0);
+      if (!id) continue;
+      const dur = Number(h.totalDurationListened || h.durationListened || 0);
+      const prevDur = histSecByAudio.get(id) || 0;
+      if (dur > prevDur) {
+        histSecByAudio.set(id, dur);
+      }
+      if (h.createdAt) {
+        const ts = Date.parse(h.createdAt);
+        if (Number.isFinite(ts)) {
+          const prevTs = maxUpdatedByAudio.get(id) || 0;
+          if (ts > prevTs) maxUpdatedByAudio.set(id, ts);
+        }
+      }
+    }
+  };
+  addHistoryItems(guestHist);
+  addHistoryItems(localHist);
+
+  const nowMs = Date.now();
+  const scoreFor = (a: AudioItem) => {
+    const id = Number(a.id);
+    const epPosSum = (a.episodes || []).reduce((acc, ep) => acc + (ep.positionSeconds || 0), 0);
+    const estimatedFromPct =
+      a.progressPercent && a.totalDurationSeconds
+        ? Math.round((a.progressPercent / 100) * a.totalDurationSeconds)
+        : 0;
+    const listenedSec = Math.max(
+      histSecByAudio.get(id) || 0,
+      epPosSum,
+      a.lastPositionSeconds || 0,
+      estimatedFromPct
+    );
+
+    const fallbackTs = Date.parse(a.updatedAt || a.createdAt || '');
+    const lastMs = maxUpdatedByAudio.get(id) || (Number.isFinite(fallbackTs) ? fallbackTs : 0);
+    const ageDays = lastMs > 0 ? Math.max(0, (nowMs - lastMs) / 86_400_000) : 3650;
+    const score = listenedSec / (1 + ageDays / 7);
+    return { score, lastMs, listenedSec };
+  };
+
+  return [...list].sort((a, b) => {
+    const ma = scoreFor(a);
+    const mb = scoreFor(b);
+    if (Math.abs(mb.score - ma.score) > 1e-6) return mb.score - ma.score;
+    if (mb.lastMs !== ma.lastMs) return mb.lastMs - ma.lastMs;
+    if (mb.listenedSec !== ma.listenedSec) return mb.listenedSec - ma.listenedSec;
+    return Number(b.id) - Number(a.id);
+  });
 }
 
 export const audioService = {
@@ -70,7 +201,9 @@ export const audioService = {
           if (!token) {
             list = guestSessionService.applyGuestProgressToAudios(list);
             if (filter.status === 'listening') {
-              list = list.filter((a) => (a.progressPercent || 0) > 0 && (a.progressPercent || 0) < 95);
+              list = sortListeningAudiosByDurationAndRecency(
+                list.filter((a) => (a.progressPercent || 0) > 0 && (a.progressPercent || 0) < 95)
+              );
             } else if (filter.status === 'completed') {
               list = list.filter((a) => (a.progressPercent || 0) >= 95);
             }
@@ -80,6 +213,7 @@ export const audioService = {
 
           if (res.data.meta) {
             audioListMetaMap.set(list, res.data.meta);
+            storeAudioListMetaByKey(buildAudioListMetaKey(filter, currentUserId), res.data.meta);
           }
 
           return list;
@@ -130,6 +264,8 @@ export const audioService = {
 
     if (filter.sort === 'popular') {
       list.sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0));
+    } else if (filter.status === 'listening') {
+      list = sortListeningAudiosByDurationAndRecency(list);
     } else {
       list.sort((a, b) => Number(b.id) - Number(a.id));
     }
@@ -225,14 +361,11 @@ export const audioService = {
 
   async updateAudio(id: number | string, data: Partial<AudioItem>, isLive = true): Promise<AudioItem | null> {
     if (isLive) {
-      try {
-        const res = await axiosClient.put<{ success: boolean; data: AudioItem }>(`/audios/${id}`, data);
-        if (res.data.success && res.data.data) {
-          return res.data.data;
-        }
-      } catch (err) {
-        console.warn('updateAudio live API failed, fallback to local', err);
+      const res = await axiosClient.put<{ success: boolean; data: AudioItem }>(`/audios/${id}`, data);
+      if (res.data.success && res.data.data) {
+        return res.data.data;
       }
+      throw new Error('Không thể cập nhật audio');
     }
 
     const db = localDb.get();
@@ -258,12 +391,9 @@ export const audioService = {
 
   async deleteAudio(id: number | string, isLive = true): Promise<boolean> {
     if (isLive) {
-      try {
-        const res = await axiosClient.delete<{ success: boolean }>(`/audios/${id}`);
-        if (res.data.success) return true;
-      } catch (err) {
-        console.warn('deleteAudio live API failed, fallback to local', err);
-      }
+      const res = await axiosClient.delete<{ success: boolean }>(`/audios/${id}`);
+      if (res.data.success) return true;
+      throw new Error('Không thể xóa audio');
     }
 
     const db = localDb.get();
@@ -274,14 +404,11 @@ export const audioService = {
 
   async refreshAudio(id: number | string, isLive = true): Promise<AudioItem | null> {
     if (isLive) {
-      try {
-        const res = await axiosClient.post<{ success: boolean; data: AudioItem }>(`/audios/${id}/refresh`);
-        if (res.data.success && res.data.data) {
-          return res.data.data;
-        }
-      } catch (err) {
-        console.warn('refreshAudio live API failed', err);
+      const res = await axiosClient.post<{ success: boolean; data: AudioItem }>(`/audios/${id}/refresh`);
+      if (res.data.success && res.data.data) {
+        return res.data.data;
       }
+      throw new Error('Không thể làm mới thông tin audio từ YouTube');
     }
     return this.getAudioById(id, isLive);
   },
@@ -604,7 +731,7 @@ export const audioService = {
         durationSeconds?: number;
         error?: string;
       };
-    }>(`/audios/${audioId}/check-stream`);
+    }>(`/audios/${audioId}/check-stream`, undefined, { timeout: 35000 });
     return res.data.data;
   },
 };

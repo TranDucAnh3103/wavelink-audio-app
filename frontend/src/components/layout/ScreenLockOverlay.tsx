@@ -3,6 +3,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Lock, RotateCcw, RotateCw, Play, Pause, Gauge, X } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
+import { PlaybackSpinner } from '@/components/ui/PlaybackSpinner';
 
 interface ScreenLockOverlayProps {
   onClose: () => void;
@@ -13,6 +14,7 @@ export const ScreenLockOverlay: React.FC<ScreenLockOverlayProps> = ({ onClose })
     currentAudio,
     currentEpisode,
     isPlaying,
+    isBuffering,
     currentTime,
     duration,
     playbackRate,
@@ -125,10 +127,19 @@ export const ScreenLockOverlay: React.FC<ScreenLockOverlayProps> = ({ onClose })
           <button
             type="button"
             className="screen-lock-btn-primary"
+            aria-busy={Boolean(isPlaying && isBuffering)}
             onClick={() => togglePlay()}
-            title={isPlaying ? 'Tạm dừng' : 'Phát tiếp'}
+            title={isPlaying && isBuffering ? 'Đang tải âm thanh' : isPlaying ? 'Tạm dừng' : 'Phát tiếp'}
           >
-            {isPlaying ? (
+            {isPlaying && isBuffering ? (
+              <PlaybackSpinner
+                size={26}
+                thickness={3.5}
+                color="#111113"
+                trackColor="rgba(17, 17, 19, 0.22)"
+                label="Đang tải âm thanh"
+              />
+            ) : isPlaying ? (
               <Pause className="w-7 h-7 fill-current" strokeWidth={2.5} />
             ) : (
               <Play className="w-7 h-7 fill-current ml-0.5" strokeWidth={2.5} />

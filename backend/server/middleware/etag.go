@@ -28,7 +28,9 @@ func ETag() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method != http.MethodGet ||
 			c.GetHeader("Range") != "" ||
-			strings.HasPrefix(c.Request.URL.Path, "/stream/") {
+			c.GetHeader("Upgrade") != "" ||
+			strings.HasPrefix(c.Request.URL.Path, "/stream/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/api/v1/admin/export/") {
 			c.Next()
 			return
 		}

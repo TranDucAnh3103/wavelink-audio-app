@@ -10,6 +10,8 @@ export interface AudioEngineLoadOptions {
   startSeconds: number;
   autoplay: boolean;
   playbackRate: number;
+  silentPreload?: boolean;
+  forceReload?: boolean;
 }
 
 export interface AudioEngineError {
@@ -26,6 +28,8 @@ export interface AudioEngineEvents {
   rate: (playbackRate: number) => void;
   ended: () => void;
   error: (err: AudioEngineError) => void;
+  readyForSwap: (videoId: string) => void;
+  retrying: (attempt: number, maxAttempts: number) => void;
 }
 
 export interface AudioEngine {

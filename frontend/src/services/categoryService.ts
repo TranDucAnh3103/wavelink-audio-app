@@ -30,14 +30,11 @@ export const categoryService = {
 
   async createCategory(payload: CreateCategoryPayload, isLive = true): Promise<Category> {
     if (isLive) {
-      try {
-        const res = await axiosClient.post<{ success: boolean; data: Category }>('/categories', payload);
-        if (res.data.success && res.data.data) {
-          return res.data.data;
-        }
-      } catch (err) {
-        console.warn('createCategory live API failed', err);
+      const res = await axiosClient.post<{ success: boolean; data: Category }>('/categories', payload);
+      if (res.data.success && res.data.data) {
+        return res.data.data;
       }
+      throw new Error('Không thể tạo thể loại');
     }
 
     const db = localDb.get();
@@ -55,14 +52,11 @@ export const categoryService = {
 
   async updateCategory(id: number | string, data: Partial<Category>, isLive = true): Promise<Category | null> {
     if (isLive) {
-      try {
-        const res = await axiosClient.put<{ success: boolean; data: Category }>(`/categories/${id}`, data);
-        if (res.data.success && res.data.data) {
-          return res.data.data;
-        }
-      } catch (err) {
-        console.warn('updateCategory live API failed', err);
+      const res = await axiosClient.put<{ success: boolean; data: Category }>(`/categories/${id}`, data);
+      if (res.data.success && res.data.data) {
+        return res.data.data;
       }
+      throw new Error('Không thể cập nhật thể loại');
     }
 
     const db = localDb.get();
@@ -77,12 +71,9 @@ export const categoryService = {
 
   async deleteCategory(id: number | string, isLive = true): Promise<boolean> {
     if (isLive) {
-      try {
-        const res = await axiosClient.delete<{ success: boolean }>(`/categories/${id}`);
-        if (res.data.success) return true;
-      } catch (err) {
-        console.warn('deleteCategory live API failed', err);
-      }
+      const res = await axiosClient.delete<{ success: boolean }>(`/categories/${id}`);
+      if (res.data.success) return true;
+      throw new Error('Không thể xóa thể loại');
     }
 
     const db = localDb.get();

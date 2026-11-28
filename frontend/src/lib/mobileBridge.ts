@@ -32,6 +32,64 @@ export function isMobileApp(): boolean {
 }
 
 /**
+ * Kiểm tra xem đang chạy trong Mobile WebView (React Native WebView, Android WebView, In-App Browser)
+ */
+export function isMobileWebView(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (window.ReactNativeWebView) return true;
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+  return /\bwv\b|; wv\)|FBAN|FBAV|Zalo|Line\/|Instagram/i.test(ua);
+}
+
+const VIEWPORT_LOCK_CONTENT =
+  'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
+
+/**
+ * Khóa zoom trên Mobile WebView (meta viewport + chặn pinch-zoom đa điểm & gesture).
+ */
+export function lockMobileWebViewZoom(): () => void {
+  if (typeof document === 'undefined') return () => {};
+
+  const applyMeta = () => {
+    try {
+      document.documentElement?.classList.add('wavelink-mobile-webview');
+      let vp = document.querySelector('meta[name="viewport"]');
+      if (!vp && document.head) {
+        vp = document.createElement('meta');
+        vp.setAttribute('name', 'viewport');
+        document.head.appendChild(vp);
+      }
+      vp?.setAttribute('content', VIEWPORT_LOCK_CONTENT);
+    } catch {}
+  };
+
+  applyMeta();
+
+  const onTouch = (e: TouchEvent) => {
+    if (e.touches && e.touches.length > 1) {
+      e.preventDefault();
+    }
+  };
+  const onGesture = (e: Event) => {
+    e.preventDefault();
+  };
+
+  document.addEventListener('touchstart', onTouch, { passive: false });
+  document.addEventListener('touchmove', onTouch, { passive: false });
+  document.addEventListener('gesturestart', onGesture, { passive: false } as AddEventListenerOptions);
+  document.addEventListener('gesturechange', onGesture, { passive: false } as AddEventListenerOptions);
+  document.addEventListener('gestureend', onGesture, { passive: false } as AddEventListenerOptions);
+
+  return () => {
+    document.removeEventListener('touchstart', onTouch);
+    document.removeEventListener('touchmove', onTouch);
+    document.removeEventListener('gesturestart', onGesture);
+    document.removeEventListener('gesturechange', onGesture);
+    document.removeEventListener('gestureend', onGesture);
+  };
+}
+
+/**
  * Gửi trạng thái âm thanh sang React Native Shell để cập nhật Bong bóng nổi & Notification
  */
 export function notifyMobilePlaybackState(payload: PlaybackMessagePayload): void {
@@ -55,6 +113,8 @@ export function notifyMobilePlaybackState(payload: PlaybackMessagePayload): void
  */
 export function initMobileBridge(): () => void {
   if (typeof window === 'undefined') return () => {};
+
+  const cleanupZoomLock = isMobileWebView() ? lockMobileWebViewZoom() : () => {};
 
   // 1. Đăng ký hàm nhận lệnh từ Native
   window.__wavelinkMobileDispatch = (action: string, payload?: unknown) => {
@@ -87,6 +147,12 @@ export function initMobileBridge(): () => void {
         if (typeof payload === 'number') {
           store.seekTo(payload);
         }
+        break;
+      case 'backgroundTransition':
+        store.handleBackgroundTransition();
+        break;
+      case 'foregroundResume':
+        store.handleForegroundResume();
         break;
       case 'flushProgress':
         if (store.currentAudio && store.currentEpisode) {
@@ -136,6 +202,7 @@ export function initMobileBridge(): () => void {
   });
 
   return () => {
+    cleanupZoomLock();
     unsubscribe();
     if (window.__wavelinkMobileDispatch) {
       delete window.__wavelinkMobileDispatch;

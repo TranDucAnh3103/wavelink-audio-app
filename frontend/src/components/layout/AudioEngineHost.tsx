@@ -11,6 +11,7 @@ import { YouTubeEngineHost } from './YouTubeEngineHost';
 export const AudioEngineHost: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const activeEngine = usePlayerStore((s) => s.activeEngine);
+  const hasCurrentAudio = usePlayerStore((s) => Boolean(s.currentAudio));
   const setAudioElement = usePlayerStore((s) => s.setAudioElement);
 
   useEffect(() => {
@@ -35,7 +36,7 @@ export const AudioEngineHost: React.FC = () => {
         playsInline
         style={{ display: 'none' }}
       />
-      {activeEngine === 'youtube' && <YouTubeEngineHost />}
+      {(activeEngine === 'youtube' || hasCurrentAudio) && <YouTubeEngineHost />}
     </>
   );
 };

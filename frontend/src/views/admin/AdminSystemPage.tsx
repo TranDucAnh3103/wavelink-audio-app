@@ -5,6 +5,7 @@ import { Sliders, Radio, History, Save, Trash2, Activity, RefreshCw } from 'luci
 import { api } from '@/services/api';
 import { toast } from '@/components/ui/Toast';
 import { Pagination } from '@/components/ui/Pagination';
+import { useSiteStatusStore } from '@/stores/siteStatusStore';
 import { cn } from '@/lib/utils';
 import { errMessage, formatDateTime } from '@/lib/adminFormat';
 import type { AuditLogItem, Paged, SiteConfig, StreamStatus } from '@/types/admin';
@@ -74,6 +75,12 @@ export const AdminSystemPage: React.FC = () => {
     try {
       const updated = await api.admin.updateSettings(cfg);
       setCfg(updated);
+      useSiteStatusStore.getState().setSiteStatus({
+        maintenanceMode: updated.maintenanceMode,
+        maintenanceMessage: updated.maintenanceMessage,
+        allowUserImport: updated.allowUserImport,
+        allowGuestChat: updated.allowGuestChat,
+      });
       toast.success('Đã lưu cấu hình hệ thống');
     } catch (err) {
       toast.error(errMessage(err));

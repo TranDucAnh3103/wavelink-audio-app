@@ -28,13 +28,14 @@ import { useStats } from '@/hooks/useStats';
 import { useAudios } from '@/hooks/useAudio';
 import { useRecentHistory } from '@/hooks/useHistory';
 import { useCategories } from '@/hooks/useCategories';
+import { buildPlayerPath } from '@/lib/slug';
 import { useTags } from '@/hooks/useTags';
-import { useDelayedFallback } from '@/hooks/useDelayedFallback';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '@/stores/authStore';
 import { HomeSkeleton } from '@/components/common/Skeletons';
 import { toast } from '@/components/ui/Toast';
+import { PlaybackSpinner } from '@/components/ui/PlaybackSpinner';
 import { formatTime, getOptimizedThumbnailUrl, handleImageFallback } from '@/lib/utils';
 import { getAudioListMeta } from '@/services/audioService';
 import { groupAudiosIntoSeries, groupTopAuthors } from '@/lib/seriesGrouping';
@@ -59,10 +60,11 @@ export const HomePage: React.FC<HomePageProps> = ({
 }) => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const { currentAudio: playingAudio, isPlaying, play, togglePlay } = usePlayerStore(
+  const { currentAudio: playingAudio, isPlaying, isBuffering, play, togglePlay } = usePlayerStore(
     useShallow((s) => ({
       currentAudio: s.currentAudio,
       isPlaying: s.isPlaying,
+      isBuffering: s.isBuffering,
       play: s.play,
       togglePlay: s.togglePlay,
     }))
@@ -76,18 +78,22 @@ export const HomePage: React.FC<HomePageProps> = ({
     setAudioBatchLimit(HOME_AUDIO_BATCH_STEP);
   }, [homeTab, selectedCategory]);
   const isDefaultHomeQuery = selectedCategory === null && homeTab === 'latest';
+  const homeAudiosFilter = useMemo(
+    () => ({
+      page: 1,
+      limit: audioBatchLimit,
+      ...(selectedCategory !== null ? { categoryId: selectedCategory } : {}),
+      ...(homeTab === 'popular' ? { sort: 'popular' } : {}),
+    }),
+    [audioBatchLimit, selectedCategory, homeTab]
+  );
   const { data: stats, isLoading: statsLoading } = useStats({ initialData: initialStats });
   const {
     data: audios = [],
     isLoading: audiosLoading,
     isFetching: audiosFetching,
   } = useAudios(
-    {
-      page: 1,
-      limit: audioBatchLimit,
-      ...(selectedCategory !== null ? { categoryId: selectedCategory } : {}),
-      ...(homeTab === 'popular' ? { sort: 'popular' } : {}),
-    },
+    homeAudiosFilter,
     {
       initialData:
         isDefaultHomeQuery && audioBatchLimit === HOME_AUDIO_BATCH_STEP ? initialAudios : undefined,
@@ -171,7 +177,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     return list;
   }, [audios, selectedCategory, homeTab]);
 
-  const audiosMeta = getAudioListMeta(audios);
+  const audiosMeta = getAudioListMeta(audios, homeAudiosFilter, user?.id);
   const totalAvailableAudios =
     audiosMeta?.total ??
     (selectedCategory === null
@@ -252,15 +258,9 @@ export const HomePage: React.FC<HomePageProps> = ({
   const topAuthors = useMemo(() => groupTopAuthors(seriesSourceAudios, 15), [seriesSourceAudios]);
 
   const isWaitingForInitialData = audios.length === 0 && (audiosLoading || statsLoading);
-  const showSkeletonFallback = useDelayedFallback(isWaitingForInitialData, 180);
 
-  if (showSkeletonFallback) {
-    return <HomeSkeleton />;
-  }
-
-  // While within the <180ms grace window without cache, render a lightweight layout shell without pulsing skeleton
   if (isWaitingForInitialData) {
-    return <div className="w-full max-w-6xl mx-auto px-4 md:px-6 min-h-[60vh]" />;
+    return <HomeSkeleton />;
   }
 
   const selectedCategoryName = categories.find((c) => c.id === selectedCategory)?.name;
@@ -440,7 +440,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   return (
                     <div key={audio.id} className="w-full shrink-0 p-3.5 sm:p-4 flex flex-col gap-3">
                       <Link
-                        to={`/player/${audio.id}`}
+                        to={buildPlayerPath(audio)}
                         className="relative block w-full aspect-[16/9] sm:aspect-[21/9] rounded-xl border-2 border-[var(--border-ink)] overflow-hidden bg-[#111113] shadow-comic-sm cursor-pointer group"
                         aria-label={`Nghe ${audio.title}`}
                       >
@@ -493,7 +493,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
                       <div className="flex flex-col gap-1.5 min-w-0">
                         <Link
-                          to={`/player/${audio.id}`}
+                          to={buildPlayerPath(audio)}
                           className="group"
                         >
                           <h3 className="font-extrabold text-sm sm:text-base text-[var(--ink-primary)] line-clamp-2 group-hover:text-[#3A86FF] transition-colors leading-snug">
@@ -530,7 +530,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
                       <div className="flex items-center justify-between gap-2 pt-2 border-t-2 border-[var(--border-ink)]/30">
                         <Link
-                          to={`/player/${audio.id}`}
+                          to={buildPlayerPath(audio)}
                           aria-label={`Danh sách tập - ${audio.title}`}
                           className="btn-comic text-xs h-9 px-3 whitespace-nowrap"
                         >
@@ -540,21 +540,31 @@ export const HomePage: React.FC<HomePageProps> = ({
                         <button
                           type="button"
                           onClick={handlePlay}
+                          aria-busy={Boolean(isThisPlaying && isBuffering)}
                           className={`btn-comic ${
                             isThisPlaying ? 'btn-comic-yellow' : 'btn-comic-primary'
                           } text-xs h-9 px-4 font-black whitespace-nowrap`}
                         >
-                          {isThisPlaying ? (
+                          {isThisPlaying && isBuffering ? (
+                            <PlaybackSpinner
+                              size={16}
+                              thickness={2.5}
+                              color="#111113"
+                              trackColor="rgba(17, 17, 19, 0.2)"
+                            />
+                          ) : isThisPlaying ? (
                             <Pause className="w-4 h-4 fill-current shrink-0" strokeWidth={2.5} />
                           ) : (
                             <Play className="w-4 h-4 fill-current shrink-0" strokeWidth={2.5} />
                           )}
                           <span>
-                            {isThisPlaying
-                              ? 'Tạm Dừng'
-                              : progressPercent > 0
-                                ? 'Cày Tiếp'
-                                : 'Nghe Ngay'}
+                            {isThisPlaying && isBuffering
+                              ? 'Đang tải...'
+                              : isThisPlaying
+                                ? 'Tạm Dừng'
+                                : progressPercent > 0
+                                  ? 'Cày Tiếp'
+                                  : 'Nghe Ngay'}
                           </span>
                         </button>
                       </div>
@@ -709,7 +719,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             {displayAudios.slice(0, audioBatchLimit).map((audio, index) => (
               <Link
                 key={audio.id}
-                to={`/player/${audio.id}`}
+                to={buildPlayerPath(audio)}
                 className="w-36 sm:w-auto flex flex-col gap-2 shrink-0 cursor-pointer group"
               >
                 <div className="card-comic w-full aspect-[3/4] overflow-hidden relative card-comic-interactive">
@@ -928,7 +938,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             {marathonPicks.map((audio) => (
               <Link
                 key={`marathon-${audio.id}`}
-                to={`/player/${audio.id}`}
+                to={buildPlayerPath(audio)}
                 className="w-40 sm:w-44 shrink-0 flex flex-col gap-2 cursor-pointer group"
               >
                 <div className="card-comic w-full aspect-[3/4] overflow-hidden relative card-comic-interactive">
@@ -1062,7 +1072,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             {(showAllHistory ? history : history.slice(0, 3)).map((item) => (
               <Link
                 key={`${item.audioId}-${item.episodeId}`}
-                to={`/player/${item.audioId}`}
+                to={buildPlayerPath({ id: item.audioId, title: item.title })}
                 className="flex flex-col gap-2 cursor-pointer group"
               >
                 <div className="card-comic w-full aspect-[3/4] overflow-hidden relative card-comic-interactive">
